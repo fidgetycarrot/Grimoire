@@ -1,0 +1,20 @@
+{
+  "name": "Grimoire",
+  "identifier": "lumiverse_grimoire",
+  "version": "0.1.0",
+  "author": "fidgetycarrot",
+  "github": "https://github.com/fidgetycarrot/Grimoire",
+  "homepage": "https://github.com/fidgetycarrot/Grimoire#readme",
+  "description": "Gives the narrator a story of its own: where it is going, why, and how fast. Works with any card.",
+  "permissions": [
+    "generation",
+    "interceptor",
+    "chats",
+    "characters",
+    "personas",
+    "world_books"
+  ],
+  "entry_backend": "dist/backend.js",
+  "entry_frontend": "dist/frontend.js",
+  "minimum_lumiverse_version": "1.2.0"
+}

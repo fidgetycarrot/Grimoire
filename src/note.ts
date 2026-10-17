@@ -1,0 +1,105 @@
+import { describeClock, describeDuration, readDay, readTime, type StoryClock } from './clock';
+import { dueThreads, type Notebook, type Pace, type Person } from './notebook';
+import type { FieldType } from './tracker';
+
+export interface ClockSources { day: 'tracker' | 'notebook'; hour: 'tracker' | 'notebook' | 'unknown'; exact: boolean }
+/**
+ * The clock to use right now. Fields the tracker verifiably supplies win;
+ * the notebook keeps the rest. Never two owners for the same part.
+ */
+export function liveClock(saved: StoryClock, values: Record<string, string>, types: Record<string, FieldType>): { clock: StoryClock; sources: ClockSources } {
+  const clock = { ...saved }, sources: ClockSources = { day: 'notebook', hour: saved.hour === null ? 'unknown' : 'notebook', exact: false };
+  const labels: string[] = [];
+  for (const [name, value] of Object.entries(values)) {
+    const type = types[name];
+    if (type === 'date' || type === 'datetime') {
+      const day = readDay(value);
+      if (day) { clock.day = day.day; sources.day = 'tracker'; labels.push(value); }
+    }
+    if (type === 'time' || type === 'datetime') {
+      const time = readTime(value);
+      if (time) { clock.hour = time.hour; sources.hour = 'tracker'; sources.exact = time.exact; if (!labels.includes(value)) labels.push(value); }
+    }
+  }
+  if (labels.length) clock.label = labels.join(', ').slice(0, 160);
+  return { clock, sources };
+}
+
+const words = (text: string) => text.trim().length >= 3;
+/** One sentence ending, whether or not the model added a full stop. */
+const end = (text: string) => `${text.trim().replace(/[.!?]+$/, '')}.`;
+function mentioned(person: Person, text: string): boolean {
+  return [person.name, ...person.aliases].filter(words).some(name => new RegExp(`(?<![\\p{L}\\p{N}])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`, 'iu').test(text));
+}
+/** People in the scene: named by the tracker or in the last couple of messages. */
+export function presentPeople(notebook: Notebook, recent: string, trackerPresent?: string): Person[] {
+  const where = `${recent}\n${trackerPresent ?? ''}`;
+  return notebook.people.filter(person => person.status === 'active' && mentioned(person, where));
+}
+
+const PACE: Record<Pace, string> = {
+  quiet: 'Pace: quiet. Let this scene breathe. Do not start new trouble or new threads. Anything already urgent still plays out.',
+  fast: 'Pace: fast. Keep scenes tight and moving. Cover slow stretches with short transitions. Move toward the next development.',
+  auto: '',
+};
+const RHYTHM: Record<Notebook['rhythm'], string> = {
+  calm: 'Pace: steady. Let scenes play out. One existing thread may move when it fits naturally.',
+  rising: 'Pace: tension is building. Let it build through what people say and do; do not rush the payoff.',
+  peak: 'Pace: a big moment is happening. Play it out fully before anything new begins.',
+  aftermath: 'Pace: a big moment just happened. Leave room for talk and aftermath. Only urgent matters press in.',
+  stalled: 'Pace: things have been quiet for a while. Let an existing thread move, using one of the developments below.',
+};
+
+export interface NoteInput { notebook: Notebook; pace: Pace; clock: StoryClock; now: number; recent: string; trackerPresent?: string; skipHours?: number; /** True when the time comes from the last check-up, not from a tracker reading of the latest reply. */ clockMayLag?: boolean }
+/**
+ * The short private note added before a reply. Built by code from the
+ * notebook; no model call. It carries reasons and narrator-safe hints, never
+ * the hidden truth itself.
+ */
+export function buildNote(input: NoteInput): string {
+  const { notebook, pace, now } = input, lines: string[] = [];
+  const present = presentPeople(notebook, input.recent, input.trackerPresent);
+  const quietTime = pace === 'quiet' || (pace === 'auto' && (notebook.rhythm === 'aftermath' || notebook.rhythm === 'peak'));
+  lines.push('Grimoire: private story guidance for the narrator. Never mention, quote, or explain it.');
+  lines.push(`${input.clockMayLag ? 'Story time at the last check-up' : 'Story time'}: ${describeClock(input.clock)}.${input.clockMayLag ? ' Time may have moved on since; the chat decides what time it is now.' : ''}${input.skipHours ? ` About ${describeDuration(input.skipHours)} have passed since the last message: open with that gap and what changed during it.` : ''}`);
+  lines.push(pace === 'auto' ? RHYTHM[notebook.rhythm] : PACE[pace]);
+  lines.push(`What the story is about: ${notebook.story.question}`);
+
+  // What is due, filtered by the pace: urgent things always press in; slower
+  // ones wait for a break in quiet times and arrive one at a time otherwise.
+  const due = dueThreads(notebook, now);
+  const urgent = due.filter(d => d.thread.speed === 'urgent').slice(0, 2);
+  const slower = quietTime ? [] : due.filter(d => d.thread.speed !== 'urgent').slice(0, pace === 'fast' ? 2 : 1);
+  const developments = [...urgent, ...slower];
+  if (developments.length) {
+    lines.push('Developments that are due (bring in only if they fit what is happening):');
+    for (const { thread, step } of developments) {
+      const when = thread.speed === 'urgent' ? 'this can interrupt' : pace === 'fast' ? 'bring this in soon' : 'at a natural break, such as the end of this scene';
+      lines.push(`- ${thread.title}: ${step.sign || step.text} (${when}). Why it matters: ${thread.hint || thread.why}`);
+    }
+  }
+  // Other open threads involving people in the scene, so they act with purpose.
+  const shown = new Set(developments.map(d => d.thread.id));
+  const nearby = notebook.threads.filter(t => t.status === 'open' && !shown.has(t.id) && t.people.some(p => present.some(person => person.id === p))).slice(0, 3 - developments.length);
+  if (nearby.length) {
+    lines.push('Open threads near this scene:');
+    for (const thread of nearby) lines.push(`- ${thread.title}: ${thread.hint || thread.why}`);
+  }
+  if (present.length) {
+    lines.push('People here and what drives them:');
+    for (const person of present.slice(0, 4)) lines.push(`- ${person.name}${person.role ? ` (${person.role})` : ''}: wants ${end(person.wants || 'nothing stated yet')}${person.doing ? ` Currently: ${end(person.doing)}` : ''}${person.hint ? ` Play them as: ${end(person.hint)}` : ''}`);
+  }
+  // A possible beat, matched to the pace. Quiet keeps only gentle ones.
+  const beat = notebook.beats.find(b => b.status === 'possible' && (!quietTime || b.intensity === 'low') && (!b.thread || notebook.threads.find(t => t.id === b.thread)?.status === 'open'));
+  if (beat && (pace === 'fast' || !developments.length || notebook.rhythm === 'stalled')) lines.push(`A possible next moment, only if it follows naturally: ${beat.text}${beat.conditions ? ` (only if ${beat.conditions})` : ''}. Purpose: ${beat.purpose}`);
+  // Someone not met yet, so the world is not just the main cast.
+  const newcomer = !quietTime && (notebook.rhythm === 'calm' || notebook.rhythm === 'stalled' || pace === 'fast') ? notebook.people.find(p => p.status === 'active' && !p.met && !present.includes(p)) : undefined;
+  if (newcomer && lines.length < 16) lines.push(`Someone who could appear if it fits: ${newcomer.name}${newcomer.role ? `, ${newcomer.role}` : ''}. Wants ${newcomer.wants || 'something of their own'}.`);
+  lines.push('This guidance is conditional. The latest messages decide what actually happened; skip anything they make irrelevant. Never write the player character\'s actions, words, thoughts, or feelings. Keep secrets hidden and let them show only through small details.');
+  return lines.join('\n').slice(0, 2400);
+}
+
+/** One spoiler-free line for the macro and the panel. */
+export function paceLine(pace: Pace, notebook: Notebook): string {
+  return pace === 'auto' ? RHYTHM[notebook.rhythm] : PACE[pace];
+}

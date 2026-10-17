@@ -1,0 +1,40 @@
+import type { SpindleFrontendContext } from 'lumiverse-spindle-types';
+import { setup } from '../src/frontend';
+import { stamp, validateNotebook } from '../src/notebook';
+import { VERSION, type Snapshot } from '../src/types';
+import { sampleNotebook } from '../tests/fixtures';
+
+// A mocked host and backend for looking at the panel. No model is called.
+const notebook = stamp(validateNotebook(sampleNotebook()), 24 + 18);
+notebook.threads[0].steps[0].status = 'shown';
+const state: Snapshot = {
+  version: VERSION, permissions: ['generation', 'interceptor', 'chats', 'characters', 'personas', 'world_books'], notice: '',
+  connections: [{ id: 'model', name: 'My writing model', model: 'configured model' }],
+  settings: { connectionId: 'model', maxOutputTokens: 16000, reasoningMode: 'inherit', every: 8, placement: 'auto' },
+  chat: { chatId: 'preview', name: 'Low Water', supported: true, reason: '', enabled: true, pace: 'auto', preferences: { length: 'medium', tone: 'balanced', twist: true },
+    hasNotebook: new URLSearchParams(location.search).get('start') === null, summary: 'Notebook updated after the ferry crossing.', clock: { day: 2, hour: 21.67, label: 'Day 2, 21:40' }, clockText: 'Day 2, 21:40',
+    sources: { day: 'tracker', hour: 'tracker', exact: true }, checks: [{ name: 'datetime', type: 'datetime', status: 'verified', value: 'Day 2, 21:40' }, { name: 'location', type: 'text', status: 'verified', value: 'The Drowned Lantern' }, { name: 'present', type: 'list', status: 'unavailable' }],
+    needsCheck: '', job: null, updatedAt: Date.now() - 6 * 60_000, repliesSinceCheck: 3, skipHours: 0, notebook, behind: false },
+};
+let receive: (payload: unknown) => void = () => {};
+const root = document.getElementById('root')!, actions = document.getElementById('actions')!;
+const ctx = {
+  ui: {
+    registerDrawerTab: () => ({ root, tabId: 'grimoire', setBadge: () => {}, activate: () => {}, setTitle: () => {}, setShortName: () => {}, destroy: () => {}, onActivate: () => () => {} }),
+    registerInputBarAction: () => ({ actionId: 'x', onClick: () => () => {}, destroy: () => {}, setLabel: () => {}, setSubtitle: () => {}, setEnabled: () => {} }),
+    mount: () => actions,
+  },
+  dom: { addStyle: (css: string) => { const s = document.createElement('style'); s.textContent = css; document.head.append(s); return () => s.remove(); } },
+  events: { on: () => () => {} }, getActiveChat: () => ({ chatId: 'preview', characterId: 'card' }), ready: () => {},
+  onBackendMessage: (handler: (p: unknown) => void) => { receive = handler; return () => {}; },
+  sendToBackend: (request: any) => setTimeout(() => {
+    let result: unknown = null;
+    if (request.action === 'snapshot') result = structuredClone(state);
+    if (request.action === 'pace') { state.chat!.pace = request.input.pace; result = request.input.pace; }
+    if (request.action === 'enable') state.chat!.enabled = request.input.enabled;
+    if (request.action === 'skip') { state.chat!.skipHours = request.input.amount * 24; result = request.input.amount * 24; }
+    if (request.action === 'create') { state.chat!.job = { id: 'j', kind: 'create', status: 'running', label: 'Writing the notebook', startedAt: Date.now() }; setTimeout(() => { state.chat!.job = null; state.chat!.hasNotebook = true; receive({ type: 'grimoire:changed' }); }, 1500); }
+    receive({ type: 'grimoire:response', id: request.id, result });
+  }, 60),
+} as unknown as SpindleFrontendContext;
+setup(ctx);
