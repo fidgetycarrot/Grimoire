@@ -264,3 +264,34 @@ describe('tidying a revision', () => {
     expect(merged.people).toHaveLength(3);
   });
 });
+
+describe('presets that keep facts in tag attributes', () => {
+  const reply = '<scene_header sky="day" location="The Lantern Market" time="9:40 PM · Night" />\n\nRain on the awnings.\n<status_panel>\n<day_box>\nDay: Day 4\nTime: Night (9:40 PM)\n</day_box>\n</status_panel>';
+  test('an attribute is read, and a broken attribute recipe is dropped', () => {
+    const { recipe, dropped } = validateRecipe({ fields: [
+      { name: 'location', type: 'text', source: { kind: 'attribute', tag: 'scene_header', attribute: 'location' } },
+      { name: 'time', type: 'time', source: { kind: 'attribute', tag: 'scene_header', attribute: 'time' } },
+      { name: 'date', type: 'date', source: { kind: 'line', label: 'Day', region: { kind: 'tag', tag: 'day_box' } } },
+      { name: 'present', type: 'list', source: { kind: 'attribute', tag: 'bad tag', attribute: 'x' } },
+    ] });
+    expect(dropped).toBe(1);
+    const checks = checkRecipe(recipe, [reply], {});
+    expect(checks.map(c => c.status)).toEqual(['verified', 'verified', 'verified']);
+    expect(readTracker(recipe, checks, [reply], {})).toEqual({ location: 'The Lantern Market', time: '9:40 PM · Night', date: 'Day 4' });
+    expect(trackerText(recipe, reply)).toContain('location="The Lantern Market"');
+    expect(trackerText(recipe, reply)).toContain('Day: Day 4');
+  });
+});
+
+describe('messages as words', () => {
+  const { readable } = require('../src/history');
+  test('styling goes, text and fact-carrying attributes stay', () => {
+    const raw = '<scene_header location="The Lantern Market" time="9:40 PM" />\nShe <b>laughs</b>.\n<div style="color:red"><style>.x{color:red}</style><span class="a">PANEL &amp; NOTES</span></div><!-- hidden --><font color="#fff">"Hi."</font>';
+    const text = readable(raw, 1000);
+    expect(text).toContain('[scene_header location: The Lantern Market; time: 9:40 PM]');
+    expect(text).toContain('She laughs .');
+    expect(text).toContain('PANEL & NOTES');
+    expect(text).not.toMatch(/color|style|hidden|<|>/);
+    expect(readable('x'.repeat(50), 10)).toHaveLength(10);
+  });
+});

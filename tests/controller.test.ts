@@ -282,6 +282,55 @@ describe('check-ups', () => {
   });
 });
 
+describe('presets that show their tracker only after the first replies', () => {
+  const header = (time: string, place: string) => `<scene_header location="${place}" time="${time}" />\n\n`;
+  const headerRecipe = { fields: [
+    { name: 'time', type: 'time', source: { kind: 'attribute', tag: 'scene_header', attribute: 'time' } },
+    { name: 'location', type: 'text', source: { kind: 'attribute', tag: 'scene_header', attribute: 'location' } },
+  ], note: 'scene header attributes' };
+  test('the first reply after the notebook triggers one look for the tracker, with the raw replies', async () => {
+    const h = host(); h.add('assistant', 'The ferry bell rings.');
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 8 }, {});
+    const m = model({ create: () => ({ notebook: sampleNotebook(), tracker: { fields: [], note: 'none yet' } }),
+      checkup: input => ({ notebook: input.notebook, tracker: input.replies.length ? headerRecipe : null }) });
+    const c = new NotebookController(h.api, undefined, () => {}, m.ask);
+    await c.create('chat-1', {}); await c.waitForJobs();
+    h.add('user', 'I wait.'); h.add('assistant', `${header('7:15 PM', 'The ferry')}<div style="color:red"><style>.x{}</style>Mira coils the rope.</div>`);
+    await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+    const checkups = m.calls.filter(x => x.task === 'grimoire-checkup-v1');
+    expect(checkups).toHaveLength(1);
+    expect(checkups[0].input.reason).toBe('Looking for your preset’s tracker');
+    expect(checkups[0].input.replies[0]).toContain('<scene_header location="The ferry"');
+    // The chat itself is sent as words: the header's facts stay, the styling goes.
+    expect(checkups[0].input.chat.at(-1).content).toContain('[scene_header location: The ferry; time: 7:15 PM]');
+    expect(checkups[0].input.chat.at(-1).content).not.toContain('style');
+    const view = (await c.view('chat-1'))!;
+    expect(view.checks.map(x => x.status)).toEqual(['verified', 'verified']);
+    expect(view.sources!.hour).toBe('tracker');
+    // It looks only once on its own; later replies wait for the usual reasons.
+    h.add('user', 'I wait more.'); h.add('assistant', 'Nothing happens.');
+    await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+    expect(m.calls.filter(x => x.task === 'grimoire-checkup-v1')).toHaveLength(1);
+  });
+  test('an urgent development that was offered gets a check-up two replies later', async () => {
+    const h = host(); h.add('assistant', 'The ferry bell rings.');
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 8 }, {});
+    const urgent = () => { const n: any = sampleNotebook(); n.threads[1].steps[0].afterHours = 0; return { notebook: n, tracker: headerRecipe }; };
+    const m = model({ create: urgent, checkup: input => ({ notebook: input.notebook, tracker: null }) });
+    const c = new NotebookController(h.api, undefined, () => {}, m.ask);
+    await c.create('chat-1', {}); await c.waitForJobs();
+    h.add('user', 'I look at the sky.'); h.add('assistant', `${header('6:00 PM', 'The ferry')}Wind.`);
+    await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+    expect(m.calls.filter(x => x.task === 'grimoire-checkup-v1')).toHaveLength(0);
+    h.add('user', 'I hurry.'); h.add('assistant', `${header('6:05 PM', 'The ferry')}Shutters bang.`);
+    await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+    expect(m.calls.filter(x => x.task === 'grimoire-checkup-v1').map(x => x.input.reason)).toEqual(['Checking on an urgent development']);
+    // Still not shown after that look: no repeat every two replies.
+    for (const line of ['I wait.', 'I wait again.']) { h.add('user', line); h.add('assistant', `${header('6:10 PM', 'The ferry')}Still windy.`); await c.afterReply('chat-1', 'normal'); await c.waitForJobs(); }
+    expect(m.calls.filter(x => x.task === 'grimoire-checkup-v1')).toHaveLength(1);
+  });
+});
+
 describe('edits, swipes, and forks', () => {
   async function withUpdate() {
     const m = model({ create: created, checkup: input => { const n = structuredClone(input.notebook); n.threads[0].steps[0].status = 'shown'; n.summary = 'Updated.'; return { notebook: n, tracker: null }; } });

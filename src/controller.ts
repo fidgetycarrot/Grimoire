@@ -1,6 +1,6 @@
 import type { SpindleAPI, LlmMessageDTO, InterceptorContextDTO, InterceptorResultDTO } from 'lumiverse-spindle-types';
 import { absoluteHours, advanceClock, describeClock, durationHours, type StoryClock } from './clock';
-import { conversation, fingerprints, newestMatching, covers, planHistory, type Piece, type Turn } from './history';
+import { conversation, fingerprints, newestMatching, covers, planHistory, readable, type Piece, type Turn } from './history';
 import { askJson, askModel, ModelError, type Ask } from './model';
 import { buildNote, liveClock, paceLine, type ClockSources } from './note';
 import { dueThreads, keepTimes, mergeRevision, NotebookError, stamp, validateNotebook, withoutTimes, type Pace, type Preferences } from './notebook';
@@ -61,7 +61,7 @@ export class NotebookController {
       return {
         version: 1, chatId, enabled: saved.enabled === true, pace: PACES.includes(saved.pace as Pace) ? saved.pace as Pace : 'auto', preferences: validPreferences(saved.preferences),
         versions, recipe: validateRecipe(saved.recipe).recipe, checks: Array.isArray(saved.checks) ? saved.checks as ChatState['checks'] : [],
-        skipHours: Number(saved.skipHours) > 0 ? Number(saved.skipHours) : 0, skipTurn: Number(saved.skipTurn) > 0 ? Number(saved.skipTurn) : 0, needsCheck: typeof saved.needsCheck === 'string' ? saved.needsCheck : '',
+        skipHours: Number(saved.skipHours) > 0 ? Number(saved.skipHours) : 0, skipTurn: Number(saved.skipTurn) > 0 ? Number(saved.skipTurn) : 0, needsCheck: typeof saved.needsCheck === 'string' ? saved.needsCheck : '', trackerTried: saved.trackerTried === true,
         // A job cannot survive a restart; its request may or may not have finished.
         job: job && job.status === 'running' && !this.running.has(chatId) ? { ...job, status: 'failed', label: 'Stopped when Lumiverse restarted', error: 'Run it again when ready.' } : job,
         updatedAt: Number(saved.updatedAt) || 0,
@@ -76,7 +76,7 @@ export class NotebookController {
     await this.api.userStorage.setJson(this.path(state.chatId), state, { userId: this.userId });
   }
   private blank(chatId: string): ChatState {
-    return { version: 1, chatId, enabled: false, pace: 'auto', preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: '' }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: '', job: null, updatedAt: 0 };
+    return { version: 1, chatId, enabled: false, pace: 'auto', preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: '' }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: '', trackerTried: false, job: null, updatedAt: 0 };
   }
   private async chatInfo(chatId: string): Promise<{ name: string; supported: boolean; reason: string; characterId: string }> {
     const chat = await this.api.chats.get(chatId, this.userId);
@@ -170,7 +170,7 @@ export class NotebookController {
     let variables: Record<string, string> = {};
     try { variables = Object.fromEntries(Object.entries(await this.api.variables.chat.list(chatId)).slice(0, 40).map(([k, v]) => [k, String(v).slice(0, 500)])); } catch { /* none */ }
     return { character: { name: character.name, description: character.description.slice(0, 12_000), personality: character.personality.slice(0, 4000), scenario: character.scenario.slice(0, 4000), firstMessage: character.first_mes.slice(0, 6000) },
-      persona, lore, storySoFar, chat: recent, replies: turns.filter(t => t.role === 'assistant').slice(-3).map(t => t.content.slice(0, 6000)), variables };
+      persona, lore, storySoFar, chat: recent, replies: turns.filter(t => t.role === 'assistant').slice(-3).map(t => t.content.slice(0, 20_000)), variables };
   }
   private startJob(state: ChatState, kind: Job['kind'], label: string): { job: Job; signal: AbortSignal } {
     if (this.running.has(state.chatId)) throw new Error('The notebook is already being updated. Wait for it to finish.');
@@ -284,11 +284,14 @@ export class NotebookController {
     const { job, signal } = this.startJob(state, 'checkup', 'Updating the notebook');
     await this.save(state); this.changed();
     const base = live.version, read = live.prints.slice();
-    const chat = live.turns.slice(Math.max(0, base.covered.length - 4)).slice(-60).map(t => ({ role: t.role, content: t.content.slice(0, 4000) }));
+    // Words, not markup: preset panels and styling can be most of a reply.
+    const chat = live.turns.slice(Math.max(0, base.covered.length - 4)).slice(-60).map(t => ({ role: t.role, content: readable(t.content, 8000) }));
+    // The raw replies, only while a tracker still has to be learned or fixed.
+    const learning = !state.recipe.fields.length || live.state.checks.some(c => c.status === 'unavailable');
     const input = {
       notebook: { ...base.notebook, clock: live.clock }, pace: state.pace, chat, trackerText: live.text, trackerValues: live.values, trackerChecks: live.state.checks, recipe: state.recipe,
       clockOwner: { day: live.sources.day, hour: live.sources.hour }, due: dueThreads(base.notebook, live.now).map(d => ({ thread: d.thread.id, step: d.step.id })),
-      skipHours: state.skipHours, reason,
+      skipHours: state.skipHours, reason, replies: learning ? live.replies.slice(0, 2).map(r => r.slice(0, 20_000)) : [],
     };
     this.track((async () => {
       try {
@@ -429,7 +432,14 @@ export class NotebookController {
       const jumped = live.now - absoluteHours(live.version.notebook.clock) >= 6 && since >= 1;
       // After a failed check-up, wait for the story to move on before paying for another try. Check now always works.
       if (state.job?.kind === 'checkup' && state.job.status === 'failed' && state.job.failedAtTurn !== undefined && live.turns.length < state.job.failedAtTurn + 2 * Math.min(settings.every, 4)) { await this.save(state); return; }
-      const reason = state.needsCheck ? state.needsCheck : behind ? 'The chat changed since the last update' : moved ? 'The scene moved' : jumped ? 'Time moved on' : since >= settings.every ? `${since} replies since the last update` : '';
+      // A tracker that only shows up once the narrator starts writing replies is looked for once, early.
+      const findTracker = !state.recipe.fields.length && !state.trackerTried && since >= 1;
+      // An urgent development was offered: see whether it happened before offering it again.
+      // Once per stretch: if it still hasn't happened after that look, the usual every-N rule takes over.
+      const urgent = since >= 2 && live.version.reason !== 'Checking on an urgent development' && dueThreads(live.version.notebook, live.now).some(d => d.thread.speed === 'urgent');
+      const reason = state.needsCheck ? state.needsCheck : behind ? 'The chat changed since the last update' : moved ? 'The scene moved' : jumped ? 'Time moved on'
+        : findTracker ? 'Looking for your preset’s tracker' : urgent ? 'Checking on an urgent development' : since >= settings.every ? `${since} replies since the last update` : '';
+      if (findTracker) state.trackerTried = true;
       await this.save(state);
       if (reason && settings.connectionId || reason && this.ask) await this.startCheckup(chatId, reason).catch(() => null);
     });

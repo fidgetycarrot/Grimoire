@@ -5,7 +5,7 @@ import type { ReasoningMode } from './model';
 import type { FieldCheck, Recipe } from './tracker';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.1.2';
+export const VERSION = '0.1.3';
 export const MAX_VERSIONS = 12;
 
 /** One saved state of the notebook and the chat history it describes. */
@@ -20,6 +20,8 @@ export interface ChatState {
   skipTurn: number;
   /** Why the next check-up should run soon, if anything. */
   needsCheck: string;
+  /** A check-up has already looked for a tracker that appeared after the notebook was written. */
+  trackerTried: boolean;
   job: Job | null; updatedAt: number;
 }
 export interface Settings { connectionId: string; maxOutputTokens: number; reasoningMode: ReasoningMode; every: number; placement: 'auto' | 'macro' }

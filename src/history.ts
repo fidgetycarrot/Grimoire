@@ -35,24 +35,45 @@ export function newestMatching<T extends { covered: string[] }>(versions: T[], c
  * long chat's earlier part is read first in parts, into a story-so-far record.
  * Parts are capped, so even a very long chat costs a bounded number of requests.
  */
-export const RECENT = { turns: 40, chars: 40_000, perTurn: 4_000 } as const;
+export const RECENT = { turns: 40, chars: 60_000, perTurn: 8_000 } as const;
 export const EARLIER = { part: 30_000, maxPart: 60_000, maxParts: 12, perTurn: 3_000 } as const;
 export type Piece = { role: string; content: string };
+
+const KEEP_ATTRIBUTE = /^(?!style$|class$|id$|color$|face$|size$|href$|src$|width$|height$|align$|data-|aria-|role$|on)[a-z][\w-]*$/i;
+const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', '#39': "'" };
+/**
+ * A message as words, for a model to read. Presets fill replies with styling,
+ * panels, and markup; the story is the text. Style and script blocks go, tags
+ * go but their text stays, and attributes that carry facts (a header's
+ * location="…" or time="…") are kept as plain words. Then it is shortened.
+ */
+export function readable(text: string, max: number): string {
+  let s = text.replace(/<(style|script)\b[\s\S]*?<\/\1\s*>/gi, ' ').replace(/<!--[\s\S]*?-->/g, ' ');
+  s = s.replace(/<([a-z][\w:-]*)((?:\s+[\w:-]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?)*)\s*\/?>/gi, (_, tag: string, attrs: string) => {
+    const facts = [...attrs.matchAll(/([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g)]
+      .filter(m => KEEP_ATTRIBUTE.test(m[1]) && (m[2] ?? m[3] ?? m[4] ?? '').trim()).map(m => `${m[1]}: ${(m[2] ?? m[3] ?? m[4]).trim()}`);
+    return facts.length ? ` [${tag} ${facts.join('; ')}] ` : ' ';
+  }).replace(/<\/[a-z][\w:-]*\s*>/gi, ' ');
+  s = s.replace(/&(#39|[a-z]+);/gi, (m, name: string) => ENTITIES[name.toLowerCase()] ?? m)
+    .replace(/[ \t]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
+}
 export function planHistory(turns: Turn[]): { recent: Piece[]; earlier: Piece[][] } {
   const recent: Piece[] = []; let room: number = RECENT.chars, start = turns.length;
   for (let i = turns.length - 1; i >= 0; i--) {
-    const piece = turns[i].content.slice(0, RECENT.perTurn);
+    const piece = readable(turns[i].content, RECENT.perTurn);
     if (piece.length > room || recent.length >= RECENT.turns) break;
     recent.unshift({ role: turns[i].role, content: piece }); room -= piece.length; start = i;
   }
   const before = turns.slice(0, start);
   if (!before.length) return { recent, earlier: [] };
-  const total = before.reduce((sum, t) => sum + Math.min(t.content.length, EARLIER.perTurn), 0);
+  const clean = before.map(t => ({ role: t.role, content: readable(t.content, EARLIER.perTurn) }));
+  const total = clean.reduce((sum, t) => sum + t.content.length, 0);
   let size = Math.min(Math.max(EARLIER.part, Math.ceil(total / EARLIER.maxParts)), EARLIER.maxPart), perTurn: number = EARLIER.perTurn;
   const split = () => {
     const parts: Piece[][] = []; let part: Piece[] = [], used = 0;
-    for (const turn of before) {
-      const piece = turn.content.slice(0, perTurn);
+    for (const turn of clean) {
+      const piece = turn.content.length > perTurn ? `${turn.content.slice(0, perTurn - 1)}…` : turn.content;
       if (part.length && used + piece.length > size) { parts.push(part); part = []; used = 0; }
       part.push({ role: turn.role, content: piece }); used += piece.length;
     }

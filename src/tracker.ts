@@ -13,6 +13,7 @@ export type FieldSource =
   | { kind: 'variable'; name: string }
   | { kind: 'line'; label: string; region: Region }
   | { kind: 'tag'; tag: string; region: Region }
+  | { kind: 'attribute'; tag: string; attribute: string; region: Region }
   | { kind: 'json'; path: string; region: Region };
 export interface RecipeField { name: string; type: FieldType; source: FieldSource }
 export interface Recipe { fields: RecipeField[]; note: string }
@@ -38,12 +39,13 @@ function source(value: unknown): FieldSource {
   if (input.kind === 'variable' && typeof input.name === 'string' && VARIABLE.test(input.name)) return { kind: 'variable', name: input.name };
   if (input.kind === 'line' && typeof input.label === 'string' && input.label.trim() && input.label.length <= 60 && !/[\n\r]/.test(input.label)) return { kind: 'line', label: input.label.trim(), region: region(input.region) };
   if (input.kind === 'tag' && typeof input.tag === 'string' && TAG.test(input.tag)) return { kind: 'tag', tag: input.tag, region: region(input.region) };
+  if (input.kind === 'attribute' && typeof input.tag === 'string' && TAG.test(input.tag) && typeof input.attribute === 'string' && TAG.test(input.attribute)) return { kind: 'attribute', tag: input.tag, attribute: input.attribute, region: region(input.region) };
   if (input.kind === 'json' && typeof input.path === 'string' && PATH.test(input.path)) {
     const area = region(input.region);
     if (area.kind === 'whole') fail('A JSON field needs a tag or fenced block to read from.');
     return { kind: 'json', path: input.path, region: area };
   }
-  return fail('A tracker field must be read from a saved variable, a labeled line, a tag, or a JSON path.');
+  return fail('A tracker field must be read from a saved variable, a labeled line, a tag, a tag attribute, or a JSON path.');
 }
 /** Accept only the described methods. Anything else is dropped field by field, never run. */
 export function validateRecipe(value: unknown): { recipe: Recipe; dropped: number } {
@@ -88,6 +90,12 @@ export function readField(field: RecipeField, reply: string, variables: Record<s
     if (from.kind === 'line') {
       const line = new RegExp(`^[\\s>*_\\-•|#]*(?:\\*\\*|__)?${escape(from.label)}(?:\\*\\*|__)?\\s*(?::|：|=|-|–|—)\\s*(.+)$`, 'im').exec(part);
       if (line && plain(line[1])) return plain(line[1]);
+    } else if (from.kind === 'attribute') {
+      // <scene_header location="…" time="…" /> : the last such tag in the area wins.
+      const pattern = new RegExp(`<${escape(from.tag)}\\b[^>]*?\\s${escape(from.attribute)}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, 'gi');
+      const found = [...part.matchAll(pattern)].at(-1);
+      const value = found ? plain(found[1] ?? found[2] ?? '') : '';
+      if (value) return value;
     } else if (from.kind === 'tag') {
       const tag = new RegExp(`<${escape(from.tag)}(?:\\s[^>]*)?>([\\s\\S]*?)</${escape(from.tag)}>`, 'i').exec(part);
       if (tag && plain(tag[1])) return plain(tag[1]);
@@ -137,7 +145,12 @@ export function readTracker(recipe: Recipe, checks: FieldCheck[], replies: strin
 }
 /** The tracker's raw block from the newest reply, for check-ups to read as plain text. */
 export function trackerText(recipe: Recipe, reply: string): string {
-  const regions = recipe.fields.map(field => field.source.kind === 'variable' ? null : field.source.region).filter((r): r is Region => !!r && r.kind !== 'whole');
-  for (const area of regions) { const found = areas(reply, area)[0]; if (found?.trim()) return found.trim().slice(0, 2000); }
-  return '';
+  const pieces = new Set<string>();
+  for (const field of recipe.fields) {
+    const from = field.source;
+    if (from.kind === 'variable') continue;
+    if (from.kind === 'attribute') { const tag = [...reply.matchAll(new RegExp(`<${escape(from.tag)}\\b[^>]*>`, 'gi'))].at(-1)?.[0]; if (tag) pieces.add(tag); }
+    if (from.region.kind !== 'whole') { const found = areas(reply, from.region)[0]?.trim(); if (found) pieces.add(found); }
+  }
+  return [...pieces].join('\n').slice(0, 2000);
 }
