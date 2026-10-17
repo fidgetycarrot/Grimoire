@@ -59,7 +59,7 @@ function nextStep(thread, now) {
 }
 
 // src/types.ts
-var VERSION = "0.1.3";
+var VERSION = "0.2.0";
 
 // src/frontend.ts
 var ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8 3v18"/><path d="M12 8h3M12 12h3"/></svg>';
@@ -313,6 +313,9 @@ function setup(ctx) {
     const skipRow = el("div", "gm-grid");
     skipRow.append(labeled("Skip ahead by", amount), labeled("Unit", unit));
     card.append(el("h4", "", "Story controls"), el("p", "gm-small", view.summary || "No updates yet."), el("p", "gm-hint", `${view.repliesSinceCheck} ${view.repliesSinceCheck === 1 ? "reply" : "replies"} since the last update${view.updatedAt ? ` · saved ${ago(view.updatedAt)}` : ""}`), check, el("p", "gm-hint", "Check now reads the latest chat and updates the plan. Check-ups also run on their own when a scene changes, time jumps, or enough replies pass."), skipRow, skip);
+    const quick = snapshot?.settings.quick.enabled ? view.quick : undefined;
+    if (snapshot?.settings.quick.enabled)
+      card.insertBefore(el("p", quick && !quick.ok ? "gm-notice" : "gm-hint", !quick ? "Quick check is on. It runs after the next reply." : quick.ok ? `Quick check ran ${ago(quick.at)}.` : `The last quick check didn’t run: ${quick.error}`), check);
     return card;
   }
   function renderTracker(view) {
@@ -499,7 +502,7 @@ function setup(ctx) {
     body.append(remove);
   }
   function renderSettings() {
-    const settings = { ...snapshot?.settings ?? { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto" } };
+    const settings = { ...snapshot?.settings ?? { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto", quick: { enabled: false, connectionId: "", model: "" } } };
     const card = el("section", "gm-card gm-stack");
     const connection = select([["", "Choose a connection"], ...(snapshot?.connections ?? []).map((c) => [c.id, `${c.name}${c.model ? ` · ${c.model}` : ""}`])], settings.connectionId);
     const every = el("input");
@@ -512,11 +515,36 @@ function setup(ctx) {
     const placement = select([["auto", "Added for me"], ["macro", "In my preset, with {{grimoire_note}}"]], settings.placement);
     const grid = el("div", "gm-grid");
     grid.append(labeled("Response room (tokens)", tokens), labeled("Reasoning", reasoning));
-    card.append(el("h2", "", "Settings"), labeled("Model connection", connection, "Used to write notebooks and run check-ups. Your chat keeps its own connection. A cheaper model may do, but test it on a chat first."), labeled("Check-up after this many replies", every, "A fallback. Check-ups also run when the scene changes or time jumps."), grid, labeled("Where the note goes", placement, "Added for me puts a short private note before each reply. If your preset uses {{grimoire_note}}, choose that so the note is never added twice. {{grimoire_clock}} and {{grimoire_pace}} work either way."), button("Save settings", async () => {
-      await act("settings", { settings: { connectionId: connection.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, placement: placement.value } });
+    card.append(el("h2", "", "Settings"), labeled("Model connection", connection, "Used to write notebooks and run check-ups. Your chat keeps its own connection. A cheaper model may do, but test it on a chat first."), labeled("Check-up after this many replies", every, "A fallback. Check-ups also run when the scene changes or time jumps."), grid, labeled("Where the note goes", placement, "Added for me puts a short private note before each reply. If your preset uses {{grimoire_note}}, choose that so the note is never added twice. {{grimoire_clock}} and {{grimoire_pace}} work either way."));
+    const decisions = snapshot?.decisions ?? { available: false, reason: "", connections: [] };
+    const quickCard = el("section", "gm-card gm-stack");
+    const quickRow = el("label", "gm-switch"), quickOn = el("input");
+    quickOn.type = "checkbox";
+    quickOn.checked = settings.quick.enabled;
+    quickOn.setAttribute("role", "switch");
+    quickOn.setAttribute("aria-label", "Quick check after each reply");
+    quickRow.append(el("h3", "", "Quick check after each reply"), quickOn);
+    const fallback = decisions.connections.find((c) => c.isDefault);
+    const decision = select([["", fallback ? `Your default: ${fallback.name}${fallback.model ? ` · ${fallback.model}` : ""}` : "Your default decision connection"], ...decisions.connections.map((c) => [c.id, `${c.name}${c.model ? ` · ${c.model}` : ""}`])], settings.quick.connectionId);
+    const model = el("input");
+    model.type = "text";
+    model.value = settings.quick.model;
+    model.placeholder = "Leave empty to use the connection’s model";
+    model.spellcheck = false;
+    quickCard.append(quickRow, el("p", "gm-hint", "A small decision model reads each new reply and answers a few yes-or-no questions: did a planned development happen, how intense is the scene, did something new come up. The notebook stays current between check-ups, and a full check-up runs only when it’s needed. One small request per reply."));
+    if (!decisions.available) {
+      quickOn.disabled = true;
+      quickCard.append(el("p", "gm-notice", decisions.reason || "Decision models aren’t available."));
+    } else {
+      if (!decisions.connections.length)
+        quickCard.append(el("p", "gm-notice", "Add a decision connection in Lumiverse’s connection settings first (OpenRouter or TypeSafe)."));
+      quickCard.append(labeled("Decision connection", decision), labeled("Model", model, "Any decision model works. Type its exact ID to use a different one than the connection’s, like ~typesafe/jev-latest."));
+    }
+    const save = button("Save settings", async () => {
+      await act("settings", { settings: { connectionId: connection.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, placement: placement.value, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } });
       notify("Settings saved.");
-    }, "primary"));
-    body.append(card);
+    }, "primary");
+    body.append(card, quickCard, save);
   }
   function render() {
     if (destroyed)

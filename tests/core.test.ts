@@ -295,3 +295,31 @@ describe('messages as words', () => {
     expect(readable('x'.repeat(50), 10)).toHaveLength(10);
   });
 });
+
+describe('quick check answers', () => {
+  const { quickQuestions, applyQuick } = require('../src/quick');
+  const { prune } = require('../src/controller');
+  test('only confident answers move the story, and only forward', () => {
+    const nb = stamp(validateNotebook(sampleNotebook()), absoluteHours({ day: 1, hour: 18 }));
+    nb.threads[1].steps[0].afterHours = 0;
+    nb.beats[1].status = 'dropped';
+    const plan = quickQuestions(nb, absoluteHours({ day: 1, hour: 18 }));
+    expect(Object.keys(plan.questions)).toEqual(['due_1', 'moment_1', 'rhythm', 'new_turn']);
+    const out = applyQuick(nb, plan, { model: 'm', answers: { due_1: { type: 'noul', noul: 0.9 }, moment_1: { type: 'noul', noul: 0.69 }, rhythm: { type: 'choice', choice: 'nonsense', probabilities: {}, confidence: 1 }, new_turn: { type: 'noul', noul: 0.2 } } }, 99);
+    expect(out.notebook.threads[1].steps[0]).toMatchObject({ status: 'shown', at: 99 });
+    expect(out.notebook.beats[0].status).toBe('possible');
+    expect(out.notebook.rhythm).toBe('calm');
+    expect(out).toMatchObject({ changed: true, marked: 1, needsCheckup: false });
+    // Something a check-up already settled is left alone.
+    const settled = structuredClone(nb); settled.threads[1].steps[0].status = 'skipped';
+    expect(applyQuick(settled, plan, { model: 'm', answers: { due_1: { type: 'noul', noul: 1 } } }, 99).notebook.threads[1].steps[0].status).toBe('skipped');
+  });
+  test('pruning keeps the first version and the last full update', () => {
+    const v = (reason: string, quick = false) => ({ notebook: sampleNotebook(), covered: [], at: 0, reason, ...(quick ? { quick: true } : {}) });
+    const versions = [v('Notebook written'), v('Check-up'), ...Array.from({ length: 20 }, (_, i) => v(`Quick ${i}`, true))];
+    const kept = prune(versions);
+    expect(kept).toHaveLength(16);
+    expect(kept.map((x: any) => x.reason).slice(0, 3)).toEqual(['Notebook written', 'Check-up', 'Quick 6']);
+    expect(kept.at(-1).reason).toBe('Quick 19');
+  });
+});

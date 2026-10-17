@@ -6,6 +6,8 @@ import { buildNote, liveClock, paceLine, type ClockSources } from './note';
 import { dueThreads, keepTimes, mergeRevision, NotebookError, stamp, validateNotebook, withoutTimes, type Pace, type Preferences } from './notebook';
 import { checkupMessages, creationMessages, digestMessages, type Material } from './prompts';
 import { plainBlock, tidyNotebook } from './tidy';
+import { applyQuick, quickError, quickQuestions, quickState } from './quick';
+import type { DecisionResult } from 'lumiverse-spindle-types';
 import { checkRecipe, readTracker, trackerText, validateRecipe, type FieldType, type Recipe } from './tracker';
 import { DEFAULT_PREFERENCES, DEFAULT_SETTINGS, MAX_VERSIONS, VERSION, type ChatState, type ChatView, type Job, type Settings, type Snapshot, type Version } from './types';
 
@@ -18,14 +20,28 @@ function validPreferences(value: unknown): Preferences {
   const v = record(value);
   return { length: ['short', 'medium', 'long'].includes(v.length as string) ? v.length as Preferences['length'] : 'medium', tone: ['light', 'balanced', 'dark'].includes(v.tone as string) ? v.tone as Preferences['tone'] : 'balanced', twist: v.twist !== false };
 }
+/**
+ * Keep the base version, the newest full update, and the most recent ones.
+ * Quick checks add versions often; they must not push out the last check-up.
+ */
+export function prune(versions: Version[]): Version[] {
+  if (versions.length <= MAX_VERSIONS) return versions;
+  let lastFull = 0;
+  versions.forEach((v, i) => { if (!v.quick) lastFull = i; });
+  const keep = new Set([0, lastFull]);
+  for (let i = versions.length - 1; i >= 0 && keep.size < MAX_VERSIONS; i--) keep.add(i);
+  return versions.filter((_, i) => keep.has(i));
+}
+const plainSetting = (v: unknown, max: number) => typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, max) : '';
 export function validSettings(value: unknown): Settings {
-  const v = record(value), every = Number(v.every), tokens = Number(v.maxOutputTokens);
+  const v = record(value), every = Number(v.every), tokens = Number(v.maxOutputTokens), quick = record(v.quick);
   return {
     connectionId: typeof v.connectionId === 'string' ? v.connectionId : '',
     maxOutputTokens: [8000, 16000, 32000, 64000].includes(tokens) ? tokens : DEFAULT_SETTINGS.maxOutputTokens,
     reasoningMode: ['inherit', 'off', 'low'].includes(v.reasoningMode as string) ? v.reasoningMode as Settings['reasoningMode'] : 'inherit',
     every: Number.isInteger(every) && every >= 2 && every <= 50 ? every : DEFAULT_SETTINGS.every,
     placement: v.placement === 'macro' ? 'macro' : 'auto',
+    quick: { enabled: quick.enabled === true, connectionId: plainSetting(quick.connectionId, 120), model: plainSetting(quick.model, 200) },
   };
 }
 
@@ -37,6 +53,7 @@ export function validSettings(value: unknown): Settings {
 export class NotebookController {
   private queues = new Map<string, Promise<unknown>>();
   private running = new Map<string, AbortController>();
+  private quickRunning = new Set<string>();
   private tasks = new Set<Promise<void>>();
   constructor(private api: SpindleAPI, private userId?: string, private changed: () => void = () => {}, private ask?: Ask) {}
 
@@ -55,13 +72,14 @@ export class NotebookController {
       const versions = (Array.isArray(saved.versions) ? saved.versions : []).map((v): Version => {
         const item = record(v);
         if (!Array.isArray(item.covered) || !item.covered.every(x => typeof x === 'string')) throw new Error('Bad version');
-        return { notebook: validateNotebook(item.notebook), covered: item.covered as string[], at: Number(item.at) || 0, reason: String(item.reason ?? ''), ...(typeof item.location === 'string' ? { location: item.location } : {}) };
+        return { notebook: validateNotebook(item.notebook), covered: item.covered as string[], at: Number(item.at) || 0, reason: String(item.reason ?? ''), ...(typeof item.location === 'string' ? { location: item.location } : {}), ...(item.quick === true ? { quick: true as const } : {}) };
       });
       const job = saved.job ? record(saved.job) as unknown as Job : null;
       return {
         version: 1, chatId, enabled: saved.enabled === true, pace: PACES.includes(saved.pace as Pace) ? saved.pace as Pace : 'auto', preferences: validPreferences(saved.preferences),
         versions, recipe: validateRecipe(saved.recipe).recipe, checks: Array.isArray(saved.checks) ? saved.checks as ChatState['checks'] : [],
         skipHours: Number(saved.skipHours) > 0 ? Number(saved.skipHours) : 0, skipTurn: Number(saved.skipTurn) > 0 ? Number(saved.skipTurn) : 0, needsCheck: typeof saved.needsCheck === 'string' ? saved.needsCheck : '', trackerTried: saved.trackerTried === true,
+        quick: saved.quick && typeof saved.quick === 'object' ? { at: Number(record(saved.quick).at) || 0, ok: record(saved.quick).ok === true, error: String(record(saved.quick).error ?? '').slice(0, 200) } : null,
         // A job cannot survive a restart; its request may or may not have finished.
         job: job && job.status === 'running' && !this.running.has(chatId) ? { ...job, status: 'failed', label: 'Stopped when Lumiverse restarted', error: 'Run it again when ready.' } : job,
         updatedAt: Number(saved.updatedAt) || 0,
@@ -76,7 +94,7 @@ export class NotebookController {
     await this.api.userStorage.setJson(this.path(state.chatId), state, { userId: this.userId });
   }
   private blank(chatId: string): ChatState {
-    return { version: 1, chatId, enabled: false, pace: 'auto', preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: '' }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: '', trackerTried: false, job: null, updatedAt: 0 };
+    return { version: 1, chatId, enabled: false, pace: 'auto', preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: '' }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: '', trackerTried: false, quick: null, job: null, updatedAt: 0 };
   }
   private async chatInfo(chatId: string): Promise<{ name: string; supported: boolean; reason: string; characterId: string }> {
     const chat = await this.api.chats.get(chatId, this.userId);
@@ -105,7 +123,12 @@ export class NotebookController {
     state.checks = checks;
     return { state, turns, prints, index, version, replies, values, types, clock, sources, now: absoluteHours(clock), text: replies[0] ? trackerText(state.recipe, replies[0]) : '' };
   }
-  private repliesSince(live: Live) { return live.turns.slice(live.version.covered.length).filter(t => t.role === 'assistant').length; }
+  /** The newest full update at or before the version in use. Quick checks keep the notebook current, but don't count as a check-up. */
+  private fullVersion(live: Live): Version {
+    for (let i = live.index; i >= 0; i--) if (!live.state.versions[i].quick) return live.state.versions[i];
+    return live.state.versions[0];
+  }
+  private repliesSince(live: Live) { return live.turns.slice(this.fullVersion(live).covered.length).filter(t => t.role === 'assistant').length; }
 
   async view(chatId: string | null): Promise<ChatView | null> {
     if (!chatId) return null;
@@ -121,9 +144,9 @@ export class NotebookController {
       return {
         chatId, name: info.name, supported: info.supported, reason: info.reason, enabled: state.enabled, pace: state.pace, preferences: state.preferences,
         // Only code-made words reach the panel outside the spoiler fold; a model-written line could give something away.
-        hasNotebook: !!notebook, summary: live ? `Last update: ${live.version.reason}` : '', clock: live?.clock ?? null, clockText: live ? describeClock(live.clock) : '', sources: live?.sources ?? null,
+        hasNotebook: !!notebook, summary: live ? `Last update: ${this.fullVersion(live).reason}` : '', clock: live?.clock ?? null, clockText: live ? describeClock(live.clock) : '', sources: live?.sources ?? null,
         checks: live ? state.checks : [], needsCheck: state.needsCheck || (live && live.index !== state.versions.length - 1 ? 'The chat changed since the last update.' : ''),
-        job: state.job, updatedAt: state.updatedAt, repliesSinceCheck: live ? this.repliesSince(live) : 0, skipHours: state.skipHours, notebook, behind: !!live && live.index !== state.versions.length - 1, earlierParts,
+        job: state.job, updatedAt: state.updatedAt, repliesSinceCheck: live ? this.repliesSince(live) : 0, skipHours: state.skipHours, notebook, behind: !!live && live.index !== state.versions.length - 1, earlierParts, quick: state.quick,
       };
     });
   }
@@ -134,7 +157,9 @@ export class NotebookController {
     let chat: ChatView | null = null, notice = '';
     for (const need of ['chats', 'chat_mutation', 'characters', 'interceptor', 'generation']) if (!permissions.includes(need)) notice = `Grant ${need} in Lumiverse’s Extensions panel so Grimoire can work.`;
     try { chat = permissions.includes('chats') ? await this.view(chatId) : null; } catch (error) { notice = error instanceof Error ? error.message : 'This chat could not be read.'; }
-    return { version: VERSION, permissions, connections, settings: await this.settings(), chat, notice };
+    const decisions: Snapshot['decisions'] = { available: this.decisionsReady(), reason: this.decisionsReason(), connections: [] };
+    if (decisions.available) { try { decisions.connections = (await this.api.decisions.listConnections(this.userId ? { userId: this.userId } : undefined)).map(c => ({ id: c.id, name: c.name, provider: c.provider, model: c.model, isDefault: c.is_default })); } catch { /* unavailable */ } }
+    return { version: VERSION, permissions, connections, settings: await this.settings(), chat, notice, decisions };
   }
 
   // ----- Writing the notebook -------------------------------------------------
@@ -285,7 +310,8 @@ export class NotebookController {
     await this.save(state); this.changed();
     const base = live.version, read = live.prints.slice();
     // Words, not markup: preset panels and styling can be most of a reply.
-    const chat = live.turns.slice(Math.max(0, base.covered.length - 4)).slice(-60).map(t => ({ role: t.role, content: readable(t.content, 8000) }));
+    // From the last full check-up: quick checks don't read the story for the notebook.
+    const chat = live.turns.slice(Math.max(0, this.fullVersion(live).covered.length - 4)).slice(-60).map(t => ({ role: t.role, content: readable(t.content, 8000) }));
     // The raw replies, only while a tracker still has to be learned or fixed.
     const learning = !state.recipe.fields.length || live.state.checks.some(c => c.status === 'unavailable');
     const input = {
@@ -320,7 +346,7 @@ export class NotebookController {
           const version: Version = { notebook: { ...result.notebook, clock }, covered: read, at: Date.now(), reason, ...(live.values.location ? { location: live.values.location } : {}) };
           // Keep the base version and anything before it; drop versions from a history that no longer matches.
           const kept = current.versions.filter((v, i) => i === 0 || covers(v.covered, read));
-          current.versions = [kept[0], ...kept.slice(1).slice(-(MAX_VERSIONS - 2)), version].filter((v, i, all) => all.indexOf(v) === i);
+          current.versions = prune([...kept, version].filter((v, i, all) => all.indexOf(v) === i));
           current.needsCheck = '';
           current.job = { ...job, status: 'complete', label: 'Notebook updated' };
           await this.save(current);
@@ -353,7 +379,7 @@ export class NotebookController {
       const moved = advanceClock(live.version.notebook.clock, hours);
       const clock = { day: live.sources.day === 'tracker' ? live.version.notebook.clock.day : moved.day, hour: live.sources.hour === 'tracker' ? live.version.notebook.clock.hour : moved.hour, label: '' };
       state.versions.push({ ...live.version, notebook: { ...live.version.notebook, clock }, covered: live.prints, at: Date.now(), reason: 'Time skip' });
-      state.versions = [state.versions[0], ...state.versions.slice(1).slice(-(MAX_VERSIONS - 1))];
+      state.versions = prune(state.versions);
       state.skipHours = (state.skipHours || 0) + hours;
       state.skipTurn = live.turns.length;
       state.needsCheck = 'Time skip';
@@ -372,7 +398,7 @@ export class NotebookController {
       // Your edits may remove things; only the recorded times are carried over.
       const edited = keepTimes(live.version.notebook, validateNotebook(value), live.now);
       state.versions.push({ ...live.version, notebook: edited, at: Date.now(), reason: 'Edited by you' });
-      state.versions = [state.versions[0], ...state.versions.slice(1).slice(-(MAX_VERSIONS - 1))];
+      state.versions = prune(state.versions);
       await this.save(state);
     });
   }
@@ -417,32 +443,94 @@ export class NotebookController {
     return { messages: [...messages.slice(0, at), { role: 'system', content: note }, ...messages.slice(at)], breakdown: [{ messageIndex: at, name: 'Grimoire' }] };
   }
 
-  /** After a reply is saved: clear a mentioned time skip and start a check-up when the story has moved. */
+  /**
+   * After a reply is saved: clear a mentioned time skip, run the quick check if
+   * it is on, and start a check-up when the story has moved.
+   */
   async afterReply(chatId: string, generationType: string | undefined): Promise<void> {
-    await this.serial(chatId, async () => {
+    const quick = await this.serial(chatId, async () => {
       const state = await this.load(chatId);
-      if (!state?.enabled || !state.versions.length || this.running.has(chatId)) return;
+      if (!state?.enabled || !state.versions.length || this.running.has(chatId)) return null;
       const live = await this.live(state, await this.api.chat.getMessages(chatId));
-      if (!live) return;
+      if (!live) return null;
       // The skip has been told once a new reply exists after it.
       if (state.skipHours && live.turns.length > (state.skipTurn ?? 0) && live.turns.at(-1)?.role === 'assistant' && (generationType ?? 'normal') !== 'continue') { state.skipHours = 0; state.skipTurn = 0; }
-      const settings = await this.settings(), since = this.repliesSince(live);
-      const behind = live.index !== state.versions.length - 1;
-      const moved = !!live.values.location && !!live.version.location && live.values.location.toLowerCase() !== live.version.location.toLowerCase() && since >= 2;
-      const jumped = live.now - absoluteHours(live.version.notebook.clock) >= 6 && since >= 1;
-      // After a failed check-up, wait for the story to move on before paying for another try. Check now always works.
-      if (state.job?.kind === 'checkup' && state.job.status === 'failed' && state.job.failedAtTurn !== undefined && live.turns.length < state.job.failedAtTurn + 2 * Math.min(settings.every, 4)) { await this.save(state); return; }
-      // A tracker that only shows up once the narrator starts writing replies is looked for once, early.
-      const findTracker = !state.recipe.fields.length && !state.trackerTried && since >= 1;
-      // An urgent development was offered: see whether it happened before offering it again.
-      // Once per stretch: if it still hasn't happened after that look, the usual every-N rule takes over.
-      const urgent = since >= 2 && live.version.reason !== 'Checking on an urgent development' && dueThreads(live.version.notebook, live.now).some(d => d.thread.speed === 'urgent');
-      const reason = state.needsCheck ? state.needsCheck : behind ? 'The chat changed since the last update' : moved ? 'The scene moved' : jumped ? 'Time moved on'
-        : findTracker ? 'Looking for your preset’s tracker' : urgent ? 'Checking on an urgent development' : since >= settings.every ? `${since} replies since the last update` : '';
-      if (findTracker) state.trackerTried = true;
-      await this.save(state);
-      if (reason && settings.connectionId || reason && this.ask) await this.startCheckup(chatId, reason).catch(() => null);
+      const settings = await this.settings();
+      // The quick check runs outside the chat's queue so the next reply's note never waits on it.
+      if (settings.quick.enabled && this.decisionsReady() && !this.quickRunning.has(chatId) && live.turns.at(-1)?.role === 'assistant') { await this.save(state); return { live, settings }; }
+      await this.decide(state, live, settings, '');
+      return null;
     });
+    if (quick) this.runQuick(chatId, quick.live, quick.settings);
+  }
+  /** Must run inside the chat's queue. Saves the state, then starts a check-up if one is due. */
+  private async decide(state: ChatState, live: Live, settings: Settings, extra: string) {
+    const chatId = state.chatId, full = this.fullVersion(live), since = this.repliesSince(live);
+    const behind = live.index !== state.versions.length - 1;
+    const moved = !!live.values.location && !!full.location && live.values.location.toLowerCase() !== full.location.toLowerCase() && since >= 2;
+    const jumped = live.now - absoluteHours(full.notebook.clock) >= 6 && since >= 1;
+    // After a failed check-up, wait for the story to move on before paying for another try. Check now always works.
+    if (state.job?.kind === 'checkup' && state.job.status === 'failed' && state.job.failedAtTurn !== undefined && live.turns.length < state.job.failedAtTurn + 2 * Math.min(settings.every, 4)) { await this.save(state); return; }
+    // A tracker that only shows up once the narrator starts writing replies is looked for once, early.
+    const findTracker = !state.recipe.fields.length && !state.trackerTried && since >= 1;
+    // An urgent development was offered: see whether it happened before offering it again, once per stretch.
+    // The quick check answers this itself, so it is only needed without one.
+    const urgent = !(settings.quick.enabled && this.decisionsReady()) && since >= 2 && full.reason !== 'Checking on an urgent development' && dueThreads(live.version.notebook, live.now).some(d => d.thread.speed === 'urgent');
+    const reason = state.needsCheck ? state.needsCheck : behind ? 'The chat changed since the last update' : extra ? extra : moved ? 'The scene moved' : jumped ? 'Time moved on'
+      : findTracker ? 'Looking for your preset’s tracker' : urgent ? 'Checking on an urgent development' : since >= settings.every ? `${since} replies since the last update` : '';
+    if (findTracker) state.trackerTried = true;
+    await this.save(state);
+    if (reason && settings.connectionId || reason && this.ask) await this.startCheckup(chatId, reason).catch(() => null);
+  }
+
+  // ----- The quick check ----------------------------------------------------------
+  private decisionsReady(): boolean {
+    const host = (this.api as { host?: { capabilities?: Record<string, number> } }).host;
+    return this.api.permissions.has('decisions') && (host?.capabilities?.['decisions-v1'] ?? 0) >= 1 && typeof this.api.decisions?.evaluate === 'function';
+  }
+  private decisionsReason(): string {
+    const host = (this.api as { host?: { capabilities?: Record<string, number> } }).host;
+    if ((host?.capabilities?.['decisions-v1'] ?? 0) < 1 || !this.api.decisions) return 'This version of Lumiverse doesn’t offer decision models. Update Lumiverse to use the quick check.';
+    if (!this.api.permissions.has('decisions')) return 'Grant decisions in Lumiverse’s Extensions panel to use the quick check.';
+    return '';
+  }
+  private runQuick(chatId: string, live: Live, settings: Settings) {
+    this.quickRunning.add(chatId);
+    const task = (async () => {
+      const plan = quickQuestions(live.version.notebook, live.now);
+      const reply = live.turns.at(-1)!, player = [...live.turns].reverse().find(t => t.role === 'user');
+      let result: DecisionResult | null = null, error = '';
+      try {
+        result = await this.api.decisions.evaluate({
+          ...(settings.quick.connectionId ? { connection_id: settings.quick.connectionId } : {}), ...(settings.quick.model ? { model: settings.quick.model } : {}),
+          state: quickState(live.version.notebook, live.clock, readable(player?.content ?? '', 2000), readable(reply.content, 8000)), questions: plan.questions,
+          ...(this.userId ? { userId: this.userId } : {}),
+        }, { signal: AbortSignal.timeout(35_000) });
+      } catch (e) { error = quickError(e); }
+      await this.serial(chatId, async () => {
+        const state = await this.load(chatId);
+        if (!state?.enabled || !state.versions.length) return;
+        const messages = await this.api.chat.getMessages(chatId);
+        let now = await this.live(state, messages);
+        if (!now) return;
+        state.quick = { at: Date.now(), ok: !!result, error };
+        let extra = '';
+        // The reply it judged must still be in the chat. A swipe or edit meanwhile means the answers are about a reply that is gone.
+        if (result && covers(live.prints, now.prints)) {
+          const outcome = applyQuick(now.version.notebook, plan, result, now.now);
+          if (outcome.changed) {
+            state.versions.push({ notebook: outcome.notebook, covered: live.prints, at: Date.now(), reason: 'Quick check', quick: true, ...(now.values.location ? { location: now.values.location } : {}) });
+            state.versions = prune(state.versions);
+            now = (await this.live(state, messages))!;
+          }
+          if (outcome.needsCheckup) extra = 'Something new happened in the story';
+        }
+        // A check-up can't start while one runs; the next reply looks again.
+        if (this.running.has(chatId)) { await this.save(state); return; }
+        await this.decide(state, now, settings, extra);
+      });
+    })();
+    this.track(task.catch(() => {}).finally(() => { this.quickRunning.delete(chatId); this.changed(); }));
   }
   /** A forked chat starts with a copy; history matching sorts out where they part. */
   async fork(sourceChatId: string, forkedChatId: string) {

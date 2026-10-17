@@ -1,7 +1,7 @@
 {
   "name": "Grimoire",
   "identifier": "lumiverse_grimoire",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "author": "fidgetycarrot",
   "github": "https://github.com/fidgetycarrot/Grimoire",
   "homepage": "https://github.com/fidgetycarrot/Grimoire#readme",
@@ -13,7 +13,8 @@
     "chat_mutation",
     "characters",
     "personas",
-    "world_books"
+    "world_books",
+    "decisions"
   ],
   "entry_backend": "dist/backend.js",
   "entry_frontend": "dist/frontend.js",

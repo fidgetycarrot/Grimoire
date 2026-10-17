@@ -11,12 +11,13 @@ const recipe = { fields: [
   { name: 'present', type: 'list', source: { kind: 'line', label: 'Present', region: { kind: 'tag', tag: 'status' } } },
 ], note: 'status block' };
 
-function host(options: { group?: boolean; granted?: string[] } = {}) {
+function host(options: { group?: boolean; granted?: string[]; decide?: (input: any) => unknown; noDecisionsHost?: boolean } = {}) {
   const storage = new Map<string, unknown>();
   const messages: any[] = [];
   let index = 0;
   const add = (role: 'user' | 'assistant', content: string) => { const m = { id: `m${index}`, role, content, index_in_chat: index++, swipe_id: 0, swipes: [content], metadata: {} }; messages.push(m); return m; };
-  const granted = options.granted ?? ['generation', 'interceptor', 'chats', 'chat_mutation', 'characters', 'personas', 'world_books'];
+  const granted = options.granted ?? ['generation', 'interceptor', 'chats', 'chat_mutation', 'characters', 'personas', 'world_books', 'decisions'];
+  const decisionCalls: any[] = [];
   const api = {
     permissions: { has: (p: string) => granted.includes(p), getGranted: async () => [...granted] },
     userStorage: {
@@ -31,8 +32,13 @@ function host(options: { group?: boolean; granted?: string[] } = {}) {
     chat: { getMessages: async () => { if (!granted.includes('chat_mutation')) throw new Error('PERMISSION_DENIED: chat_mutation — Chat mutation permission not granted'); return structuredClone(messages); } },
     variables: { chat: { list: async () => ({}) } },
     connections: { list: async () => [{ id: 'model', name: 'Model', model: 'test', provider: 'test' }] },
+    host: { descriptorVersion: 1, lumiverseVersion: 'test', capabilities: options.noDecisionsHost ? {} : { 'decisions-v1': 1 }, extensionInstallationId: 'x' },
+    decisions: {
+      listConnections: async () => [{ id: 'jev', name: 'Jev', provider: 'typesafe', model: '~typesafe/jev-latest', is_default: true }],
+      evaluate: async (input: any) => { decisionCalls.push(input); const out = options.decide?.(input); if (out instanceof Error) throw out; return out; },
+    },
   } as unknown as SpindleAPI;
-  return { api, storage, messages, add };
+  return { api, storage, messages, add, decisionCalls };
 }
 /** A scripted model: creation and check-up answers come from the given functions. */
 function model(answers: { create?: (input: any) => unknown; checkup?: (input: any) => unknown; digest?: (input: any) => unknown }) {
@@ -328,6 +334,99 @@ describe('presets that show their tracker only after the first replies', () => {
     // Still not shown after that look: no repeat every two replies.
     for (const line of ['I wait.', 'I wait again.']) { h.add('user', line); h.add('assistant', `${header('6:10 PM', 'The ferry')}Still windy.`); await c.afterReply('chat-1', 'normal'); await c.waitForJobs(); }
     expect(m.calls.filter(x => x.task === 'grimoire-checkup-v1')).toHaveLength(1);
+  });
+});
+
+describe('the quick check', () => {
+  const noul = (p: number) => ({ type: 'noul', noul: p });
+  const answers = (over: Record<string, unknown> = {}) => (input: any) => ({ model: 'jev', answers: {
+    ...Object.fromEntries(Object.keys(input.questions).map(k => [k, input.questions[k].type === 'noul' ? noul(0.1) : { type: 'choice', choice: 'rising', probabilities: { rising: 0.9 }, confidence: 0.9 }])), ...over } });
+  // The storm thread's first step is due at once, so the note offers it.
+  const urgentNotebook = () => { const n: any = sampleNotebook(); n.threads[1].steps[0].afterHours = 0; return { notebook: n, tracker: recipe }; };
+  async function quickReady(decide: (input: any) => unknown, extra: Partial<Parameters<typeof host>[0]> = {}) {
+    const h = host({ decide, ...extra });
+    h.add('assistant', `The ferry bell rings.${tracker('Day 1, 18:00', 'The ferry')}`);
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 8, quick: { enabled: true, connectionId: '', model: '' } }, {});
+    const m = model({ create: urgentNotebook, checkup: input => ({ notebook: input.notebook, tracker: null }) });
+    const c = new NotebookController(h.api, undefined, () => {}, m.ask);
+    await c.create('chat-1', {}); await c.waitForJobs();
+    return { h, m, c };
+  }
+  test('a development the reply showed is marked, and the note stops offering it', async () => {
+    const { h, m, c } = await quickReady(answers({ due_1: noul(0.93) }));
+    expect(await c.noteFor('chat-1')).toContain('Shutters bang');
+    h.add('user', 'I look at the sky.'); h.add('assistant', `<div style="color:red">Shutters bang all along the street.</div>${tracker('Day 1, 18:10', 'The ferry')}`);
+    await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+    const sent = h.decisionCalls[0];
+    expect(Object.keys(sent.questions)).toEqual(['due_1', 'moment_1', 'moment_2', 'rhythm', 'new_turn']);
+    expect(sent.questions.due_1.instructions).toContain('Shutters bang');
+    expect(sent.state.latestReply).toContain('Shutters bang all along the street.');
+    expect(sent.state.latestReply).not.toContain('style');
+    expect(sent.state.playerMessage).toBe('I look at the sky.');
+    expect(sent.connection_id).toBeUndefined();
+    const view = (await c.view('chat-1'))!;
+    expect(view.notebook!.threads[1].steps[0].status).toBe('shown');
+    expect(view.notebook!.rhythm).toBe('rising');
+    expect(await c.noteFor('chat-1')).not.toContain('Shutters bang');
+    // A quick check is not a check-up: the reply count keeps counting, and no check-up ran.
+    expect(view.repliesSinceCheck).toBe(1);
+    expect(view.summary).toBe('Last update: Notebook written');
+    expect(view.quick).toMatchObject({ ok: true, error: '' });
+    expect(m.calls.filter(x => x.task === 'grimoire-checkup-v1')).toHaveLength(0);
+    // Regenerating that reply goes back to the notebook from before it.
+    expect(await c.noteFor('chat-1', h.messages.at(-1).id)).toContain('Shutters bang');
+  });
+  test('something new in the story starts a full check-up right away', async () => {
+    const { h, m, c } = await quickReady(answers({ new_turn: noul(0.88) }));
+    h.add('user', 'I follow the stranger.'); h.add('assistant', `A stranger named Pell waves you over.${tracker('Day 1, 18:10', 'The ferry')}`);
+    await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+    expect(m.calls.filter(x => x.task === 'grimoire-checkup-v1').map(x => x.input.reason)).toEqual(['Something new happened in the story']);
+  });
+  test('an uncertain answer changes nothing', async () => {
+    const { h, c } = await quickReady(answers({ due_1: noul(0.5), rhythm: { type: 'choice', choice: 'peak', probabilities: { peak: 0.4 }, confidence: 0.4 } }));
+    h.add('user', 'Hm.'); h.add('assistant', `Maybe a breeze.${tracker('Day 1, 18:10', 'The ferry')}`);
+    await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+    const view = (await c.view('chat-1'))!;
+    expect(view.notebook!.threads[1].steps[0].status).toBe('waiting');
+    expect(view.notebook!.rhythm).toBe('calm');
+    expect((h.storage.get('chats/chat-1.json') as any).versions).toHaveLength(1);
+  });
+  test('the chosen connection and any model ID are passed through', async () => {
+    const h = host({ decide: answers() });
+    h.add('assistant', 'The ferry bell rings.');
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', quick: { enabled: true, connectionId: 'jev', model: '~typesafe/jev-latest' } }, {});
+    const c = new NotebookController(h.api, undefined, () => {}, model({ create: urgentNotebook }).ask);
+    await c.create('chat-1', {}); await c.waitForJobs();
+    h.add('user', 'Go.'); h.add('assistant', 'Wind.');
+    await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+    expect(h.decisionCalls[0]).toMatchObject({ connection_id: 'jev', model: '~typesafe/jev-latest' });
+    expect((await c.snapshot('chat-1')).decisions).toMatchObject({ available: true, connections: [{ id: 'jev', isDefault: true }] });
+  });
+  test('a failed decision call is reported in plain words and the usual rules still run', async () => {
+    const { h, m, c } = await quickReady(() => new Error('502 upstream said: <the whole prompt echoed back>'));
+    for (let i = 0; i < 8; i++) { h.add('user', `Wait ${i}.`); h.add('assistant', `Time passes.${tracker('Day 1, 18:00', 'The ferry')}`); }
+    await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+    const view = (await c.view('chat-1'))!;
+    expect(view.quick).toMatchObject({ ok: false, error: 'The decision model request failed.' });
+    expect(m.calls.filter(x => x.task === 'grimoire-checkup-v1')).toHaveLength(1);
+  });
+  test('answers about a reply that was swiped away meanwhile are thrown out', async () => {
+    let release!: () => void; const gate = new Promise<void>(r => { release = r; });
+    const { h, c } = await quickReady(async (input: any) => { await gate; return answers({ due_1: noul(0.95) })(input); });
+    h.add('user', 'Look.'); h.add('assistant', `Shutters bang.${tracker('Day 1, 18:10', 'The ferry')}`);
+    await c.afterReply('chat-1', 'normal');
+    h.messages.at(-1).content = `Nothing at all.${tracker('Day 1, 18:10', 'The ferry')}`;
+    release(); await c.waitForJobs();
+    expect((await c.view('chat-1'))!.notebook!.threads[1].steps[0].status).toBe('waiting');
+  });
+  test('on a Lumiverse without decision models it stays off and says why', async () => {
+    const { h, c, m } = await quickReady(answers(), { noDecisionsHost: true });
+    h.add('user', 'Look.'); h.add('assistant', 'Shutters bang.'); h.add('user', 'More.'); h.add('assistant', 'Still windy.');
+    await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+    expect(h.decisionCalls).toHaveLength(0);
+    expect((await c.snapshot('chat-1')).decisions).toMatchObject({ available: false, reason: expect.stringContaining('Update Lumiverse') });
+    // Without it, the old rule checks on the urgent development instead.
+    expect(m.calls.filter(x => x.task === 'grimoire-checkup-v1').map(x => x.input.reason)).toEqual(['Checking on an urgent development']);
   });
 });
 

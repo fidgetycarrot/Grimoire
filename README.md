@@ -18,6 +18,7 @@ It works with any card: downloaded, homemade, or made with Set Points. It never 
 - **Check-ups.** A check-up reads the recent chat next to the notebook. It marks what actually happened, moves clocks, adds people and threads you started, and redraws upcoming moments if you went somewhere else. It changes how the story gets somewhere, not why. Check-ups run when the scene changes, when time jumps, after a set number of replies, two replies after an urgent development was offered, or when you choose **Check now**. They read the chat as words: preset styling and panels are stripped, but facts in them are kept.
 - **Reads your preset's tracker, whatever it is.** If your preset writes a status block (time, place, who is here), Grimoire learns where those lines live and reads them with fixed code. A field is trusted only after it has been read from a real reply. If the tracker only appears once the narrator starts replying (many presets leave it out of the greeting), the first check-up looks for it. Anything the tracker supplies is never asked for twice: if it keeps the time, Grimoire's clock reads from it. Saved chat variables can be read too.
 - **Follows edits, swipes, and branches.** Each saved notebook version is tied to the exact messages it describes. Edit, delete, or swipe a reply and Grimoire falls back to the version from before it, then catches up at the next check-up. Swipe back and the newer version returns. Forked chats start with a copy.
+- **Quick check (optional).** A small decision model reads each new reply and answers a few multiple-choice questions: did a planned development happen, did a possible moment happen, how intense is the scene, did something new come up. The notebook stays current between check-ups, the note stops offering things that already happened, and a full check-up runs as soon as something new needs planning. It uses Lumiverse's decision connections, so any decision model works (OpenRouter or TypeSafe, including Jev).
 - **Spoilers stay hidden.** The panel shows the story time, the pace, and a one-line update with no spoilers. The full notebook sits behind **Show the notebook · spoilers**, where you can read it or edit it as text.
 
 ## Install
@@ -38,6 +39,16 @@ Requires **Lumiverse 1.2.0 or newer**. The built files are included; no build st
 | `characters` | Reading the card |
 | `personas` | Reading your active persona (optional) |
 | `world_books` | Reading the card's lorebook (optional) |
+| `decisions` | The quick check, on your decision connection (optional) |
+
+## Quick check
+
+Needs a Lumiverse with decision connections (spindle types 0.6.45+, host capability `decisions-v1`).
+
+1. In Lumiverse, add a decision connection (OpenRouter or TypeSafe) and pick a model. Mark one as default if you like.
+2. In **Grimoire → Settings → Quick check after each reply**, turn it on. Leave the connection on your default or choose one. The model field is optional: type any decision model ID to override the connection's model.
+
+Only confident answers change anything (70% or more for yes-or-no questions), and they only move the story forward: a quick check never un-marks anything. Answers about a reply that was swiped or edited meanwhile are thrown away. Quick-check updates are tied to the reply they judged, so regenerating that reply goes back to the notebook from before it.
 
 ## Placing the note
 
@@ -53,6 +64,7 @@ If you'd rather place it yourself, set **Settings → Where the note goes** to *
 - Writing a notebook: one larger model request. A long chat adds one request per part of its earlier history (at most 12, shown before you start).
 - Each check-up: one request.
 - Ordinary replies: no extra request. The note adds a few hundred tokens to the prompt.
+- With the quick check on: one small decision request per reply (a few questions, answers only). It replaces some check-ups, since those then run only when needed or after the set number of replies.
 
 Small slips in the model's reply (an id with capitals, a field a little too long, one event too many, a stray tag) are tidied rather than rejected, and a check-up can't drop people or threads or undo what happened: anything it leaves out is put back. If a reply still can't be used, the panel says which field failed, without naming anything from the story.
 

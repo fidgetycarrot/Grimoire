@@ -864,6 +864,100 @@ function tidyNotebook(value, previous) {
   };
 }
 
+// src/quick.ts
+var QUICK = { yes: 0.7, rhythm: 0.6, maxBeats: 6 };
+var RHYTHMS = {
+  calm: "Calm: ordinary time, nothing pressing in the scene.",
+  rising: "Rising: tension or trouble is building.",
+  peak: "Peak: a big moment is happening right now (a fight, a reveal, a crisis).",
+  aftermath: "Aftermath: just after a big moment; people are catching their breath.",
+  stalled: "Stalled: the scene is circling; nothing has changed for a while."
+};
+function quickQuestions(notebook, now) {
+  const questions = {}, marks = {};
+  dueThreads(notebook, now).forEach(({ thread, step }, i) => {
+    const key = `due_${i + 1}`;
+    questions[key] = {
+      type: "noul",
+      instructions: `In the latest reply, does this happen, or is its sign clearly shown? Event: ${step.text}${step.sign ? ` Sign: ${step.sign}` : ""}`,
+      criteria: { true: "The latest reply shows it or its sign.", false: "The latest reply does not show it, or only hints vaguely." }
+    };
+    marks[key] = { kind: "step", thread: thread.id, step: step.id };
+  });
+  notebook.beats.filter((b) => b.status === "possible").slice(0, QUICK.maxBeats).forEach((beat, i) => {
+    const key = `moment_${i + 1}`;
+    questions[key] = {
+      type: "noul",
+      instructions: `Does this moment happen in the latest reply? Moment: ${beat.text}`,
+      criteria: { true: "It happens in the latest reply.", false: "It does not happen in the latest reply." }
+    };
+    marks[key] = { kind: "beat", beat: beat.id };
+  });
+  questions.rhythm = { type: "choice", instructions: "Which best describes the scene at the end of the latest reply?", criteria: RHYTHMS };
+  questions.new_turn = {
+    type: "noul",
+    instructions: "Did the latest exchange bring in something the story notes do not cover yet: a new named person who matters, a new problem or goal, a big change of place or time, or a choice that changes where the story is heading?",
+    criteria: { true: "Yes, something important is new.", false: "No, it continues what the notes already cover." }
+  };
+  return { questions, marks };
+}
+function quickState(notebook, clock, playerMessage, latestReply) {
+  return {
+    storyTime: describeClock(clock),
+    people: notebook.people.filter((p) => p.status === "active").map((p) => p.name),
+    openThreads: notebook.threads.filter((t) => t.status === "open").map((t) => t.title),
+    playerMessage,
+    latestReply
+  };
+}
+var yes = (answer) => answer?.type === "noul" && answer.noul >= QUICK.yes;
+function applyQuick(current, plan, result, now) {
+  const answers = result.answers;
+  const notebook = structuredClone(current);
+  let marked = 0;
+  for (const [key, mark] of Object.entries(plan.marks)) {
+    if (!yes(answers[key]))
+      continue;
+    if (mark.kind === "step") {
+      const step = notebook.threads.find((t) => t.id === mark.thread)?.steps.find((s) => s.id === mark.step);
+      if (step?.status === "waiting") {
+        step.status = "shown";
+        step.at = now;
+        marked++;
+      }
+    } else {
+      const beat = notebook.beats.find((b) => b.id === mark.beat);
+      if (beat?.status === "possible") {
+        beat.status = "happened";
+        marked++;
+      }
+    }
+  }
+  const rhythm = answers.rhythm;
+  let changed = marked > 0;
+  if (rhythm?.type === "choice" && rhythm.confidence >= QUICK.rhythm && rhythm.choice in RHYTHMS && rhythm.choice !== notebook.rhythm) {
+    notebook.rhythm = rhythm.choice;
+    changed = true;
+  }
+  return { notebook, changed, marked, needsCheckup: yes(answers.new_turn) };
+}
+function quickError(error) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  if (/permission/i.test(message))
+    return "Grant decisions in Lumiverse\u2019s Extensions panel.";
+  if (/404|not found|no default|connection/i.test(message))
+    return "Choose a decision connection in Grimoire settings, or set a default one in Lumiverse.";
+  if (/timed?\s*out|timeout|504|deadline/i.test(message))
+    return "The decision model took too long to answer.";
+  if (/401|unauthori|api.?key|credential/i.test(message))
+    return "The decision connection could not sign in. Check it in Lumiverse.";
+  if (/429|rate|quota|credit/i.test(message))
+    return "The decision provider reported a rate or credit limit.";
+  if (/400|invalid|unsupported|protocol/i.test(message))
+    return "The decision model could not answer these questions. Try another decision model.";
+  return "The decision model request failed.";
+}
+
 // src/tracker.ts
 var TAG = /^[A-Za-z][\w:.-]{0,40}$/;
 var VARIABLE = /^[\w.:-]{1,80}$/;
@@ -1040,9 +1134,9 @@ function trackerText(recipe, reply) {
 }
 
 // src/types.ts
-var VERSION = "0.1.3";
-var MAX_VERSIONS = 12;
-var DEFAULT_SETTINGS = { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto" };
+var VERSION = "0.2.0";
+var MAX_VERSIONS = 16;
+var DEFAULT_SETTINGS = { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto", quick: { enabled: false, connectionId: "", model: "" } };
 var DEFAULT_PREFERENCES = { length: "medium", tone: "balanced", twist: true };
 
 // src/controller.ts
@@ -1052,14 +1146,29 @@ function validPreferences(value) {
   const v = record5(value);
   return { length: ["short", "medium", "long"].includes(v.length) ? v.length : "medium", tone: ["light", "balanced", "dark"].includes(v.tone) ? v.tone : "balanced", twist: v.twist !== false };
 }
+function prune(versions) {
+  if (versions.length <= MAX_VERSIONS)
+    return versions;
+  let lastFull = 0;
+  versions.forEach((v, i) => {
+    if (!v.quick)
+      lastFull = i;
+  });
+  const keep = new Set([0, lastFull]);
+  for (let i = versions.length - 1;i >= 0 && keep.size < MAX_VERSIONS; i--)
+    keep.add(i);
+  return versions.filter((_, i) => keep.has(i));
+}
+var plainSetting = (v, max) => typeof v === "string" ? v.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, max) : "";
 function validSettings(value) {
-  const v = record5(value), every = Number(v.every), tokens = Number(v.maxOutputTokens);
+  const v = record5(value), every = Number(v.every), tokens = Number(v.maxOutputTokens), quick = record5(v.quick);
   return {
     connectionId: typeof v.connectionId === "string" ? v.connectionId : "",
     maxOutputTokens: [8000, 16000, 32000, 64000].includes(tokens) ? tokens : DEFAULT_SETTINGS.maxOutputTokens,
     reasoningMode: ["inherit", "off", "low"].includes(v.reasoningMode) ? v.reasoningMode : "inherit",
     every: Number.isInteger(every) && every >= 2 && every <= 50 ? every : DEFAULT_SETTINGS.every,
-    placement: v.placement === "macro" ? "macro" : "auto"
+    placement: v.placement === "macro" ? "macro" : "auto",
+    quick: { enabled: quick.enabled === true, connectionId: plainSetting(quick.connectionId, 120), model: plainSetting(quick.model, 200) }
   };
 }
 
@@ -1070,6 +1179,7 @@ class NotebookController {
   ask;
   queues = new Map;
   running = new Map;
+  quickRunning = new Set;
   tasks = new Set;
   constructor(api, userId, changed = () => {}, ask) {
     this.api = api;
@@ -1103,7 +1213,7 @@ class NotebookController {
         const item = record5(v);
         if (!Array.isArray(item.covered) || !item.covered.every((x) => typeof x === "string"))
           throw new Error("Bad version");
-        return { notebook: validateNotebook(item.notebook), covered: item.covered, at: Number(item.at) || 0, reason: String(item.reason ?? ""), ...typeof item.location === "string" ? { location: item.location } : {} };
+        return { notebook: validateNotebook(item.notebook), covered: item.covered, at: Number(item.at) || 0, reason: String(item.reason ?? ""), ...typeof item.location === "string" ? { location: item.location } : {}, ...item.quick === true ? { quick: true } : {} };
       });
       const job = saved.job ? record5(saved.job) : null;
       return {
@@ -1119,6 +1229,7 @@ class NotebookController {
         skipTurn: Number(saved.skipTurn) > 0 ? Number(saved.skipTurn) : 0,
         needsCheck: typeof saved.needsCheck === "string" ? saved.needsCheck : "",
         trackerTried: saved.trackerTried === true,
+        quick: saved.quick && typeof saved.quick === "object" ? { at: Number(record5(saved.quick).at) || 0, ok: record5(saved.quick).ok === true, error: String(record5(saved.quick).error ?? "").slice(0, 200) } : null,
         job: job && job.status === "running" && !this.running.has(chatId) ? { ...job, status: "failed", label: "Stopped when Lumiverse restarted", error: "Run it again when ready." } : job,
         updatedAt: Number(saved.updatedAt) || 0
       };
@@ -1132,7 +1243,7 @@ class NotebookController {
     await this.api.userStorage.setJson(this.path(state.chatId), state, { userId: this.userId });
   }
   blank(chatId) {
-    return { version: 1, chatId, enabled: false, pace: "auto", preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: "" }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: "", trackerTried: false, job: null, updatedAt: 0 };
+    return { version: 1, chatId, enabled: false, pace: "auto", preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: "" }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: "", trackerTried: false, quick: null, job: null, updatedAt: 0 };
   }
   async chatInfo(chatId) {
     const chat = await this.api.chats.get(chatId, this.userId);
@@ -1165,8 +1276,14 @@ class NotebookController {
     state.checks = checks;
     return { state, turns, prints, index, version, replies, values, types, clock, sources, now: absoluteHours(clock), text: replies[0] ? trackerText(state.recipe, replies[0]) : "" };
   }
+  fullVersion(live) {
+    for (let i = live.index;i >= 0; i--)
+      if (!live.state.versions[i].quick)
+        return live.state.versions[i];
+    return live.state.versions[0];
+  }
   repliesSince(live) {
-    return live.turns.slice(live.version.covered.length).filter((t) => t.role === "assistant").length;
+    return live.turns.slice(this.fullVersion(live).covered.length).filter((t) => t.role === "assistant").length;
   }
   async view(chatId) {
     if (!chatId)
@@ -1188,7 +1305,7 @@ class NotebookController {
         pace: state.pace,
         preferences: state.preferences,
         hasNotebook: !!notebook,
-        summary: live ? `Last update: ${live.version.reason}` : "",
+        summary: live ? `Last update: ${this.fullVersion(live).reason}` : "",
         clock: live?.clock ?? null,
         clockText: live ? describeClock(live.clock) : "",
         sources: live?.sources ?? null,
@@ -1200,7 +1317,8 @@ class NotebookController {
         skipHours: state.skipHours,
         notebook,
         behind: !!live && live.index !== state.versions.length - 1,
-        earlierParts
+        earlierParts,
+        quick: state.quick
       };
     });
   }
@@ -1221,7 +1339,13 @@ class NotebookController {
     } catch (error) {
       notice = error instanceof Error ? error.message : "This chat could not be read.";
     }
-    return { version: VERSION, permissions, connections, settings: await this.settings(), chat, notice };
+    const decisions = { available: this.decisionsReady(), reason: this.decisionsReason(), connections: [] };
+    if (decisions.available) {
+      try {
+        decisions.connections = (await this.api.decisions.listConnections(this.userId ? { userId: this.userId } : undefined)).map((c) => ({ id: c.id, name: c.name, provider: c.provider, model: c.model, isDefault: c.is_default }));
+      } catch {}
+    }
+    return { version: VERSION, permissions, connections, settings: await this.settings(), chat, notice, decisions };
   }
   asker(settings) {
     if (this.ask)
@@ -1415,7 +1539,7 @@ class NotebookController {
     await this.save(state);
     this.changed();
     const base = live.version, read = live.prints.slice();
-    const chat = live.turns.slice(Math.max(0, base.covered.length - 4)).slice(-60).map((t) => ({ role: t.role, content: readable(t.content, 8000) }));
+    const chat = live.turns.slice(Math.max(0, this.fullVersion(live).covered.length - 4)).slice(-60).map((t) => ({ role: t.role, content: readable(t.content, 8000) }));
     const learning = !state.recipe.fields.length || live.state.checks.some((c) => c.status === "unavailable");
     const input = {
       notebook: { ...base.notebook, clock: live.clock },
@@ -1458,7 +1582,7 @@ class NotebookController {
           const { clock } = liveClock(result.notebook.clock, live.values, types);
           const version = { notebook: { ...result.notebook, clock }, covered: read, at: Date.now(), reason, ...live.values.location ? { location: live.values.location } : {} };
           const kept = current.versions.filter((v, i) => i === 0 || covers(v.covered, read));
-          current.versions = [kept[0], ...kept.slice(1).slice(-(MAX_VERSIONS - 2)), version].filter((v, i, all) => all.indexOf(v) === i);
+          current.versions = prune([...kept, version].filter((v, i, all) => all.indexOf(v) === i));
           current.needsCheck = "";
           current.job = { ...job, status: "complete", label: "Notebook updated" };
           await this.save(current);
@@ -1505,7 +1629,7 @@ class NotebookController {
       const moved = advanceClock(live.version.notebook.clock, hours);
       const clock = { day: live.sources.day === "tracker" ? live.version.notebook.clock.day : moved.day, hour: live.sources.hour === "tracker" ? live.version.notebook.clock.hour : moved.hour, label: "" };
       state.versions.push({ ...live.version, notebook: { ...live.version.notebook, clock }, covered: live.prints, at: Date.now(), reason: "Time skip" });
-      state.versions = [state.versions[0], ...state.versions.slice(1).slice(-(MAX_VERSIONS - 1))];
+      state.versions = prune(state.versions);
       state.skipHours = (state.skipHours || 0) + hours;
       state.skipTurn = live.turns.length;
       state.needsCheck = "Time skip";
@@ -1526,7 +1650,7 @@ class NotebookController {
         throw new Error("Write a notebook for this chat first.");
       const edited = keepTimes(live.version.notebook, validateNotebook(value), live.now);
       state.versions.push({ ...live.version, notebook: edited, at: Date.now(), reason: "Edited by you" });
-      state.versions = [state.versions[0], ...state.versions.slice(1).slice(-(MAX_VERSIONS - 1))];
+      state.versions = prune(state.versions);
       await this.save(state);
     });
   }
@@ -1595,34 +1719,106 @@ class NotebookController {
     return { messages: [...messages.slice(0, at), { role: "system", content: note }, ...messages.slice(at)], breakdown: [{ messageIndex: at, name: "Grimoire" }] };
   }
   async afterReply(chatId, generationType) {
-    await this.serial(chatId, async () => {
+    const quick = await this.serial(chatId, async () => {
       const state = await this.load(chatId);
       if (!state?.enabled || !state.versions.length || this.running.has(chatId))
-        return;
+        return null;
       const live = await this.live(state, await this.api.chat.getMessages(chatId));
       if (!live)
-        return;
+        return null;
       if (state.skipHours && live.turns.length > (state.skipTurn ?? 0) && live.turns.at(-1)?.role === "assistant" && (generationType ?? "normal") !== "continue") {
         state.skipHours = 0;
         state.skipTurn = 0;
       }
-      const settings = await this.settings(), since = this.repliesSince(live);
-      const behind = live.index !== state.versions.length - 1;
-      const moved = !!live.values.location && !!live.version.location && live.values.location.toLowerCase() !== live.version.location.toLowerCase() && since >= 2;
-      const jumped = live.now - absoluteHours(live.version.notebook.clock) >= 6 && since >= 1;
-      if (state.job?.kind === "checkup" && state.job.status === "failed" && state.job.failedAtTurn !== undefined && live.turns.length < state.job.failedAtTurn + 2 * Math.min(settings.every, 4)) {
+      const settings = await this.settings();
+      if (settings.quick.enabled && this.decisionsReady() && !this.quickRunning.has(chatId) && live.turns.at(-1)?.role === "assistant") {
         await this.save(state);
-        return;
+        return { live, settings };
       }
-      const findTracker = !state.recipe.fields.length && !state.trackerTried && since >= 1;
-      const urgent = since >= 2 && live.version.reason !== "Checking on an urgent development" && dueThreads(live.version.notebook, live.now).some((d) => d.thread.speed === "urgent");
-      const reason = state.needsCheck ? state.needsCheck : behind ? "The chat changed since the last update" : moved ? "The scene moved" : jumped ? "Time moved on" : findTracker ? "Looking for your preset\u2019s tracker" : urgent ? "Checking on an urgent development" : since >= settings.every ? `${since} replies since the last update` : "";
-      if (findTracker)
-        state.trackerTried = true;
-      await this.save(state);
-      if (reason && settings.connectionId || reason && this.ask)
-        await this.startCheckup(chatId, reason).catch(() => null);
+      await this.decide(state, live, settings, "");
+      return null;
     });
+    if (quick)
+      this.runQuick(chatId, quick.live, quick.settings);
+  }
+  async decide(state, live, settings, extra) {
+    const chatId = state.chatId, full = this.fullVersion(live), since = this.repliesSince(live);
+    const behind = live.index !== state.versions.length - 1;
+    const moved = !!live.values.location && !!full.location && live.values.location.toLowerCase() !== full.location.toLowerCase() && since >= 2;
+    const jumped = live.now - absoluteHours(full.notebook.clock) >= 6 && since >= 1;
+    if (state.job?.kind === "checkup" && state.job.status === "failed" && state.job.failedAtTurn !== undefined && live.turns.length < state.job.failedAtTurn + 2 * Math.min(settings.every, 4)) {
+      await this.save(state);
+      return;
+    }
+    const findTracker = !state.recipe.fields.length && !state.trackerTried && since >= 1;
+    const urgent = !(settings.quick.enabled && this.decisionsReady()) && since >= 2 && full.reason !== "Checking on an urgent development" && dueThreads(live.version.notebook, live.now).some((d) => d.thread.speed === "urgent");
+    const reason = state.needsCheck ? state.needsCheck : behind ? "The chat changed since the last update" : extra ? extra : moved ? "The scene moved" : jumped ? "Time moved on" : findTracker ? "Looking for your preset\u2019s tracker" : urgent ? "Checking on an urgent development" : since >= settings.every ? `${since} replies since the last update` : "";
+    if (findTracker)
+      state.trackerTried = true;
+    await this.save(state);
+    if (reason && settings.connectionId || reason && this.ask)
+      await this.startCheckup(chatId, reason).catch(() => null);
+  }
+  decisionsReady() {
+    const host = this.api.host;
+    return this.api.permissions.has("decisions") && (host?.capabilities?.["decisions-v1"] ?? 0) >= 1 && typeof this.api.decisions?.evaluate === "function";
+  }
+  decisionsReason() {
+    const host = this.api.host;
+    if ((host?.capabilities?.["decisions-v1"] ?? 0) < 1 || !this.api.decisions)
+      return "This version of Lumiverse doesn\u2019t offer decision models. Update Lumiverse to use the quick check.";
+    if (!this.api.permissions.has("decisions"))
+      return "Grant decisions in Lumiverse\u2019s Extensions panel to use the quick check.";
+    return "";
+  }
+  runQuick(chatId, live, settings) {
+    this.quickRunning.add(chatId);
+    const task = (async () => {
+      const plan = quickQuestions(live.version.notebook, live.now);
+      const reply = live.turns.at(-1), player = [...live.turns].reverse().find((t) => t.role === "user");
+      let result = null, error = "";
+      try {
+        result = await this.api.decisions.evaluate({
+          ...settings.quick.connectionId ? { connection_id: settings.quick.connectionId } : {},
+          ...settings.quick.model ? { model: settings.quick.model } : {},
+          state: quickState(live.version.notebook, live.clock, readable(player?.content ?? "", 2000), readable(reply.content, 8000)),
+          questions: plan.questions,
+          ...this.userId ? { userId: this.userId } : {}
+        }, { signal: AbortSignal.timeout(35000) });
+      } catch (e) {
+        error = quickError(e);
+      }
+      await this.serial(chatId, async () => {
+        const state = await this.load(chatId);
+        if (!state?.enabled || !state.versions.length)
+          return;
+        const messages = await this.api.chat.getMessages(chatId);
+        let now = await this.live(state, messages);
+        if (!now)
+          return;
+        state.quick = { at: Date.now(), ok: !!result, error };
+        let extra = "";
+        if (result && covers(live.prints, now.prints)) {
+          const outcome = applyQuick(now.version.notebook, plan, result, now.now);
+          if (outcome.changed) {
+            state.versions.push({ notebook: outcome.notebook, covered: live.prints, at: Date.now(), reason: "Quick check", quick: true, ...now.values.location ? { location: now.values.location } : {} });
+            state.versions = prune(state.versions);
+            now = await this.live(state, messages);
+          }
+          if (outcome.needsCheckup)
+            extra = "Something new happened in the story";
+        }
+        if (this.running.has(chatId)) {
+          await this.save(state);
+          return;
+        }
+        await this.decide(state, now, settings, extra);
+      });
+    })();
+    this.track(task.catch(() => {}).finally(() => {
+      this.quickRunning.delete(chatId);
+      this.changed();
+    }));
   }
   async fork(sourceChatId, forkedChatId) {
     const source = await this.serial(sourceChatId, () => this.load(sourceChatId));

@@ -18,10 +18,11 @@ function harness(chat: Partial<NonNullable<Snapshot['chat']>> | null = {}, setti
   const state: Snapshot = {
     version: '0.1.0', permissions: ['generation', 'interceptor', 'chats', 'characters'], notice: '',
     connections: [{ id: 'model', name: 'Writer', model: 'm' }],
-    settings: { connectionId: 'model', maxOutputTokens: 16000, reasoningMode: 'inherit', every: 8, placement: 'auto', ...settings },
+    settings: { connectionId: 'model', maxOutputTokens: 16000, reasoningMode: 'inherit', every: 8, placement: 'auto', quick: { enabled: false, connectionId: '', model: '' }, ...settings },
+    decisions: { available: true, reason: '', connections: [{ id: 'dec', name: 'Jev', provider: 'typesafe', model: '~typesafe/jev-latest', isDefault: true }] },
     chat: chat === null ? null : { chatId: 'chat-1', name: 'Low Water', supported: true, reason: '', enabled: true, pace: 'auto', preferences: { length: 'medium', tone: 'balanced', twist: true }, hasNotebook: true,
       summary: 'Notebook updated after the tavern.', clock: { day: 2, hour: 21, label: '' }, clockText: 'Day 2, 21:00', sources: { day: 'notebook', hour: 'notebook', exact: false }, checks: [],
-      needsCheck: '', job: null, updatedAt: Date.now(), repliesSinceCheck: 2, skipHours: 0, notebook: stamp(validateNotebook(sampleNotebook()), 40), behind: false, earlierParts: 0, ...chat },
+      needsCheck: '', job: null, updatedAt: Date.now(), repliesSinceCheck: 2, skipHours: 0, notebook: stamp(validateNotebook(sampleNotebook()), 40), behind: false, earlierParts: 0, quick: null, ...chat },
   };
   const requests: Array<{ action: string; input: any }> = [];
   let receive: (m: unknown) => void = () => {};
@@ -104,6 +105,31 @@ describe('the panel', () => {
     expect(h.root.textContent).toContain('Group chats are not supported yet');
     const none = harness(null); await tick();
     expect(none.root.textContent).toContain('Open a chat to use Grimoire.');
+  });
+});
+
+describe('the quick check settings', () => {
+  test('save the switch, the connection, and any model ID', async () => {
+    const h = harness(); await tick();
+    Array.from(h.root.querySelectorAll('button')).find(b => b.textContent === 'Settings')!.click(); await tick();
+    expect(h.root.textContent).toContain('Quick check after each reply');
+    expect(h.root.textContent).toContain('Your default: Jev · ~typesafe/jev-latest');
+    const toggle = Array.from(h.root.querySelectorAll('input[type=checkbox]')).at(-1) as unknown as HTMLInputElement; toggle.checked = true;
+    const model = h.root.querySelector('input[type=text]') as unknown as HTMLInputElement; model.value = 'openai/some-decider';
+    h.button('Save settings')!.click(); await tick();
+    expect(h.requests.find(r => r.action === 'settings')!.input.settings.quick).toEqual({ enabled: true, connectionId: '', model: 'openai/some-decider' });
+  });
+  test('explain plainly when this Lumiverse has no decision models', async () => {
+    const h = harness();
+    h.state.decisions = { available: false, reason: 'This version of Lumiverse doesn’t offer decision models. Update Lumiverse to use the quick check.', connections: [] };
+    await tick();
+    Array.from(h.root.querySelectorAll('button')).find(b => b.textContent === 'Settings')!.click(); await tick();
+    expect(h.root.textContent).toContain('Update Lumiverse to use the quick check');
+    expect((Array.from(h.root.querySelectorAll('input[type=checkbox]')).at(-1) as unknown as HTMLInputElement).disabled).toBe(true);
+  });
+  test('the chat page says when the quick check last ran', async () => {
+    const h = harness({ quick: { at: Date.now() - 120_000, ok: false, error: 'The decision model took too long to answer.' } }, { quick: { enabled: true, connectionId: '', model: '' } }); await tick();
+    expect(h.root.textContent).toContain('The last quick check didn’t run: The decision model took too long to answer.');
   });
 });
 

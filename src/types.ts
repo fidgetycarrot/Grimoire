@@ -5,11 +5,11 @@ import type { ReasoningMode } from './model';
 import type { FieldCheck, Recipe } from './tracker';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.1.3';
-export const MAX_VERSIONS = 12;
+export const VERSION = '0.2.0';
+export const MAX_VERSIONS = 16;
 
 /** One saved state of the notebook and the chat history it describes. */
-export interface Version { notebook: Notebook; covered: string[]; at: number; reason: string; location?: string }
+export interface Version { notebook: Notebook; covered: string[]; at: number; reason: string; location?: string; /** Made by a quick check, not a full check-up. */ quick?: true }
 export interface Job { id: string; kind: 'create' | 'checkup'; status: 'running' | 'complete' | 'failed'; label: string; error?: string; startedAt: number; /** Chat length when it failed, so automatic retries wait a little. */ failedAtTurn?: number }
 export interface ChatState {
   version: 1; chatId: string; enabled: boolean; pace: Pace; preferences: Preferences;
@@ -22,10 +22,14 @@ export interface ChatState {
   needsCheck: string;
   /** A check-up has already looked for a tracker that appeared after the notebook was written. */
   trackerTried: boolean;
+  /** The last quick check: when it ran and whether it worked. */
+  quick: { at: number; ok: boolean; error: string } | null;
   job: Job | null; updatedAt: number;
 }
-export interface Settings { connectionId: string; maxOutputTokens: number; reasoningMode: ReasoningMode; every: number; placement: 'auto' | 'macro' }
-export const DEFAULT_SETTINGS: Settings = { connectionId: '', maxOutputTokens: 16000, reasoningMode: 'inherit', every: 8, placement: 'auto' };
+/** The quick check after each reply. An empty connection means the default decision connection; an empty model means the connection's model. */
+export interface QuickSettings { enabled: boolean; connectionId: string; model: string }
+export interface Settings { connectionId: string; maxOutputTokens: number; reasoningMode: ReasoningMode; every: number; placement: 'auto' | 'macro'; quick: QuickSettings }
+export const DEFAULT_SETTINGS: Settings = { connectionId: '', maxOutputTokens: 16000, reasoningMode: 'inherit', every: 8, placement: 'auto', quick: { enabled: false, connectionId: '', model: '' } };
 export const DEFAULT_PREFERENCES: Preferences = { length: 'medium', tone: 'balanced', twist: true };
 
 export interface ChatView {
@@ -37,9 +41,12 @@ export interface ChatView {
   notebook: Notebook | null; behind: boolean;
   /** Before a notebook exists: how many parts of a long chat are read first, one request each. */
   earlierParts: number;
+  quick: ChatState['quick'];
 }
 export interface Snapshot {
   version: string; permissions: string[]; connections: Array<{ id: string; name: string; model: string }>;
   settings: Settings; chat: ChatView | null; notice: string;
+  /** Decision models for the quick check: whether this Lumiverse offers them, and the saved connections. */
+  decisions: { available: boolean; reason: string; connections: Array<{ id: string; name: string; provider: string; model: string; isDefault: boolean }> };
 }
 export type { StoryClock, Notebook, Pace, Preferences, FieldCheck, Recipe };
