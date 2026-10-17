@@ -14,7 +14,7 @@ const state: Snapshot = {
   chat: { chatId: 'preview', name: 'Low Water', supported: true, reason: '', enabled: true, pace: 'auto', preferences: { tone: 'balanced', twist: true },
     hasNotebook: new URLSearchParams(location.search).get('start') === null, summary: 'Notebook updated after the ferry crossing.', clock: { day: 2, hour: 21.67, label: 'Day 2, 21:40' }, clockText: 'Day 2, 21:40',
     sources: { day: 'tracker', hour: 'tracker', exact: true }, checks: [{ name: 'datetime', type: 'datetime', status: 'verified', value: 'Day 2, 21:40' }, { name: 'location', type: 'text', status: 'verified', value: 'The Drowned Lantern' }, { name: 'present', type: 'list', status: 'unavailable' }],
-    needsCheck: '', job: null, updatedAt: Date.now() - 6 * 60_000, repliesSinceCheck: 3, skipHours: 0, notebook, behind: false, earlierParts: 0, quick: { at: Date.now() - 60_000, ok: true, error: '' }, dueIds: [] },
+    needsCheck: '', job: null, updatedAt: Date.now() - 6 * 60_000, repliesSinceCheck: 3, skipHours: 0, notebook, behind: false, earlierParts: 0, quick: { at: Date.now() - 60_000, ok: true, error: '' }, dueIds: [], skipOffer: { options: [{ hours: 6, label: 'Skip ahead to when something happens (about 6 hours)' }, { hours: 9, label: 'Skip to this evening' }] } },
 };
 let receive: (payload: unknown) => void = () => {};
 const root = document.getElementById('root')!, actions = document.getElementById('actions')!;

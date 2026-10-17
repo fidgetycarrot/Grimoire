@@ -480,6 +480,22 @@ describe('long scenes', () => {
   });
 });
 
+describe('time-skip suggestions', () => {
+  test('a quiet stretch offers a skip that lands on the next development; Not now hides it', async () => {
+    const h = host(); h.add('assistant', `The ferry bell rings.${tracker('Day 1, 18:00', 'The ferry')}`);
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 50 }, {});
+    const calm = () => { const n: any = sampleNotebook(); n.threads[1].status = 'paused'; return { notebook: n, tracker: recipe }; };
+    const c = new NotebookController(h.api, undefined, () => {}, model({ create: calm }).ask);
+    await c.create('chat-1', {}); await c.waitForJobs();
+    for (let i = 0; i < 9; i++) { h.add('user', `Chat ${i}.`); h.add('assistant', `Small talk.${tracker('Day 1, 18:0' + i, 'The ferry')}`); }
+    const offer = (await c.view('chat-1'))!.skipOffer!;
+    expect(offer.options[0]).toEqual({ hours: 12, label: 'Skip ahead to when something happens (about 12 hours)' });
+    expect(JSON.stringify(offer)).not.toMatch(/ring|manor|Oswin/i);
+    await c.dismissSkip('chat-1');
+    expect((await c.view('chat-1'))!.skipOffer).toBeNull();
+  });
+});
+
 describe('edits, swipes, and forks', () => {
   async function withUpdate() {
     const m = model({ create: created, checkup: input => { const n = structuredClone(input.notebook); n.threads[0].steps[0].status = 'shown'; n.summary = 'Updated.'; return { notebook: n, tracker: null }; } });

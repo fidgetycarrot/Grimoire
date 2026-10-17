@@ -22,7 +22,7 @@ function harness(chat: Partial<NonNullable<Snapshot['chat']>> | null = {}, setti
     decisions: { available: true, reason: '', connections: [{ id: 'dec', name: 'Jev', provider: 'typesafe', model: '~typesafe/jev-latest', isDefault: true }] },
     chat: chat === null ? null : { chatId: 'chat-1', name: 'Low Water', supported: true, reason: '', enabled: true, pace: 'auto', preferences: { tone: 'balanced', twist: true }, hasNotebook: true,
       summary: 'Notebook updated after the tavern.', clock: { day: 2, hour: 21, label: '' }, clockText: 'Day 2, 21:00', sources: { day: 'notebook', hour: 'notebook', exact: false }, checks: [],
-      needsCheck: '', job: null, updatedAt: Date.now(), repliesSinceCheck: 2, skipHours: 0, notebook: stamp(validateNotebook(sampleNotebook()), 40), behind: false, earlierParts: 0, quick: null, dueIds: [], ...chat },
+      needsCheck: '', job: null, updatedAt: Date.now(), repliesSinceCheck: 2, skipHours: 0, notebook: stamp(validateNotebook(sampleNotebook()), 40), behind: false, earlierParts: 0, quick: null, dueIds: [], skipOffer: null, ...chat },
   };
   const requests: Array<{ action: string; input: any }> = [];
   let receive: (m: unknown) => void = () => {};
@@ -105,6 +105,25 @@ describe('the panel', () => {
     expect(h.root.textContent).toContain('Group chats are not supported yet');
     const none = harness(null); await tick();
     expect(none.root.textContent).toContain('Open a chat to use Grimoire.');
+  });
+});
+
+describe('time-skip suggestions', () => {
+  const offer = { options: [{ hours: 12, label: 'Skip ahead to when something happens (about 12 hours)' }, { hours: 14, label: 'Skip to tomorrow morning' }] };
+  test('show above the message box and in the panel, and skip or wave off', async () => {
+    const h = harness({ skipOffer: offer }); await tick();
+    const pill = Array.from(h.bar.querySelectorAll('button')).find(b => b.textContent === 'Skip ahead?')!;
+    expect(pill.hidden).toBe(false);
+    expect(h.root.textContent).toContain('This scene has gone quiet');
+    h.button('Skip ahead to when something happens (about 12 hours)')!.click(); await tick();
+    expect(h.requests.find(r => r.action === 'skip')!.input).toEqual({ chatId: 'chat-1', amount: 12, unit: 'hours' });
+    h.button('Not now')!.click(); await tick();
+    expect(h.requests.some(r => r.action === 'dismiss-skip')).toBe(true);
+  });
+  test('stay hidden when there is nothing to suggest', async () => {
+    const h = harness(); await tick();
+    expect(Array.from(h.bar.querySelectorAll('button')).find(b => b.textContent === 'Skip ahead?')!.hidden).toBe(true);
+    expect(h.root.textContent).not.toContain('This scene has gone quiet');
   });
 });
 

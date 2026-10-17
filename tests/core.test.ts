@@ -395,3 +395,42 @@ describe('replies as well as story time', () => {
     expect(fillReplies(old, 7).threads[0].startReply).toBe(7);
   });
 });
+
+describe('suggesting a time skip', () => {
+  const { skipOffer, quietReplies, hoursToNext } = require('../src/skip');
+  const { waitsFor } = require('../src/notebook');
+  const waits = waitsFor('medium', 'auto');
+  // Day 1, 18:00; the ring thread began at reply 10 and its first step is 12 story hours out. The urgent storm is paused.
+  const quietBook = (rhythm = 'calm') => { const nb: any = { ...stamp(validateNotebook(sampleNotebook()), { hours: 42, reply: 10 }), rhythm }; nb.threads[1].status = 'paused'; return nb; };
+  const at = (reply: number, hours = 42) => ({ hours, reply, waits });
+  const clock = { day: 1, hour: 18, label: '' };
+  test('a calm scene that has gone quiet for a while gets a suggestion that lands on the next development', () => {
+    const nb = quietBook();
+    expect(quietReplies(nb, 19)).toBe(9);
+    expect(hoursToNext(nb, 42)).toBe(12);
+    expect(skipOffer(nb, at(18), clock, 0)).toBeNull();
+    expect(skipOffer(nb, at(19), clock, 0)).toEqual({ options: [
+      { hours: 12, label: 'Skip ahead to when something happens (about 12 hours)' },
+      { hours: 14, label: 'Skip to tomorrow morning' },
+    ] });
+    // Once the thread comes due by replies, the narrator brings it in; no skip needed.
+    expect(skipOffer(nb, at(25), clock, 0)).toBeNull();
+  });
+  test('a stalled scene gets it sooner; building, big, or busy scenes never do', () => {
+    expect(skipOffer(quietBook('stalled'), at(13), clock, 0)).not.toBeNull();
+    for (const rhythm of ['rising', 'peak', 'aftermath']) expect(skipOffer(quietBook(rhythm), at(19), clock, 0)).toBeNull();
+    // Something due right now: the narrator should bring that in instead.
+    expect(skipOffer(quietBook(), at(19, 54), clock, 0)).toBeNull();
+  });
+  test('nothing planned means no suggestion, and Not now keeps it away for a while', () => {
+    const done = quietBook(); done.threads.forEach((t: any) => { t.status = 'closed'; t.closedReason = 'done'; });
+    expect(skipOffer(done, at(19), clock, 0)).toBeNull();
+    expect(skipOffer(quietBook(), at(20), clock, 0)).not.toBeNull();
+    expect(skipOffer(quietBook(), at(20), clock, 19)).toBeNull();
+    expect(skipOffer(quietBook(), at(24), clock, 19)).toBeNull();
+  });
+  test('an earlier hour offers the evening instead', () => {
+    expect(skipOffer(quietBook(), at(19), { day: 1, hour: 10, label: '' }, 0)!.options.at(-1)).toEqual({ hours: 9, label: 'Skip to this evening' });
+    expect(skipOffer(quietBook(), at(19), { day: 1, hour: null, label: '' }, 0)!.options).toHaveLength(1);
+  });
+});

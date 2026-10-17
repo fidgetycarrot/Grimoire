@@ -987,6 +987,58 @@ function quickError(error) {
   return "The decision model request failed.";
 }
 
+// src/skip.ts
+var MAX_HOURS = 24 * 7;
+function quietReplies(notebook, reply) {
+  let last = 0;
+  for (const thread of notebook.threads) {
+    if (thread.startReply !== undefined)
+      last = Math.max(last, thread.startReply);
+    for (const step of thread.steps)
+      if (step.status !== "waiting" && step.atReply !== undefined)
+        last = Math.max(last, step.atReply);
+  }
+  return Math.max(0, reply - last);
+}
+function hoursToNext(notebook, now) {
+  let best = null;
+  for (const thread of notebook.threads) {
+    if (thread.status !== "open")
+      continue;
+    const index = thread.steps.findIndex((s) => s.status === "waiting");
+    if (index < 0)
+      continue;
+    const before = thread.steps.slice(0, index).reverse().find((s) => s.at !== undefined)?.at ?? thread.startAt ?? now;
+    const wait = Math.min(before, now) + thread.steps[index].afterHours - now;
+    if (wait > 0 && (best === null || wait < best))
+      best = wait;
+  }
+  return best;
+}
+var about = (hours) => hours < 24 ? `about ${describeDuration(Math.max(1, Math.round(hours)))}` : `about ${describeDuration(Math.round(hours / 24) * 24)}`;
+function skipOffer(notebook, moment, clock, dismissedAt) {
+  const { reply, waits } = moment;
+  if (reply === undefined || !waits)
+    return null;
+  if (dismissedAt && reply < dismissedAt + waits.steady)
+    return null;
+  const quiet = quietReplies(notebook, reply);
+  const stalled = notebook.rhythm === "stalled" ? quiet >= 3 : notebook.rhythm === "calm" ? quiet >= Math.ceil(waits.steady * 0.6) : false;
+  if (!stalled || dueThreads(notebook, moment).length)
+    return null;
+  const next = hoursToNext(notebook, moment.hours);
+  if (next === null || next < 1 || next > MAX_HOURS)
+    return null;
+  const options = [{ hours: Math.max(1, Math.ceil(next)), label: `Skip ahead to when something happens (${about(next)})` }];
+  if (clock.hour !== null) {
+    const toEvening = 19 - clock.hour, toMorning = 24 - clock.hour + 8;
+    const plain = clock.hour < 16 ? { hours: Math.round(toEvening), label: "Skip to this evening" } : { hours: Math.round(toMorning), label: "Skip to tomorrow morning" };
+    if (plain.hours >= 1 && Math.abs(plain.hours - options[0].hours) >= 2)
+      options.push(plain);
+  }
+  return { options };
+}
+
 // src/tracker.ts
 var TAG = /^[A-Za-z][\w:.-]{0,40}$/;
 var VARIABLE = /^[\w.:-]{1,80}$/;
@@ -1217,7 +1269,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.3.0";
+var VERSION = "0.3.1";
 var MAX_VERSIONS = 16;
 var DEFAULT_SETTINGS = { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto", quick: { enabled: false, connectionId: "", model: "" }, wait: "medium" };
 var DEFAULT_PREFERENCES = { tone: "balanced", twist: true };
@@ -1313,6 +1365,7 @@ class NotebookController {
         skipTurn: Number(saved.skipTurn) > 0 ? Number(saved.skipTurn) : 0,
         needsCheck: typeof saved.needsCheck === "string" ? saved.needsCheck : "",
         trackerTried: saved.trackerTried === true,
+        skipDismissedAt: Number(saved.skipDismissedAt) > 0 ? Number(saved.skipDismissedAt) : 0,
         quick: saved.quick && typeof saved.quick === "object" ? { at: Number(record5(saved.quick).at) || 0, ok: record5(saved.quick).ok === true, error: String(record5(saved.quick).error ?? "").slice(0, 200) } : null,
         job: job && job.status === "running" && !this.running.has(chatId) ? { ...job, status: "failed", label: "Stopped when Lumiverse restarted", error: "Run it again when ready." } : job,
         updatedAt: Number(saved.updatedAt) || 0
@@ -1327,7 +1380,7 @@ class NotebookController {
     await this.api.userStorage.setJson(this.path(state.chatId), state, { userId: this.userId });
   }
   blank(chatId) {
-    return { version: 1, chatId, enabled: false, pace: "auto", preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: "" }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: "", trackerTried: false, quick: null, job: null, updatedAt: 0 };
+    return { version: 1, chatId, enabled: false, pace: "auto", preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: "" }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: "", trackerTried: false, quick: null, skipDismissedAt: 0, job: null, updatedAt: 0 };
   }
   async chatInfo(chatId) {
     const chat = await this.api.chats.get(chatId, this.userId);
@@ -1421,7 +1474,8 @@ class NotebookController {
         behind: !!live && live.index !== state.versions.length - 1,
         earlierParts,
         quick: state.quick,
-        dueIds: live ? dueThreads(live.version.notebook, live.moment).map((d) => d.thread.id) : []
+        dueIds: live ? dueThreads(live.version.notebook, live.moment).map((d) => d.thread.id) : [],
+        skipOffer: live && state.enabled && state.job?.status !== "running" && !state.skipHours ? skipOffer(live.version.notebook, live.moment, live.clock, state.skipDismissedAt) : null
       };
     });
   }
@@ -1746,6 +1800,15 @@ class NotebookController {
       return hours;
     });
   }
+  async dismissSkip(chatId) {
+    return this.serial(chatId, async () => {
+      const state = await this.load(chatId);
+      if (!state?.versions.length)
+        return;
+      state.skipDismissedAt = conversation(await this.api.chat.getMessages(chatId)).filter((t) => t.role === "assistant").length;
+      await this.save(state);
+    });
+  }
   async editNotebook(chatId, value) {
     return this.serial(chatId, async () => {
       const state = await this.load(chatId);
@@ -1975,6 +2038,8 @@ async function handle(controller, action, input) {
       return controller.editNotebook(string(data.chatId, "Chat"), data.notebook);
     case "remove":
       return controller.remove(string(data.chatId, "Chat"));
+    case "dismiss-skip":
+      return controller.dismissSkip(string(data.chatId, "Chat"));
     case "settings":
       return controller.saveSettings(data.settings);
     case "version":

@@ -3,9 +3,10 @@ import type { ClockSources } from './note';
 import type { Notebook, Pace, Preferences, WaitSetting } from './notebook';
 import type { ReasoningMode } from './model';
 import type { FieldCheck, Recipe } from './tracker';
+import type { SkipOffer } from './skip';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.3.0';
+export const VERSION = '0.3.1';
 export const MAX_VERSIONS = 16;
 
 /** One saved state of the notebook and the chat history it describes. */
@@ -24,6 +25,8 @@ export interface ChatState {
   trackerTried: boolean;
   /** The last quick check: when it ran and whether it worked. */
   quick: { at: number; ok: boolean; error: string } | null;
+  /** The reply count when the player last waved off a time-skip suggestion. */
+  skipDismissedAt: number;
   job: Job | null; updatedAt: number;
 }
 /** The quick check after each reply. An empty connection means the default decision connection; an empty model means the connection's model. */
@@ -44,6 +47,8 @@ export interface ChatView {
   quick: ChatState['quick'];
   /** Threads whose next step is due now, for the spoiler fold. */
   dueIds: string[];
+  /** A time skip worth suggesting because the scene has gone quiet, or null. */
+  skipOffer: SkipOffer | null;
 }
 export interface Snapshot {
   version: string; permissions: string[]; connections: Array<{ id: string; name: string; model: string }>;

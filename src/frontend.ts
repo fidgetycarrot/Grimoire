@@ -116,6 +116,16 @@ export function setup(ctx: SpindleFrontendContext) {
     box.textContent = view.job.status === 'running' ? `${view.job.label}…` : `${view.job.label}. ${view.job.error ?? ''}`;
     return box;
   }
+  function renderSkipOffer(view: ChatView) {
+    const card = el('section', 'gm-card gm-stack gm-skip');
+    card.append(el('h3', '', 'This scene has gone quiet'), el('p', 'gm-hint', 'Skipping ahead is up to you. The next reply opens with the time that passed.'));
+    for (const option of view.skipOffer!.options) card.append(button(option.label, async () => {
+      await act('skip', { chatId: view.chatId, amount: option.hours, unit: 'hours' });
+      notify(`Skipped about ${describeDuration(option.hours)}. The narrator will open with that gap.`);
+    }));
+    card.append(button('Not now', async () => { await act('dismiss-skip', { chatId: view.chatId }); }));
+    return card;
+  }
   function renderClock(view: ChatView) {
     const card = el('section', 'gm-card gm-stack');
     const s = view.sources;
@@ -209,6 +219,7 @@ export function setup(ctx: SpindleFrontendContext) {
     if (job) body.append(job);
     if (view.needsCheck && view.enabled && view.job?.status !== 'running') body.append(el('p', 'gm-notice', `${view.needsCheck} An update will run after the next reply, or choose Check now.`));
     else if (view.behind && view.enabled) body.append(el('p', 'gm-hint', 'You went back in the chat, so Grimoire is using its notebook from before that point. Nothing from the removed replies counts.'));
+    if (view.skipOffer && view.enabled) body.append(renderSkipOffer(view));
     body.append(renderClock(view), renderPace(view), renderActions(view), renderTracker(view), renderSpoilers(view));
     const remove = button(confirmDelete ? 'Tap again to delete this notebook' : 'Delete this notebook', async () => {
       if (!confirmDelete) { confirmDelete = true; render(); setTimeout(() => { confirmDelete = false; render(); }, 5000); return; }
@@ -277,13 +288,16 @@ export function setup(ctx: SpindleFrontendContext) {
   body.addEventListener('focusout', () => { setTimeout(() => { if (pendingDraw && !busyHere() && !editing) render(); }, 0); });
 
   // ----- Pace button above the input -----
-  let mount: HTMLElement | null = null, paceButton: HTMLButtonElement | null = null;
+  let mount: HTMLElement | null = null, paceButton: HTMLButtonElement | null = null, skipButton: HTMLButtonElement | null = null;
   try { mount = ctx.ui.mount('chat_actions') as HTMLElement; } catch { mount = null; }
   if (mount) {
     paceButton = el('button', 'gm-pace-button'); paceButton.type = 'button'; paceButton.hidden = true;
     paceButton.addEventListener('click', () => void cyclePace());
-    mount.append(paceButton);
-    teardown.push(() => paceButton?.remove());
+    skipButton = el('button', 'gm-pace-button gm-skip-button', 'Skip ahead?'); skipButton.type = 'button'; skipButton.hidden = true;
+    skipButton.title = 'This scene has gone quiet. Open Grimoire to skip ahead, or wave it off.';
+    skipButton.addEventListener('click', () => { page = 'chat'; render(); tab.activate(); });
+    mount.append(paceButton, skipButton);
+    teardown.push(() => paceButton?.remove(), () => skipButton?.remove());
   }
   const extras = ctx.ui.registerInputBarAction({ id: 'grimoire-pace', label: 'Story pace', subtitle: 'Grimoire · change the pace', iconSvg: PACE_ICON, enabled: false });
   teardown.push(extras.onClick(() => void cyclePace()), () => extras.destroy());
@@ -298,6 +312,7 @@ export function setup(ctx: SpindleFrontendContext) {
       paceButton.hidden = !active;
       if (active) { paceButton.innerHTML = PACE_ICON; paceButton.append(document.createTextNode(PACE_LABELS[view!.pace].name)); paceButton.title = `Story pace: ${PACE_LABELS[view!.pace].name}. ${PACE_LABELS[view!.pace].help} Click to change.`; paceButton.setAttribute('aria-label', `Story pace: ${PACE_LABELS[view!.pace].name}. Click to change.`); }
     }
+    if (skipButton) skipButton.hidden = !(active && view!.skipOffer);
     extras.setLabel(active ? `Story pace: ${PACE_LABELS[view!.pace].name}` : 'Story pace');
     extras.setSubtitle(active ? `Grimoire · tap for ${PACE_LABELS[nextPace(view!.pace)].name}` : 'Grimoire is off in this chat');
     extras.setEnabled(active);
