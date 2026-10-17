@@ -16,7 +16,7 @@ function host(options: { group?: boolean; granted?: string[] } = {}) {
   const messages: any[] = [];
   let index = 0;
   const add = (role: 'user' | 'assistant', content: string) => { const m = { id: `m${index}`, role, content, index_in_chat: index++, swipe_id: 0, swipes: [content], metadata: {} }; messages.push(m); return m; };
-  const granted = options.granted ?? ['generation', 'interceptor', 'chats', 'characters', 'personas', 'world_books'];
+  const granted = options.granted ?? ['generation', 'interceptor', 'chats', 'chat_mutation', 'characters', 'personas', 'world_books'];
   const api = {
     permissions: { has: (p: string) => granted.includes(p), getGranted: async () => [...granted] },
     userStorage: {
@@ -27,7 +27,8 @@ function host(options: { group?: boolean; granted?: string[] } = {}) {
     characters: { get: async () => ({ id: 'card', name: 'Mira', description: 'A ferry keeper in Low Water.', personality: 'Dry.', scenario: 'A stranger arrives.', first_mes: 'The ferry bell rings.', world_book_ids: ['book'] }) },
     personas: { getActive: async () => ({ id: 'p', name: 'Traveler', description: 'A tired traveler with a ring.' }) },
     world_books: { entries: { list: async () => ({ data: [{ comment: 'Low Water', content: 'A river town.', constant: true }], total: 1 }) } },
-    chat: { getMessages: async () => structuredClone(messages) },
+    // Like Lumiverse: reading messages needs chat_mutation.
+    chat: { getMessages: async () => { if (!granted.includes('chat_mutation')) throw new Error('PERMISSION_DENIED: chat_mutation — Chat mutation permission not granted'); return structuredClone(messages); } },
     variables: { chat: { list: async () => ({}) } },
     connections: { list: async () => [{ id: 'model', name: 'Model', model: 'test', provider: 'test' }] },
   } as unknown as SpindleAPI;
@@ -86,7 +87,18 @@ describe('writing a notebook', () => {
     const view = (await c.view('chat-1'))!;
     expect(view.hasNotebook).toBe(false);
     expect(view.job).toMatchObject({ status: 'failed', label: 'The notebook could not be written' });
-    expect(view.job!.error).toContain('threads must be a list');
+    // The panel never names threads or people from a failed check; the model gets the details to fix its reply.
+    expect(view.job!.error).toBe('The model’s update did not pass Grimoire’s checks, so the notebook was left as it was.');
+    expect(m.calls[1].messages.at(-1)!.content).toContain('threads must be a list');
+  });
+  test('without chat_mutation it explains what to grant before any model request', async () => {
+    const h = host({ granted: ['generation', 'interceptor', 'chats', 'characters'] });
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model' }, {});
+    const m = model({ create: created });
+    const c = new NotebookController(h.api, undefined, () => {}, m.ask);
+    await expect(c.create('chat-1', {})).rejects.toThrow('Grant chat_mutation');
+    expect(m.calls).toHaveLength(0);
+    expect((await c.snapshot('chat-1')).notice).toContain('chat_mutation');
   });
   test('group chats are not supported yet', async () => {
     const h = host({ group: true });
@@ -151,7 +163,10 @@ describe('check-ups', () => {
     expect(checkups[0].input.clockOwner).toEqual({ day: 'tracker', hour: 'tracker' });
     expect(checkups[0].input.trackerText).toContain('Location: The ferry');
     const view = (await c.view('chat-1'))!;
-    expect(view.summary).toBe('Notebook updated after the ferry.');
+    // What shows outside the spoiler fold is made by code, never copied from the model.
+    expect(view.summary).toBe('Last update: 3 replies since the last update');
+    expect(view.job!.label).toBe('Notebook updated');
+    expect(view.notebook!.summary).toBe('Notebook updated after the ferry.');
     expect(view.repliesSinceCheck).toBe(0);
     expect((h.storage.get('chats/chat-1.json') as any).versions).toHaveLength(2);
   });
@@ -172,6 +187,7 @@ describe('check-ups', () => {
     expect(m.calls.at(-1)!.messages.at(-1)!.content).toContain('Keep the thread "The stolen ring"');
     const view = (await c.view('chat-1'))!;
     expect(view.job).toMatchObject({ status: 'failed', label: 'The check-up could not finish' });
+    expect(view.job!.error).not.toContain('stolen ring');
     expect(view.notebook!.threads).toHaveLength(2);
   });
   test('a result is thrown away if the chat it read changed meanwhile', async () => {
@@ -196,7 +212,8 @@ describe('check-ups', () => {
     const c = new NotebookController(h.api, undefined, () => {}, model({ create: () => ({ notebook: sampleNotebook(), tracker: null }), checkup: backwards }).ask);
     await c.create('chat-1', {}); await c.waitForJobs();
     await c.checkup('chat-1', 'test'); await c.waitForJobs();
-    expect((await c.view('chat-1'))!.job!.error).toContain('went backwards');
+    expect((await c.view('chat-1'))!.job!.error).toContain('did not pass Grimoire’s checks');
+    expect(JSON.stringify((await c.view('chat-1'))!.job)).not.toContain('stolen ring');
   });
   test('time cannot be skipped while an update is running', async () => {
     const m = model({ create: created, checkup: input => ({ notebook: input.notebook, tracker: null }) });

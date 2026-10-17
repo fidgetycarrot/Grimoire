@@ -168,6 +168,7 @@ export function setup(ctx: SpindleFrontendContext) {
       e.append(title, el('p', 'gm-small', t.why), steps, ...(t.ifIgnored ? [el('p', 'gm-meta', `If left alone: ${t.ifIgnored}`)] : []), ...(t.closedReason ? [el('p', 'gm-meta', `Closed: ${t.closedReason}`)] : []));
       threads.append(e);
     }
+    if (notebook.summary) section('Latest note from the model').append(el('p', 'gm-small', notebook.summary));
     const beats = section('Possible moments'), ul = el('ul');
     for (const b of notebook.beats) { const li = el('li', 'gm-small', b.text); if (b.status !== 'possible') { const c = el('span', 'gm-chip', b.status); if (b.status === 'happened') c.dataset.tone = 'done'; li.append(c); } ul.append(li); }
     beats.append(ul);

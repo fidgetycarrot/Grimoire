@@ -1,7 +1,7 @@
 {
   "name": "Grimoire",
   "identifier": "lumiverse_grimoire",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": "fidgetycarrot",
   "github": "https://github.com/fidgetycarrot/Grimoire",
   "homepage": "https://github.com/fidgetycarrot/Grimoire#readme",
@@ -10,6 +10,7 @@
     "generation",
     "interceptor",
     "chats",
+    "chat_mutation",
     "characters",
     "personas",
     "world_books"

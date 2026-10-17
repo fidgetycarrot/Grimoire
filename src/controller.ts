@@ -111,11 +111,12 @@ export class NotebookController {
     return this.serial(chatId, async () => {
       const info = await this.chatInfo(chatId);
       const state = await this.load(chatId) ?? this.blank(chatId);
-      const live = info.supported && state.versions.length && this.api.permissions.has('chats') ? await this.live(state, await this.api.chat.getMessages(chatId)) : null;
+      const live = info.supported && state.versions.length && this.api.permissions.has('chats') && this.api.permissions.has('chat_mutation') ? await this.live(state, await this.api.chat.getMessages(chatId)) : null;
       const notebook = live?.version.notebook ?? null;
       return {
         chatId, name: info.name, supported: info.supported, reason: info.reason, enabled: state.enabled, pace: state.pace, preferences: state.preferences,
-        hasNotebook: !!notebook, summary: notebook?.summary ?? '', clock: live?.clock ?? null, clockText: live ? describeClock(live.clock) : '', sources: live?.sources ?? null,
+        // Only code-made words reach the panel outside the spoiler fold; a model-written line could give something away.
+        hasNotebook: !!notebook, summary: live ? `Last update: ${live.version.reason}` : '', clock: live?.clock ?? null, clockText: live ? describeClock(live.clock) : '', sources: live?.sources ?? null,
         checks: live ? state.checks : [], needsCheck: state.needsCheck || (live && live.index !== state.versions.length - 1 ? 'The chat changed since the last update.' : ''),
         job: state.job, updatedAt: state.updatedAt, repliesSinceCheck: live ? this.repliesSince(live) : 0, skipHours: state.skipHours, notebook, behind: !!live && live.index !== state.versions.length - 1,
       };
@@ -126,7 +127,7 @@ export class NotebookController {
     let connections: Snapshot['connections'] = [];
     if (permissions.includes('generation')) { try { connections = (await this.api.connections.list(this.userId)).map(c => ({ id: c.id, name: c.name, model: c.model })); } catch { /* unavailable */ } }
     let chat: ChatView | null = null, notice = '';
-    for (const need of ['chats', 'characters', 'interceptor', 'generation']) if (!permissions.includes(need)) notice = `Grant ${need} in Lumiverse’s Extensions panel so Grimoire can work.`;
+    for (const need of ['chats', 'chat_mutation', 'characters', 'interceptor', 'generation']) if (!permissions.includes(need)) notice = `Grant ${need} in Lumiverse’s Extensions panel so Grimoire can work.`;
     try { chat = permissions.includes('chats') ? await this.view(chatId) : null; } catch (error) { notice = error instanceof Error ? error.message : 'This chat could not be read.'; }
     return { version: VERSION, permissions, connections, settings: await this.settings(), chat, notice };
   }
@@ -172,7 +173,9 @@ export class NotebookController {
   private track(task: Promise<void>) { this.tasks.add(task); void task.finally(() => this.tasks.delete(task)); }
   async waitForJobs() { while (this.tasks.size) await Promise.all([...this.tasks]); }
   private explain(error: unknown) {
-    if (error instanceof ModelError || error instanceof NotebookError) return error.message;
+    // Check failures name threads and people, so the panel gets a spoiler-free version. The model still sees the details when asked to fix its reply.
+    if (error instanceof NotebookError) return 'The model’s update did not pass Grimoire’s checks, so the notebook was left as it was.';
+    if (error instanceof ModelError) return error.message;
     return error instanceof Error && error.message.length < 300 ? error.message : 'Something went wrong. Your notebook was not changed.';
   }
 
@@ -180,6 +183,8 @@ export class NotebookController {
     return this.serial(chatId, async () => {
       const info = await this.chatInfo(chatId);
       if (!info.supported) throw new Error(info.reason);
+      // Lumiverse groups reading a chat's messages under chat_mutation. Grimoire only reads them.
+      if (!this.api.permissions.has('chat_mutation')) throw new Error('Grant chat_mutation in Lumiverse’s Extensions panel. Grimoire needs it to read the chat’s messages; it never changes them.');
       const settings = await this.settings(), ask = this.asker(settings);
       const state = await this.load(chatId) ?? this.blank(chatId);
       state.preferences = validPreferences(preferencesInput);
@@ -279,7 +284,7 @@ export class NotebookController {
           const kept = current.versions.filter((v, i) => i === 0 || covers(v.covered, read));
           current.versions = [kept[0], ...kept.slice(1).slice(-(MAX_VERSIONS - 2)), version].filter((v, i, all) => all.indexOf(v) === i);
           current.needsCheck = '';
-          current.job = { ...job, status: 'complete', label: result.notebook.summary || 'Notebook updated' };
+          current.job = { ...job, status: 'complete', label: 'Notebook updated' };
           await this.save(current);
         });
       } catch (error) { await this.failJob(chatId, job, error); }

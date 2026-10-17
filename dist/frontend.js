@@ -59,7 +59,7 @@ function nextStep(thread, now) {
 }
 
 // src/types.ts
-var VERSION = "0.1.0";
+var VERSION = "0.1.1";
 
 // src/frontend.ts
 var ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8 3v18"/><path d="M12 8h3M12 12h3"/></svg>';
@@ -382,6 +382,8 @@ function setup(ctx) {
       e.append(title, el("p", "gm-small", t.why), steps, ...t.ifIgnored ? [el("p", "gm-meta", `If left alone: ${t.ifIgnored}`)] : [], ...t.closedReason ? [el("p", "gm-meta", `Closed: ${t.closedReason}`)] : []);
       threads.append(e);
     }
+    if (notebook.summary)
+      section("Latest note from the model").append(el("p", "gm-small", notebook.summary));
     const beats = section("Possible moments"), ul = el("ul");
     for (const b of notebook.beats) {
       const li = el("li", "gm-small", b.text);

@@ -758,7 +758,7 @@ function trackerText(recipe, reply) {
 }
 
 // src/types.ts
-var VERSION = "0.1.0";
+var VERSION = "0.1.1";
 var MAX_VERSIONS = 12;
 var DEFAULT_SETTINGS = { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto" };
 var DEFAULT_PREFERENCES = { length: "medium", tone: "balanced", twist: true };
@@ -891,7 +891,7 @@ class NotebookController {
     return this.serial(chatId, async () => {
       const info = await this.chatInfo(chatId);
       const state = await this.load(chatId) ?? this.blank(chatId);
-      const live = info.supported && state.versions.length && this.api.permissions.has("chats") ? await this.live(state, await this.api.chat.getMessages(chatId)) : null;
+      const live = info.supported && state.versions.length && this.api.permissions.has("chats") && this.api.permissions.has("chat_mutation") ? await this.live(state, await this.api.chat.getMessages(chatId)) : null;
       const notebook = live?.version.notebook ?? null;
       return {
         chatId,
@@ -902,7 +902,7 @@ class NotebookController {
         pace: state.pace,
         preferences: state.preferences,
         hasNotebook: !!notebook,
-        summary: notebook?.summary ?? "",
+        summary: live ? `Last update: ${live.version.reason}` : "",
         clock: live?.clock ?? null,
         clockText: live ? describeClock(live.clock) : "",
         sources: live?.sources ?? null,
@@ -926,7 +926,7 @@ class NotebookController {
       } catch {}
     }
     let chat = null, notice = "";
-    for (const need of ["chats", "characters", "interceptor", "generation"])
+    for (const need of ["chats", "chat_mutation", "characters", "interceptor", "generation"])
       if (!permissions.includes(need))
         notice = `Grant ${need} in Lumiverse\u2019s Extensions panel so Grimoire can work.`;
     try {
@@ -1013,7 +1013,9 @@ class NotebookController {
       await Promise.all([...this.tasks]);
   }
   explain(error) {
-    if (error instanceof ModelError || error instanceof NotebookError)
+    if (error instanceof NotebookError)
+      return "The model\u2019s update did not pass Grimoire\u2019s checks, so the notebook was left as it was.";
+    if (error instanceof ModelError)
       return error.message;
     return error instanceof Error && error.message.length < 300 ? error.message : "Something went wrong. Your notebook was not changed.";
   }
@@ -1022,6 +1024,8 @@ class NotebookController {
       const info = await this.chatInfo(chatId);
       if (!info.supported)
         throw new Error(info.reason);
+      if (!this.api.permissions.has("chat_mutation"))
+        throw new Error("Grant chat_mutation in Lumiverse\u2019s Extensions panel. Grimoire needs it to read the chat\u2019s messages; it never changes them.");
       const settings = await this.settings(), ask = this.asker(settings);
       const state = await this.load(chatId) ?? this.blank(chatId);
       state.preferences = validPreferences(preferencesInput);
@@ -1143,7 +1147,7 @@ class NotebookController {
           const kept = current.versions.filter((v, i) => i === 0 || covers(v.covered, read));
           current.versions = [kept[0], ...kept.slice(1).slice(-(MAX_VERSIONS - 2)), version].filter((v, i, all) => all.indexOf(v) === i);
           current.needsCheck = "";
-          current.job = { ...job, status: "complete", label: result.notebook.summary || "Notebook updated" };
+          current.job = { ...job, status: "complete", label: "Notebook updated" };
           await this.save(current);
         });
       } catch (error) {

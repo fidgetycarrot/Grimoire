@@ -32,7 +32,8 @@ Requires **Lumiverse 1.2.0 or newer**. The built files are included; no build st
 | --- | --- |
 | `generation` | Writing notebooks and running check-ups on the connection you choose |
 | `interceptor` | Adding the short private note before each reply |
-| `chats` | Reading the chat so the notebook matches it |
+| `chats` | Finding the chat and its character |
+| `chat_mutation` | Reading the chat's messages so the notebook matches them. Lumiverse puts message reading under this permission; Grimoire never changes, adds, or deletes messages. |
 | `characters` | Reading the card |
 | `personas` | Reading your active persona (optional) |
 | `world_books` | Reading the card's lorebook (optional) |
