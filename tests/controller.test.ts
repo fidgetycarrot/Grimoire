@@ -312,6 +312,19 @@ describe('presets that show their tracker only after the first replies', () => {
     expect(view.checks.map(x => [x.name, x.status])).toEqual([['time', 'verified'], ['location', 'verified']]);
     expect(view.sources!.hour).toBe('tracker');
   });
+  test('a tracker field the model missed is filled in from the replies, without replacing the model\'s', async () => {
+    const h = host(); h.add('assistant', 'The ferry bell rings.');
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 8 }, {});
+    const partial = { fields: [{ name: 'time', type: 'time', source: { kind: 'attribute', tag: 'scene_header', attribute: 'time' } }], note: 'time only' };
+    const m = model({ create: () => ({ notebook: sampleNotebook(), tracker: partial }) });
+    const c = new NotebookController(h.api, undefined, () => {}, m.ask);
+    await c.create('chat-1', {}); await c.waitForJobs();
+    h.add('user', 'I wait.'); h.add('assistant', `${header('7:15 PM', 'The ferry')}<date>\nDay: Day 2\n</date>`);
+    await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+    const view = (await c.view('chat-1'))!;
+    expect(view.checks.map(x => [x.name, x.status])).toEqual([['time', 'verified'], ['date', 'verified'], ['location', 'verified']]);
+    expect(view.sources).toMatchObject({ day: 'tracker', hour: 'tracker' });
+  });
   test('a layout only a model can describe gets one look, with the raw replies but not the greeting', async () => {
     const fence = (time: string) => `Mira coils the rope.\n\n\`\`\`status\n{"when": "${time}", "where": "The ferry"}\n\`\`\``;
     const jsonRecipe = { fields: [{ name: 'time', type: 'time', source: { kind: 'json', path: 'when', region: { kind: 'fence', lang: 'status' } } }], note: 'json block' };

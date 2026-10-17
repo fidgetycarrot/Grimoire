@@ -200,6 +200,25 @@ export function setup(ctx: SpindleFrontendContext) {
     if (notebook.events.length) { const s = section('What has happened'), list = el('ul'); for (const ev of notebook.events) list.append(el('li', 'gm-small', ev)); s.append(list); }
     return book;
   }
+  const STAGE_WORDS: Record<string, string> = { setup: 'setup', rising: 'rising action', climax: 'climax', resolution: 'resolution', ki: 'introduction', sho: 'development', ten: 'the turn', ketsu: 'bringing it together' };
+  function renderGlance(view: ChatView) {
+    const d = details('At a glance · no spoilers'), g = view.glance;
+    if (!g) return d.root;
+    const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+    const speeds = [g.threads.urgent && `${g.threads.urgent} urgent`, g.threads.steady && `${g.threads.steady} steady`, g.threads.slow && `${g.threads.slow} slow`].filter(Boolean).join(', ');
+    const rows: Array<[string, string]> = [
+      ['Story shape', `${g.shape === 'kishotenketsu' ? 'Kishōtenketsu' : 'Conflict'}, ${STAGE_WORDS[g.stage] ?? g.stage}`],
+      ['Story threads', `${plural(g.threads.open, 'open thread')}${speeds ? ` (${speeds})` : ''}${g.threads.closed ? `, ${g.threads.closed} finished` : ''}`],
+      ['Next development', g.dueNow ? `${plural(g.dueNow, 'development')} ready now` : g.nextInReplies === null ? 'Nothing planned yet' : `within about ${plural(g.nextInReplies, 'reply', 'replies')}, sooner if story time moves`],
+      ['Breadcrumbs', `${g.seeds.planted} planted, ${g.seeds.waiting} waiting, ${g.seeds.paid} paid off`],
+      ['Planned moments', `${g.moments.possible} possible (${g.moments.big} big)${g.moments.happened ? `, ${g.moments.happened} happened` : ''}`],
+      ['People', `${g.people.total}, ${g.people.met} met so far`],
+    ];
+    const list = el('ul', 'gm-fields');
+    for (const [label, value] of rows) { const li = el('li'); li.append(el('span', '', label), el('span', 'gm-dot', value)); list.append(li); }
+    d.body.append(list, el('p', 'gm-hint', 'Only shapes and counts: no names, no plans.'));
+    return d.root;
+  }
   function renderSpoilers(view: ChatView) {
     const d = details('Show the notebook · spoilers');
     if (!view.notebook) return d.root;
@@ -229,7 +248,7 @@ export function setup(ctx: SpindleFrontendContext) {
     if (view.needsCheck && view.enabled && view.job?.status !== 'running') body.append(el('p', 'gm-notice', `${view.needsCheck} An update will run after the next reply, or choose Check now.`));
     else if (view.behind && view.enabled) body.append(el('p', 'gm-hint', 'You went back in the chat, so Grimoire is using its notebook from before that point. Nothing from the removed replies counts.'));
     if (view.skipOffer && view.enabled) body.append(renderSkipOffer(view));
-    body.append(renderClock(view), renderPace(view), renderActions(view), renderTracker(view), renderSpoilers(view));
+    body.append(renderClock(view), renderPace(view), renderActions(view), renderTracker(view), renderGlance(view), renderSpoilers(view));
     const remove = button(confirmDelete ? 'Tap again to delete this notebook' : 'Delete this notebook', async () => {
       if (!confirmDelete) { confirmDelete = true; render(); setTimeout(() => { confirmDelete = false; render(); }, 5000); return; }
       confirmDelete = false; await act('remove', { chatId: view.chatId }); notify('Notebook deleted for this chat.');

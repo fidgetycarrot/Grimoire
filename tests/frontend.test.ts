@@ -22,7 +22,7 @@ function harness(chat: Partial<NonNullable<Snapshot['chat']>> | null = {}, setti
     decisions: { available: true, reason: '', connections: [{ id: 'dec', name: 'Jev', provider: 'typesafe', model: '~typesafe/jev-latest', isDefault: true }] },
     chat: chat === null ? null : { chatId: 'chat-1', name: 'Low Water', supported: true, reason: '', enabled: true, pace: 'auto', preferences: { tone: 'balanced', twist: true }, hasNotebook: true,
       summary: 'Notebook updated after the tavern.', clock: { day: 2, hour: 21, label: '' }, clockText: 'Day 2, 21:00', sources: { day: 'notebook', hour: 'notebook', exact: false }, checks: [],
-      needsCheck: '', job: null, updatedAt: Date.now(), repliesSinceCheck: 2, skipHours: 0, notebook: stamp(validateNotebook(sampleNotebook()), 40), behind: false, earlierParts: 0, quick: null, dueIds: [], skipOffer: null, ...chat },
+      needsCheck: '', job: null, updatedAt: Date.now(), repliesSinceCheck: 2, skipHours: 0, notebook: stamp(validateNotebook(sampleNotebook()), 40), behind: false, earlierParts: 0, quick: null, dueIds: [], skipOffer: null, glance: null, ...chat },
   };
   const requests: Array<{ action: string; input: any }> = [];
   let receive: (m: unknown) => void = () => {};
@@ -105,6 +105,16 @@ describe('the panel', () => {
     expect(h.root.textContent).toContain('Group chats are not supported yet');
     const none = harness(null); await tick();
     expect(none.root.textContent).toContain('Open a chat to use Grimoire.');
+  });
+});
+
+describe('at a glance', () => {
+  test('shows shapes and counts in its own fold, closed by default', async () => {
+    const h = harness({ glance: { shape: 'kishotenketsu', stage: 'sho', threads: { open: 3, urgent: 0, steady: 2, slow: 1, closed: 1 }, seeds: { waiting: 3, planted: 2, paid: 1 }, moments: { possible: 5, big: 1, happened: 2 }, people: { total: 6, met: 4 }, nextInReplies: 7, dueNow: 0 } }); await tick();
+    const fold = Array.from(h.root.querySelectorAll('details')).find(d => d.textContent?.includes('At a glance'))!;
+    expect(fold.open).toBe(false);
+    for (const text of ['Kishōtenketsu, development', '3 open threads (2 steady, 1 slow), 1 finished', 'within about 7 replies', '2 planted, 3 waiting, 1 paid off', '5 possible (1 big), 2 happened', '6, 4 met so far'])
+      expect(fold.textContent).toContain(text);
   });
 });
 

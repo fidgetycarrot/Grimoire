@@ -7,7 +7,7 @@ import { dueThreads, fillReplies, keepTimes, mergeRevision, NotebookError, stamp
 import { checkupMessages, creationMessages, digestMessages, type Material } from './prompts';
 import { plainBlock, tidyNotebook } from './tidy';
 import { applyQuick, quickError, quickQuestions, quickState } from './quick';
-import { skipOffer } from './skip';
+import { glance, skipOffer } from './skip';
 import type { DecisionResult } from 'lumiverse-spindle-types';
 import { checkRecipe, guessRecipe, readTracker, trackerText, validateRecipe, type FieldType, type Recipe } from './tracker';
 import { DEFAULT_PREFERENCES, DEFAULT_SETTINGS, MAX_VERSIONS, VERSION, type ChatState, type ChatView, type Job, type Settings, type Snapshot, type Version } from './types';
@@ -142,10 +142,12 @@ export class NotebookController {
   }
   /** Try to find the tracker in code, for free. Returns true if one was found. */
   private learnTracker(state: ChatState, turns: Turn[]): boolean {
-    if (state.recipe.fields.length) return false;
     const found = guessRecipe(this.trackerSamples(turns));
-    if (!found.fields.length) return false;
-    state.recipe = found;
+    // Fill in only what is missing: a field the model described stays the model's.
+    const have = new Set(state.recipe.fields.map(f => f.name)), time = have.has('datetime');
+    const extra = found.fields.filter(f => !have.has(f.name) && !(time && (f.name === 'date' || f.name === 'time')));
+    if (!extra.length) return false;
+    state.recipe = { fields: [...state.recipe.fields, ...extra], note: state.recipe.note || found.note };
     return true;
   }
   private repliesSince(live: Live) { return live.turns.slice(this.fullVersion(live).covered.length).filter(t => t.role === 'assistant').length; }
@@ -167,6 +169,7 @@ export class NotebookController {
         hasNotebook: !!notebook, summary: live ? `Last update: ${this.fullVersion(live).reason}` : '', clock: live?.clock ?? null, clockText: live ? describeClock(live.clock) : '', sources: live?.sources ?? null,
         checks: live ? state.checks : [], needsCheck: state.needsCheck || (live && !live.matched ? 'The chat changed before the notebook was written.' : ''),
         job: state.job, updatedAt: state.updatedAt, repliesSinceCheck: live ? this.repliesSince(live) : 0, skipHours: state.skipHours, notebook, behind: !!live && live.index !== state.versions.length - 1, earlierParts, quick: state.quick, dueIds: live ? dueThreads(live.version.notebook, live.moment).map(d => d.thread.id) : [],
+        glance: live ? glance(live.version.notebook, live.moment) : null,
         skipOffer: live && state.enabled && state.job?.status !== 'running' && !state.skipHours ? skipOffer(live.version.notebook, live.moment, live.clock, state.skipDismissedAt) : null,
       };
     });

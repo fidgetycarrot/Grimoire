@@ -502,3 +502,16 @@ describe('arc shapes and breadcrumbs', () => {
     expect(text).toContain("Never write the player character's actions");
   });
 });
+
+describe('at a glance', () => {
+  const { glance } = require('../src/skip');
+  const { waitsFor } = require('../src/notebook');
+  test('counts and shapes only, with when the next development comes at the latest', () => {
+    const nb: any = stamp(validateNotebook(sampleNotebook()), { hours: 42, reply: 10 });
+    nb.threads[1].status = 'paused';
+    const g = glance(nb, { hours: 42, reply: 13, waits: waitsFor('medium', 'auto') });
+    expect(g).toEqual({ shape: 'conflict', stage: 'setup', threads: { open: 1, urgent: 0, steady: 1, slow: 0, closed: 0 }, seeds: { waiting: 1, planted: 0, paid: 0 },
+      moments: { possible: 2, big: 1, happened: 0 }, people: { total: 3, met: 2 }, nextInReplies: 12, dueNow: 0 });
+    expect(JSON.stringify(g)).not.toMatch(/ring|Oswin|Mira|wax/i);
+  });
+});

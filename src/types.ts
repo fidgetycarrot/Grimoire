@@ -3,10 +3,10 @@ import type { ClockSources } from './note';
 import type { Notebook, Pace, Preferences, WaitSetting } from './notebook';
 import type { ReasoningMode } from './model';
 import type { FieldCheck, Recipe } from './tracker';
-import type { SkipOffer } from './skip';
+import type { Glance, SkipOffer } from './skip';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.4.0';
+export const VERSION = '0.4.1';
 export const MAX_VERSIONS = 16;
 
 /** One saved state of the notebook and the chat history it describes. */
@@ -49,6 +49,8 @@ export interface ChatView {
   dueIds: string[];
   /** A time skip worth suggesting because the scene has gone quiet, or null. */
   skipOffer: SkipOffer | null;
+  /** Shapes and counts only, for the spoiler-free glance. */
+  glance: Glance | null;
 }
 export interface Snapshot {
   version: string; permissions: string[]; connections: Array<{ id: string; name: string; model: string }>;

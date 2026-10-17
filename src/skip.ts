@@ -59,3 +59,35 @@ export function skipOffer(notebook: Notebook, moment: Moment, clock: StoryClock,
   }
   return { options };
 }
+
+/** A spoiler-free picture of how the story is set up: shapes and counts, never names or text. */
+export interface Glance {
+  shape: Notebook['arc']['shape']; stage: string;
+  threads: { open: number; urgent: number; steady: number; slow: number; closed: number };
+  seeds: { waiting: number; planted: number; paid: number };
+  moments: { possible: number; big: number; happened: number };
+  people: { total: number; met: number };
+  /** Replies until the next planned development at the latest, if any is planned. */
+  nextInReplies: number | null;
+  dueNow: number;
+}
+export function glance(notebook: Notebook, moment: Moment): Glance {
+  const open = notebook.threads.filter(t => t.status === 'open');
+  let next: number | null = null;
+  if (moment.reply !== undefined && moment.waits) for (const thread of open) {
+    const index = thread.steps.findIndex(s => s.status === 'waiting');
+    if (index < 0) continue;
+    const from = thread.steps.slice(0, index).reverse().find(s => s.atReply !== undefined)?.atReply ?? thread.startReply;
+    if (from === undefined) continue;
+    const left = Math.max(0, from + moment.waits[thread.speed] - moment.reply);
+    if (next === null || left < next) next = left;
+  }
+  return {
+    shape: notebook.arc.shape, stage: notebook.arc.stage,
+    threads: { open: open.length, urgent: open.filter(t => t.speed === 'urgent').length, steady: open.filter(t => t.speed === 'steady').length, slow: open.filter(t => t.speed === 'slow').length, closed: notebook.threads.filter(t => t.status === 'closed').length },
+    seeds: { waiting: notebook.seeds.filter(s => s.status === 'waiting').length, planted: notebook.seeds.filter(s => s.status === 'planted').length, paid: notebook.seeds.filter(s => s.status === 'paid').length },
+    moments: { possible: notebook.beats.filter(b => b.status === 'possible').length, big: notebook.beats.filter(b => b.status === 'possible' && b.intensity === 'high').length, happened: notebook.beats.filter(b => b.status === 'happened').length },
+    people: { total: notebook.people.filter(p => p.status === 'active').length, met: notebook.people.filter(p => p.status === 'active' && p.met).length },
+    nextInReplies: next, dueNow: dueThreads(notebook, moment).length,
+  };
+}

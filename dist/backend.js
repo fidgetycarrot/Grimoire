@@ -1206,6 +1206,32 @@ function skipOffer(notebook, moment, clock, dismissedAt) {
   }
   return { options };
 }
+function glance(notebook, moment) {
+  const open = notebook.threads.filter((t) => t.status === "open");
+  let next = null;
+  if (moment.reply !== undefined && moment.waits)
+    for (const thread of open) {
+      const index = thread.steps.findIndex((s) => s.status === "waiting");
+      if (index < 0)
+        continue;
+      const from = thread.steps.slice(0, index).reverse().find((s) => s.atReply !== undefined)?.atReply ?? thread.startReply;
+      if (from === undefined)
+        continue;
+      const left = Math.max(0, from + moment.waits[thread.speed] - moment.reply);
+      if (next === null || left < next)
+        next = left;
+    }
+  return {
+    shape: notebook.arc.shape,
+    stage: notebook.arc.stage,
+    threads: { open: open.length, urgent: open.filter((t) => t.speed === "urgent").length, steady: open.filter((t) => t.speed === "steady").length, slow: open.filter((t) => t.speed === "slow").length, closed: notebook.threads.filter((t) => t.status === "closed").length },
+    seeds: { waiting: notebook.seeds.filter((s) => s.status === "waiting").length, planted: notebook.seeds.filter((s) => s.status === "planted").length, paid: notebook.seeds.filter((s) => s.status === "paid").length },
+    moments: { possible: notebook.beats.filter((b) => b.status === "possible").length, big: notebook.beats.filter((b) => b.status === "possible" && b.intensity === "high").length, happened: notebook.beats.filter((b) => b.status === "happened").length },
+    people: { total: notebook.people.filter((p) => p.status === "active").length, met: notebook.people.filter((p) => p.status === "active" && p.met).length },
+    nextInReplies: next,
+    dueNow: dueThreads(notebook, moment).length
+  };
+}
 
 // src/tracker.ts
 var TAG = /^[A-Za-z][\w:.-]{0,40}$/;
@@ -1437,7 +1463,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.4.0";
+var VERSION = "0.4.1";
 var MAX_VERSIONS = 16;
 var DEFAULT_SETTINGS = { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto", quick: { enabled: false, connectionId: "", model: "" }, wait: "medium" };
 var DEFAULT_PREFERENCES = { tone: "balanced", twist: true };
@@ -1597,12 +1623,12 @@ class NotebookController {
     return turns.filter((t, i) => t.role === "assistant" && !(i === 0)).map((t) => t.content).reverse();
   }
   learnTracker(state, turns) {
-    if (state.recipe.fields.length)
-      return false;
     const found = guessRecipe(this.trackerSamples(turns));
-    if (!found.fields.length)
+    const have = new Set(state.recipe.fields.map((f) => f.name)), time = have.has("datetime");
+    const extra = found.fields.filter((f) => !have.has(f.name) && !(time && (f.name === "date" || f.name === "time")));
+    if (!extra.length)
       return false;
-    state.recipe = found;
+    state.recipe = { fields: [...state.recipe.fields, ...extra], note: state.recipe.note || found.note };
     return true;
   }
   repliesSince(live) {
@@ -1643,6 +1669,7 @@ class NotebookController {
         earlierParts,
         quick: state.quick,
         dueIds: live ? dueThreads(live.version.notebook, live.moment).map((d) => d.thread.id) : [],
+        glance: live ? glance(live.version.notebook, live.moment) : null,
         skipOffer: live && state.enabled && state.job?.status !== "running" && !state.skipHours ? skipOffer(live.version.notebook, live.moment, live.clock, state.skipDismissedAt) : null
       };
     });
