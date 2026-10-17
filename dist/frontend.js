@@ -59,7 +59,7 @@ function nextStep(thread, now) {
 }
 
 // src/types.ts
-var VERSION = "0.2.1";
+var VERSION = "0.2.2";
 
 // src/frontend.ts
 var ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8 3v18"/><path d="M12 8h3M12 12h3"/></svg>';
@@ -485,6 +485,8 @@ function setup(ctx) {
       body.append(job);
     if (view.needsCheck && view.enabled && view.job?.status !== "running")
       body.append(el("p", "gm-notice", `${view.needsCheck} An update will run after the next reply, or choose Check now.`));
+    else if (view.behind && view.enabled)
+      body.append(el("p", "gm-hint", "You went back in the chat, so Grimoire is using its notebook from before that point. Nothing from the removed replies counts."));
     body.append(renderClock(view), renderPace(view), renderActions(view), renderTracker(view), renderSpoilers(view));
     const remove = button(confirmDelete ? "Tap again to delete this notebook" : "Delete this notebook", async () => {
       if (!confirmDelete) {

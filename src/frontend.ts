@@ -210,6 +210,7 @@ export function setup(ctx: SpindleFrontendContext) {
     body.append(toggleRow);
     if (job) body.append(job);
     if (view.needsCheck && view.enabled && view.job?.status !== 'running') body.append(el('p', 'gm-notice', `${view.needsCheck} An update will run after the next reply, or choose Check now.`));
+    else if (view.behind && view.enabled) body.append(el('p', 'gm-hint', 'You went back in the chat, so Grimoire is using its notebook from before that point. Nothing from the removed replies counts.'));
     body.append(renderClock(view), renderPace(view), renderActions(view), renderTracker(view), renderSpoilers(view));
     const remove = button(confirmDelete ? 'Tap again to delete this notebook' : 'Delete this notebook', async () => {
       if (!confirmDelete) { confirmDelete = true; render(); setTimeout(() => { confirmDelete = false; render(); }, 5000); return; }

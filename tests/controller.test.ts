@@ -418,6 +418,19 @@ describe('the quick check', () => {
     expect(h.decisionCalls[0]).toMatchObject({ connection_id: 'jev', model: '~typesafe/jev-latest' });
     expect((await c.snapshot('chat-1')).decisions).toMatchObject({ available: true, connections: [{ id: 'jev', isDefault: true }] });
   });
+  test('after going back, quick checks on the new reply count from the update that still fits the chat', async () => {
+    const { h, m, c } = await quickReady(answers({ due_1: noul(0.95) }));
+    for (const line of ['Look.', 'Look again.']) { h.add('user', line); h.add('assistant', `Shutters bang.${tracker('Day 1, 18:10', 'The ferry')}`); }
+    await c.checkup('chat-1', 'You asked for a check-up'); await c.waitForJobs();
+    // Delete both exchanges, then play a different one.
+    h.messages.splice(1);
+    h.add('user', 'Stay inside.'); h.add('assistant', `Shutters bang somewhere.${tracker('Day 1, 18:10', 'The ferry')}`);
+    await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+    const view = (await c.view('chat-1'))!;
+    expect(view.notebook!.threads[1].steps[0].status).toBe('shown');
+    expect(view).toMatchObject({ repliesSinceCheck: 1, summary: 'Last update: Notebook written' });
+    expect(m.calls.filter(x => x.task === 'grimoire-checkup-v1')).toHaveLength(1);
+  });
   test('a failed decision call is reported in plain words and the usual rules still run', async () => {
     const { h, m, c } = await quickReady(() => new Error('502 upstream said: <the whole prompt echoed back>'));
     for (let i = 0; i < 8; i++) { h.add('user', `Wait ${i}.`); h.add('assistant', `Time passes.${tracker('Day 1, 18:00', 'The ferry')}`); }
@@ -462,14 +475,30 @@ describe('edits, swipes, and forks', () => {
     const result = await c.intercept([{ role: 'user', content: 'x' }], { chatId: 'chat-1', generationType: 'regenerate', excludeMessageId: 'm4' }) as any;
     expect(result.messages[1].content).toContain('Story time: Day 1, 18:20');
   });
-  test('editing a covered message falls back and asks for a check-up', async () => {
+  test('deleting or editing a reply falls back to the notebook from before it, without paying for a check-up', async () => {
     const { h, m, c } = await withUpdate();
+    const checkups = () => m.calls.filter(x => x.task === 'grimoire-checkup-v1').length, before = checkups();
     h.messages[4].content = 'Mira says nothing.';
     const view = (await c.view('chat-1'))!;
     expect(view.behind).toBe(true);
+    expect(view.needsCheck).toBe('');
     expect(view.notebook!.threads[0].steps[0].status).toBe('waiting');
     await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
-    expect(m.calls.at(-1)!.input.reason).toBe('The chat changed since the last update');
+    expect(checkups()).toBe(before);
+    // Deleting the last exchange works the same way.
+    h.messages.splice(3, 2);
+    expect((await c.view('chat-1'))!).toMatchObject({ behind: true, needsCheck: '', summary: 'Last update: Notebook written' });
+    // A new reply counts from the notebook that fits, not from the update on the deleted branch.
+    h.add('user', 'Try again.'); h.add('assistant', `Mira shrugs.${tracker('Day 1, 18:40', 'The ferry')}`);
+    expect((await c.view('chat-1'))!.repliesSinceCheck).toBe(1);
+  });
+  test('editing a message the first notebook was written from does ask for a check-up', async () => {
+    const { h, m, c } = await withUpdate();
+    h.messages[0].content = 'A different opening.';
+    expect((await c.view('chat-1'))!.needsCheck).toBe('The chat changed before the notebook was written.');
+    h.add('user', 'Go on.'); h.add('assistant', 'Fine.');
+    await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+    expect(m.calls.at(-1)!.input.reason).toBe('The chat changed before the notebook was written');
   });
   test('swiping back to the old reply brings its version back', async () => {
     const { h, c } = await withUpdate();

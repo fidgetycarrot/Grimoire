@@ -14,7 +14,7 @@ import { DEFAULT_PREFERENCES, DEFAULT_SETTINGS, MAX_VERSIONS, VERSION, type Chat
 const record = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
 const PACES: Pace[] = ['auto', 'quiet', 'fast'];
 type Messages = Awaited<ReturnType<SpindleAPI['chat']['getMessages']>>;
-interface Live { state: ChatState; turns: Turn[]; prints: string[]; index: number; version: Version; replies: string[]; values: Record<string, string>; types: Record<string, FieldType>; clock: StoryClock; sources: ClockSources; now: number; text: string }
+interface Live { state: ChatState; turns: Turn[]; prints: string[]; index: number; /** False when no saved version fits the chat, so the oldest one stands in. */ matched: boolean; version: Version; replies: string[]; values: Record<string, string>; types: Record<string, FieldType>; clock: StoryClock; sources: ClockSources; now: number; text: string }
 
 function validPreferences(value: unknown): Preferences {
   const v = record(value);
@@ -111,6 +111,7 @@ export class NotebookController {
     let index = newestMatching(state.versions, prints);
     // The first version describes the chat as it was when the notebook began;
     // an edit before that point still leaves it as the base, with a check due.
+    const matched = index >= 0;
     if (index < 0) index = 0;
     const version = state.versions[index];
     const replies = turns.filter(t => t.role === 'assistant').map(t => t.content).reverse();
@@ -121,11 +122,12 @@ export class NotebookController {
     const types = Object.fromEntries(state.recipe.fields.map(f => [f.name, f.type])) as Record<string, FieldType>;
     const { clock, sources } = liveClock(version.notebook.clock, values, types);
     state.checks = checks;
-    return { state, turns, prints, index, version, replies, values, types, clock, sources, now: absoluteHours(clock), text: replies[0] ? trackerText(state.recipe, replies[0]) : '' };
+    return { state, turns, prints, index, matched, version, replies, values, types, clock, sources, now: absoluteHours(clock), text: replies[0] ? trackerText(state.recipe, replies[0]) : '' };
   }
   /** The newest full update at or before the version in use. Quick checks keep the notebook current, but don't count as a check-up. */
   private fullVersion(live: Live): Version {
-    for (let i = live.index; i >= 0; i--) if (!live.state.versions[i].quick) return live.state.versions[i];
+    // Only versions that still fit the chat: a check-up on a deleted branch doesn't count.
+    for (let i = live.index; i >= 0; i--) { const v = live.state.versions[i]; if (!v.quick && covers(v.covered, live.prints)) return v; }
     return live.state.versions[0];
   }
   /** Replies to learn a tracker from, newest first. An opening message seldom has one, so it doesn't count. */
@@ -157,7 +159,7 @@ export class NotebookController {
         chatId, name: info.name, supported: info.supported, reason: info.reason, enabled: state.enabled, pace: state.pace, preferences: state.preferences,
         // Only code-made words reach the panel outside the spoiler fold; a model-written line could give something away.
         hasNotebook: !!notebook, summary: live ? `Last update: ${this.fullVersion(live).reason}` : '', clock: live?.clock ?? null, clockText: live ? describeClock(live.clock) : '', sources: live?.sources ?? null,
-        checks: live ? state.checks : [], needsCheck: state.needsCheck || (live && live.index !== state.versions.length - 1 ? 'The chat changed since the last update.' : ''),
+        checks: live ? state.checks : [], needsCheck: state.needsCheck || (live && !live.matched ? 'The chat changed before the notebook was written.' : ''),
         job: state.job, updatedAt: state.updatedAt, repliesSinceCheck: live ? this.repliesSince(live) : 0, skipHours: state.skipHours, notebook, behind: !!live && live.index !== state.versions.length - 1, earlierParts, quick: state.quick,
       };
     });
@@ -484,7 +486,9 @@ export class NotebookController {
     // A tracker that shows up once the narrator starts replying is looked for in code first, for free.
     if (this.learnTracker(state, live.turns)) live = (await this.live(state, await this.api.chat.getMessages(chatId)))!;
     const full = this.fullVersion(live), since = this.repliesSince(live);
-    const behind = live.index !== state.versions.length - 1;
+    // Going back (deleting, editing, or swiping a reply) picks the version from before it, which already fits the chat.
+    // A check-up is only needed right away when no saved version fits at all.
+    const unmatched = !live.matched;
     const moved = !!live.values.location && !!full.location && live.values.location.toLowerCase() !== full.location.toLowerCase() && since >= 2;
     const jumped = live.now - absoluteHours(full.notebook.clock) >= 6 && since >= 1;
     // After a failed check-up, wait for the story to move on before paying for another try. Check now always works.
@@ -494,7 +498,7 @@ export class NotebookController {
     // An urgent development was offered: see whether it happened before offering it again, once per stretch.
     // The quick check answers this itself, so it is only needed without one.
     const urgent = !(settings.quick.enabled && this.decisionsReady()) && since >= 2 && full.reason !== 'Checking on an urgent development' && dueThreads(live.version.notebook, live.now).some(d => d.thread.speed === 'urgent');
-    const reason = state.needsCheck ? state.needsCheck : behind ? 'The chat changed since the last update' : extra ? extra : moved ? 'The scene moved' : jumped ? 'Time moved on'
+    const reason = state.needsCheck ? state.needsCheck : unmatched ? 'The chat changed before the notebook was written' : extra ? extra : moved ? 'The scene moved' : jumped ? 'Time moved on'
       : findTracker ? 'Looking for your preset’s tracker' : urgent ? 'Checking on an urgent development' : since >= settings.every ? `${since} replies since the last update` : '';
     if (findTracker) state.trackerTried = true;
     await this.save(state);

@@ -1188,7 +1188,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.2.1";
+var VERSION = "0.2.2";
 var MAX_VERSIONS = 16;
 var DEFAULT_SETTINGS = { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto", quick: { enabled: false, connectionId: "", model: "" } };
 var DEFAULT_PREFERENCES = { length: "medium", tone: "balanced", twist: true };
@@ -1313,6 +1313,7 @@ class NotebookController {
       return null;
     const turns = conversation(messages, exclude), prints = await fingerprints(turns);
     let index = newestMatching(state.versions, prints);
+    const matched = index >= 0;
     if (index < 0)
       index = 0;
     const version = state.versions[index];
@@ -1328,12 +1329,14 @@ class NotebookController {
     const types = Object.fromEntries(state.recipe.fields.map((f) => [f.name, f.type]));
     const { clock, sources } = liveClock(version.notebook.clock, values, types);
     state.checks = checks;
-    return { state, turns, prints, index, version, replies, values, types, clock, sources, now: absoluteHours(clock), text: replies[0] ? trackerText(state.recipe, replies[0]) : "" };
+    return { state, turns, prints, index, matched, version, replies, values, types, clock, sources, now: absoluteHours(clock), text: replies[0] ? trackerText(state.recipe, replies[0]) : "" };
   }
   fullVersion(live) {
-    for (let i = live.index;i >= 0; i--)
-      if (!live.state.versions[i].quick)
-        return live.state.versions[i];
+    for (let i = live.index;i >= 0; i--) {
+      const v = live.state.versions[i];
+      if (!v.quick && covers(v.covered, live.prints))
+        return v;
+    }
     return live.state.versions[0];
   }
   trackerSamples(turns) {
@@ -1376,7 +1379,7 @@ class NotebookController {
         clockText: live ? describeClock(live.clock) : "",
         sources: live?.sources ?? null,
         checks: live ? state.checks : [],
-        needsCheck: state.needsCheck || (live && live.index !== state.versions.length - 1 ? "The chat changed since the last update." : ""),
+        needsCheck: state.needsCheck || (live && !live.matched ? "The chat changed before the notebook was written." : ""),
         job: state.job,
         updatedAt: state.updatedAt,
         repliesSinceCheck: live ? this.repliesSince(live) : 0,
@@ -1816,7 +1819,7 @@ class NotebookController {
     if (this.learnTracker(state, live.turns))
       live = await this.live(state, await this.api.chat.getMessages(chatId));
     const full = this.fullVersion(live), since = this.repliesSince(live);
-    const behind = live.index !== state.versions.length - 1;
+    const unmatched = !live.matched;
     const moved = !!live.values.location && !!full.location && live.values.location.toLowerCase() !== full.location.toLowerCase() && since >= 2;
     const jumped = live.now - absoluteHours(full.notebook.clock) >= 6 && since >= 1;
     if (state.job?.kind === "checkup" && state.job.status === "failed" && state.job.failedAtTurn !== undefined && live.turns.length < state.job.failedAtTurn + 2 * Math.min(settings.every, 4)) {
@@ -1825,7 +1828,7 @@ class NotebookController {
     }
     const findTracker = !state.recipe.fields.length && !state.trackerTried && since >= 1;
     const urgent = !(settings.quick.enabled && this.decisionsReady()) && since >= 2 && full.reason !== "Checking on an urgent development" && dueThreads(live.version.notebook, live.now).some((d) => d.thread.speed === "urgent");
-    const reason = state.needsCheck ? state.needsCheck : behind ? "The chat changed since the last update" : extra ? extra : moved ? "The scene moved" : jumped ? "Time moved on" : findTracker ? "Looking for your preset\u2019s tracker" : urgent ? "Checking on an urgent development" : since >= settings.every ? `${since} replies since the last update` : "";
+    const reason = state.needsCheck ? state.needsCheck : unmatched ? "The chat changed before the notebook was written" : extra ? extra : moved ? "The scene moved" : jumped ? "Time moved on" : findTracker ? "Looking for your preset\u2019s tracker" : urgent ? "Checking on an urgent development" : since >= settings.every ? `${since} replies since the last update` : "";
     if (findTracker)
       state.trackerTried = true;
     await this.save(state);
