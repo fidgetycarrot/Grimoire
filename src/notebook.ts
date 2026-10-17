@@ -28,8 +28,17 @@ export const LIMITS = Object.freeze({ people: 24, threads: 12, steps: 6, beats: 
 
 const ID = /^[a-z0-9][a-z0-9-]{0,40}$/;
 const record = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
-export class NotebookError extends Error { constructor(message: string) { super(message); this.name = 'NotebookError'; } }
+/**
+ * A notebook that failed the checks. `message` goes back to the model so it can
+ * fix its reply; `safe` is shown in the panel and never names people or threads.
+ */
+export class NotebookError extends Error {
+  readonly safe: string;
+  constructor(message: string, safe?: string) { super(message); this.name = 'NotebookError'; this.safe = safe ?? message; }
+}
+// Validation messages name only field paths and limits, so they are safe to show.
 const fail = (message: string): never => { throw new NotebookError(message); };
+const failMerge = (message: string): never => { throw new NotebookError(message, 'A check-up tried to remove or undo part of the notebook.'); };
 
 /** Plain text only: no prompt templates, no markup, no control characters. */
 export function text(value: unknown, path: string, max: number = LIMITS.text, allowEmpty = true): string {
@@ -126,18 +135,18 @@ export function validateNotebook(value: unknown): Notebook {
  * already happened can't un-happen. Code keeps the times it recorded.
  */
 export function mergeRevision(previous: Notebook, revised: Notebook, now: number): Notebook {
-  for (const person of previous.people) if (!revised.people.some(p => p.id === person.id)) fail(`Keep ${person.name} in the notebook (mark them gone if they have left the story).`);
+  for (const person of previous.people) if (!revised.people.some(p => p.id === person.id)) failMerge(`Keep ${person.name} in the notebook (mark them gone if they have left the story).`);
   for (const thread of previous.threads) {
     const next = revised.threads.find(t => t.id === thread.id);
-    if (!next) fail(`Keep the thread "${thread.title}" (close it with a reason if it is finished).`);
-    if (next!.status === 'closed' && !next!.closedReason) fail(`Say why the thread "${thread.title}" closed.`);
+    if (!next) failMerge(`Keep the thread "${thread.title}" (close it with a reason if it is finished).`);
+    if (next!.status === 'closed' && !next!.closedReason) failMerge(`Say why the thread "${thread.title}" closed.`);
     for (const step of thread.steps) {
       const after = next!.steps.find(s => s.id === step.id);
-      if (!after) fail(`Keep step "${step.id}" of "${thread.title}".`);
-      if ((step.status === 'shown' || step.status === 'offscreen') && after!.status === 'waiting') fail(`Step "${step.id}" of "${thread.title}" already happened and can't go back to waiting.`);
+      if (!after) failMerge(`Keep step "${step.id}" of "${thread.title}".`);
+      if ((step.status === 'shown' || step.status === 'offscreen') && after!.status === 'waiting') failMerge(`Step "${step.id}" of "${thread.title}" already happened and can't go back to waiting.`);
     }
   }
-  for (const beat of previous.beats) if (beat.status === 'happened' && revised.beats.find(b => b.id === beat.id)?.status !== 'happened') fail(`Beat "${beat.id}" already happened. Keep it marked as happened.`);
+  for (const beat of previous.beats) if (beat.status === 'happened' && revised.beats.find(b => b.id === beat.id)?.status !== 'happened') failMerge(`Beat "${beat.id}" already happened. Keep it marked as happened.`);
   const fresh = withoutTimes(revised);
   return stamp({ ...fresh, threads: fresh.threads.map(thread => {
     const old = previous.threads.find(t => t.id === thread.id);

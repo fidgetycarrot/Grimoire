@@ -125,6 +125,51 @@ function newestMatching(versions, current) {
       return i;
   return -1;
 }
+var RECENT = { turns: 40, chars: 40000, perTurn: 4000 };
+var EARLIER = { part: 30000, maxPart: 60000, maxParts: 12, perTurn: 3000 };
+function planHistory(turns) {
+  const recent = [];
+  let room = RECENT.chars, start = turns.length;
+  for (let i = turns.length - 1;i >= 0; i--) {
+    const piece = turns[i].content.slice(0, RECENT.perTurn);
+    if (piece.length > room || recent.length >= RECENT.turns)
+      break;
+    recent.unshift({ role: turns[i].role, content: piece });
+    room -= piece.length;
+    start = i;
+  }
+  const before = turns.slice(0, start);
+  if (!before.length)
+    return { recent, earlier: [] };
+  const total = before.reduce((sum, t) => sum + Math.min(t.content.length, EARLIER.perTurn), 0);
+  let size = Math.min(Math.max(EARLIER.part, Math.ceil(total / EARLIER.maxParts)), EARLIER.maxPart), perTurn = EARLIER.perTurn;
+  const split = () => {
+    const parts = [];
+    let part = [], used = 0;
+    for (const turn of before) {
+      const piece = turn.content.slice(0, perTurn);
+      if (part.length && used + piece.length > size) {
+        parts.push(part);
+        part = [];
+        used = 0;
+      }
+      part.push({ role: turn.role, content: piece });
+      used += piece.length;
+    }
+    if (part.length)
+      parts.push(part);
+    return parts;
+  };
+  let earlier = split();
+  while (earlier.length > EARLIER.maxParts) {
+    if (perTurn > 300)
+      perTurn = Math.max(300, Math.floor(perTurn * 0.85));
+    else
+      size = Math.ceil(size * 1.2);
+    earlier = split();
+  }
+  return { recent, earlier };
+}
 
 // src/model.ts
 var record = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
@@ -230,13 +275,18 @@ var ID = /^[a-z0-9][a-z0-9-]{0,40}$/;
 var record2 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
 
 class NotebookError extends Error {
-  constructor(message) {
+  safe;
+  constructor(message, safe) {
     super(message);
     this.name = "NotebookError";
+    this.safe = safe ?? message;
   }
 }
 var fail = (message) => {
   throw new NotebookError(message);
+};
+var failMerge = (message) => {
+  throw new NotebookError(message, "A check-up tried to remove or undo part of the notebook.");
 };
 function text(value, path, max = LIMITS.text, allowEmpty = true) {
   if (value === undefined || value === null)
@@ -374,24 +424,24 @@ function validateNotebook(value) {
 function mergeRevision(previous, revised, now) {
   for (const person of previous.people)
     if (!revised.people.some((p) => p.id === person.id))
-      fail(`Keep ${person.name} in the notebook (mark them gone if they have left the story).`);
+      failMerge(`Keep ${person.name} in the notebook (mark them gone if they have left the story).`);
   for (const thread of previous.threads) {
     const next = revised.threads.find((t) => t.id === thread.id);
     if (!next)
-      fail(`Keep the thread "${thread.title}" (close it with a reason if it is finished).`);
+      failMerge(`Keep the thread "${thread.title}" (close it with a reason if it is finished).`);
     if (next.status === "closed" && !next.closedReason)
-      fail(`Say why the thread "${thread.title}" closed.`);
+      failMerge(`Say why the thread "${thread.title}" closed.`);
     for (const step of thread.steps) {
       const after = next.steps.find((s) => s.id === step.id);
       if (!after)
-        fail(`Keep step "${step.id}" of "${thread.title}".`);
+        failMerge(`Keep step "${step.id}" of "${thread.title}".`);
       if ((step.status === "shown" || step.status === "offscreen") && after.status === "waiting")
-        fail(`Step "${step.id}" of "${thread.title}" already happened and can't go back to waiting.`);
+        failMerge(`Step "${step.id}" of "${thread.title}" already happened and can't go back to waiting.`);
     }
   }
   for (const beat of previous.beats)
     if (beat.status === "happened" && revised.beats.find((b) => b.id === beat.id)?.status !== "happened")
-      fail(`Beat "${beat.id}" already happened. Keep it marked as happened.`);
+      failMerge(`Beat "${beat.id}" already happened. Keep it marked as happened.`);
   const fresh = withoutTimes(revised);
   return stamp({ ...fresh, threads: fresh.threads.map((thread) => {
     const old = previous.threads.find((t) => t.id === thread.id);
@@ -560,6 +610,14 @@ var CRAFT = [
   "9. Ordinary details may stay ordinary. A few well-tied threads beat many loose ones: about two to four open threads."
 ].join(`
 `);
+function digestMessages(input) {
+  return [
+    { role: "system", content: `${SAFETY}
+You are reading a long roleplay chat in parts so a story notebook can be written for it later. "${input.character}" is the card's character; ${input.persona ? `"${input.persona}" is the player's character` : "the player writes the user turns"}. This is part ${input.part} of ${input.parts} of the earlier chat, in order.
+Return {"record": "..."}: the story so far, rewritten to include this part. Keep what a storyteller would need to continue it: what happened, in order and briefly; who has been met, what they want, and how they stand with the player character; promises, debts, secrets the player learned, and problems left open; where the story is now and how much story time has passed (days, time of day). Record what the chat establishes, not guesses. Compress older events as the record grows; keep it under about 1,200 words. Plain text, short lines, no headings.` },
+    { role: "user", content: JSON.stringify({ task: "grimoire-digest-v1", ...input }) }
+  ];
+}
 function creationMessages(material, preferences) {
   const twist = preferences.twist ? 'A twist is allowed. If it fits, hide one in "hiddenTruth" and "twist", and plant clues as thread steps. It is optional, not the point.' : 'Do not plan a twist. Leave "twist" empty.';
   return [
@@ -568,7 +626,7 @@ You write a private story notebook for an ongoing roleplay chat. It gives the na
 Return {"notebook": ${SHAPE}, "tracker": {"fields": [], "note": ""}}.
 ${CRAFT}
 Story length: ${preferences.length}. Tone: ${preferences.tone}. ${twist}
-If the chat already has messages, start from what has happened: record it under events, mark people met, and set the clock to now.
+If the chat already has messages, start from what has happened: record it under events, mark people met, and set the clock to now. A long chat comes with "storySoFar", a record of everything before the messages in "chat"; treat it as part of the chat. Keep events compact: at most about 30 short lines, merging older ones. Threads and people the chat already started come first; plan new ones around them.
 
 Tracker: many presets make the narrator write a status block in each reply (time, place, who is present). Look at the sample replies and saved variables. For each of these fields that is reliably present, describe where it lives: "datetime" or "date" and "time" (the story date and time), "location", "present" (who is in the scene). Use only these methods:
 - {"kind":"variable","name":"exact saved variable name"}
@@ -601,18 +659,205 @@ ${CRAFT}` },
   ];
 }
 
+// src/tidy.ts
+var record3 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
+var array = (v) => Array.isArray(v) ? v : v === undefined || v === null || v === "" ? [] : [v];
+var CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
+function plain(value, max = LIMITS.text) {
+  let s = typeof value === "string" ? value : typeof value === "number" || typeof value === "boolean" ? String(value) : Array.isArray(value) ? value.filter((x) => typeof x === "string" || typeof x === "number").join("; ") : "";
+  s = s.replace(/<\s*\/?\s*[a-z][a-z0-9:-]*(?:\s[^>]*|\/?)>/gi, " ").replace(/\{\{[^{}]*\}\}|<%[^%]*%>/g, " ").replace(/\{\{|\}\}|<%|%>/g, "").replace(CONTROL, "").replace(/\s+/g, " ").trim();
+  if (s.length <= max)
+    return s;
+  const cut = s.slice(0, max - 1), word = cut.replace(/\s+\S*$/, "");
+  return `${(word.length > max * 0.6 ? word : cut).replace(/[\s,;:.-]+$/, "")}\u2026`;
+}
+function plainBlock(value, max) {
+  const s = (typeof value === "string" ? value : "").replace(/<\s*\/?\s*[a-z][a-z0-9:-]*(?:\s[^>]*|\/?)>/gi, " ").replace(/\{\{[^{}]*\}\}|<%[^%]*%>/g, " ").replace(/\{\{|\}\}|<%|%>/g, "").replace(/\r\n?/g, `
+`).replace(CONTROL, "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, `
+
+`).trim();
+  return s.length <= max ? s : `${s.slice(0, max - 1).replace(/\s+\S*$/, "")}\u2026`;
+}
+function slug(value) {
+  return String(typeof value === "string" || typeof value === "number" ? value : "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036F]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+/, "").slice(0, 41).replace(/-+$/, "");
+}
+function ids(items, prefix) {
+  const seen = new Set;
+  return items.map((item, i) => {
+    let id = item.id || `${prefix}-${i + 1}`, n = 2;
+    while (seen.has(id))
+      id = `${(item.id || prefix).slice(0, 37)}-${n++}`;
+    seen.add(id);
+    return id === item.id ? item : { ...item, id };
+  });
+}
+function pick(value, options, synonyms, fallback) {
+  const v = typeof value === "string" ? value.trim().toLowerCase().replace(/[\s_]+/g, "-") : "";
+  if (options.includes(v))
+    return v;
+  return synonyms[v] ?? fallback;
+}
+function cap(items, max, score) {
+  if (items.length <= max)
+    return items;
+  const keep = new Set(items.map((item, i) => ({ item, i, s: score(item) })).sort((a, b) => b.s - a.s || a.i - b.i).slice(0, max).map((x) => x.i));
+  return items.filter((_, i) => keep.has(i));
+}
+var truthy = (v) => v === true || /^(true|yes|1)$/i.test(String(v ?? ""));
+var human = (id) => id ? id.replace(/-/g, " ").replace(/^./, (c) => c.toUpperCase()) : "";
+var DEFAULT_AFTER = { urgent: 2, steady: 24, slow: 72 };
+var SPEED = { fast: "urgent", immediate: "urgent", high: "urgent", quick: "urgent", medium: "steady", normal: "steady", moderate: "steady", "slow-burn": "slow", slowburn: "slow", low: "slow", gradual: "slow" };
+var STEP = { done: "shown", happened: "shown", complete: "shown", completed: "shown", seen: "shown", revealed: "shown", hidden: "offscreen", background: "offscreen", "off-screen": "offscreen", dropped: "skipped", cancelled: "skipped", canceled: "skipped", pending: "waiting", planned: "waiting", upcoming: "waiting", due: "waiting" };
+var THREAD = { active: "open", ongoing: "open", resolved: "closed", done: "closed", finished: "closed", complete: "closed", "on-hold": "paused", dormant: "paused", hold: "paused" };
+var BEAT = { done: "happened", complete: "happened", shown: "happened", planned: "possible", pending: "possible", waiting: "possible", cancelled: "dropped", canceled: "dropped", skipped: "dropped" };
+var PERSON = { dead: "gone", left: "gone", departed: "gone", inactive: "gone", absent: "gone" };
+var RHYTHM2 = { climax: "peak", building: "rising", tense: "rising", cooldown: "aftermath", resolution: "aftermath", quiet: "calm", stuck: "stalled" };
+function tidyNotebook(value, previous) {
+  const input = record3(value), story = record3(input.story);
+  let people = ids(array(input.people).map((raw) => {
+    const p = record3(raw), name = plain(p.name, 80) || human(slug(p.id));
+    return {
+      id: slug(p.id) || slug(name),
+      name,
+      aliases: [...new Set(array(p.aliases).map((a) => plain(a, 80)).filter(Boolean))].slice(0, 8),
+      role: plain(p.role, LIMITS.short),
+      wants: plain(p.wants),
+      doing: plain(p.doing),
+      hint: plain(p.hint),
+      met: truthy(p.met),
+      status: pick(p.status, ["active", "gone"], PERSON, "active")
+    };
+  }).filter((p) => p.name), "person");
+  if (previous) {
+    for (const old of previous.people)
+      if (!people.some((p) => p.id === old.id))
+        people.push(structuredClone(old));
+  }
+  const earlier = new Set(previous?.people.map((p) => p.id));
+  people = cap(people, LIMITS.people, (p) => (earlier.has(p.id) ? 4 : 0) + (p.met ? 2 : 0) + (p.status === "active" ? 1 : 0));
+  const who = new Map;
+  for (const p of people)
+    for (const key of [p.id, p.name, ...p.aliases])
+      who.set(slug(key), p.id);
+  let threads = ids(array(input.threads).map((raw) => {
+    const t = record3(raw), id = slug(t.id) || slug(t.title), speed = pick(t.speed, ["urgent", "steady", "slow"], SPEED, "steady");
+    const status = pick(t.status, ["open", "paused", "closed"], THREAD, "open");
+    const steps = ids(array(t.steps).map((rawStep) => {
+      const s = record3(rawStep), hours = typeof s.afterHours === "number" ? s.afterHours : parseFloat(String(s.afterHours ?? ""));
+      const text = plain(s.text) || plain(s.sign);
+      return {
+        id: slug(s.id) || slug(text).slice(0, 30),
+        text,
+        sign: plain(s.sign),
+        afterHours: Number.isFinite(hours) ? Math.min(Math.max(hours, 0), 24 * 365) : DEFAULT_AFTER[speed],
+        status: pick(s.status, ["waiting", "shown", "offscreen", "skipped"], STEP, "waiting")
+      };
+    }).filter((s) => s.text), "step");
+    return {
+      id,
+      title: plain(t.title, LIMITS.short) || human(id),
+      speed,
+      why: plain(t.why),
+      hint: plain(t.hint),
+      people: [...new Set(array(t.people).map((x) => who.get(slug(x))).filter((x) => !!x))].slice(0, 8),
+      status,
+      closedReason: plain(t.closedReason, LIMITS.short) || (status === "closed" ? "Resolved in the story" : ""),
+      ifFollowed: plain(t.ifFollowed),
+      ifIgnored: plain(t.ifIgnored),
+      steps
+    };
+  }).filter((t) => t.title), "thread");
+  if (previous) {
+    for (const old of previous.threads) {
+      const next = threads.find((t) => t.id === old.id);
+      if (!next) {
+        threads.push(structuredClone(old));
+        continue;
+      }
+      old.steps.forEach((step, i) => {
+        if (!next.steps.some((s) => s.id === step.id))
+          next.steps.splice(Math.min(i, next.steps.length), 0, structuredClone(step));
+      });
+      next.steps = next.steps.map((s) => {
+        const before = old.steps.find((o) => o.id === s.id);
+        return before && before.status !== "waiting" && s.status === "waiting" ? { ...s, status: before.status } : s;
+      });
+    }
+  }
+  const knownThreads = new Set(previous?.threads.map((t) => t.id));
+  threads = cap(threads, LIMITS.threads, (t) => (knownThreads.has(t.id) ? 4 : 0) + (t.status === "open" ? 2 : t.status === "paused" ? 1 : 0));
+  for (const t of threads) {
+    const kept = new Set(previous?.threads.find((o) => o.id === t.id)?.steps.map((s) => s.id));
+    t.steps = cap(t.steps, LIMITS.steps, (s) => (kept.has(s.id) ? 4 : 0) + (s.status !== "waiting" ? 2 : 0));
+    t.people = t.people.filter((id) => people.some((p) => p.id === id));
+  }
+  const threadIds = new Set(threads.map((t) => t.id)), byTitle = new Map(threads.map((t) => [slug(t.title), t.id]));
+  let beats = ids(array(input.beats).map((raw) => {
+    const b = record3(raw), text = plain(b.text), thread = slug(b.thread);
+    return {
+      id: slug(b.id) || slug(text).slice(0, 30),
+      text,
+      purpose: plain(b.purpose),
+      conditions: plain(b.conditions),
+      thread: threadIds.has(thread) ? thread : byTitle.get(thread) ?? "",
+      intensity: pick(b.intensity, ["low", "high"], { big: "high", major: "high", strong: "high", medium: "low", small: "low", minor: "low" }, "low"),
+      status: pick(b.status, ["possible", "happened", "dropped"], BEAT, "possible")
+    };
+  }).filter((b) => b.text), "beat");
+  if (previous)
+    for (const old of previous.beats) {
+      if (old.status !== "happened")
+        continue;
+      const next = beats.find((b) => b.id === old.id);
+      if (!next)
+        beats.push(structuredClone(old));
+      else
+        next.status = "happened";
+    }
+  beats = cap(beats, LIMITS.beats, (b) => b.status === "happened" ? 4 : b.status === "possible" ? 2 : 0);
+  let events = array(input.events).map((e) => plain(typeof e === "string" ? e : record3(e).text)).filter(Boolean);
+  if (events.length > LIMITS.events) {
+    const fold = events.length - LIMITS.events + 1;
+    events = [plain(`Earlier: ${events.slice(0, fold).join("; ")}`), ...events.slice(fold)];
+  }
+  const c = record3(input.clock), day = Math.round(Number(c.day)), hour = Number(c.hour);
+  const clock = {
+    day: Number.isFinite(day) && day >= 0 && day <= 1e7 ? day : previous?.clock.day ?? 1,
+    hour: c.hour !== null && c.hour !== undefined && c.hour !== "" && Number.isFinite(hour) && hour >= 0 && hour < 24 ? hour : null,
+    label: plain(c.label, LIMITS.short)
+  };
+  const question = plain(story.question) || plain(story.direction) || plain(story.stakes) || previous?.story.question || "";
+  return {
+    version: 1,
+    story: {
+      question,
+      stakes: plain(story.stakes),
+      direction: plain(story.direction),
+      hiddenTruth: array(story.hiddenTruth).map((x) => plain(x)).filter(Boolean).slice(0, LIMITS.truths),
+      twist: plain(story.twist)
+    },
+    people,
+    threads,
+    beats,
+    events,
+    clock,
+    rhythm: pick(input.rhythm, ["calm", "rising", "peak", "aftermath", "stalled"], RHYTHM2, "calm"),
+    summary: plain(input.summary, LIMITS.short)
+  };
+}
+
 // src/tracker.ts
 var TAG = /^[A-Za-z][\w:.-]{0,40}$/;
 var VARIABLE = /^[\w.:-]{1,80}$/;
 var PATH = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\[\d{1,3}\])*$/;
 var NAME = /^[a-z][a-z0-9_]{0,30}$/;
 var TYPES = ["datetime", "date", "time", "text", "list"];
-var record3 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
+var record4 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
 var fail2 = (message) => {
   throw new Error(message);
 };
 function region(value) {
-  const input = record3(value);
+  const input = record4(value);
   if (input.kind === undefined || input.kind === "whole")
     return { kind: "whole" };
   if (input.kind === "tag" && typeof input.tag === "string" && TAG.test(input.tag))
@@ -622,7 +867,7 @@ function region(value) {
   return fail2("A tracker region must be the whole reply, a tag, or a fenced block.");
 }
 function source(value) {
-  const input = record3(value);
+  const input = record4(value);
   if (input.kind === "variable" && typeof input.name === "string" && VARIABLE.test(input.name))
     return { kind: "variable", name: input.name };
   if (input.kind === "line" && typeof input.label === "string" && input.label.trim() && input.label.length <= 60 && !/[\n\r]/.test(input.label))
@@ -638,11 +883,11 @@ function source(value) {
   return fail2("A tracker field must be read from a saved variable, a labeled line, a tag, or a JSON path.");
 }
 function validateRecipe(value) {
-  const input = record3(value), fields = [], seen = new Set;
+  const input = record4(value), fields = [], seen = new Set;
   let dropped = 0;
   for (const item of Array.isArray(input.fields) ? input.fields.slice(0, 16) : []) {
     try {
-      const field = record3(item), name = String(field.name ?? "").trim().toLowerCase();
+      const field = record4(item), name = String(field.name ?? "").trim().toLowerCase();
       if (!NAME.test(name) || seen.has(name))
         fail2("Bad name");
       if (!TYPES.includes(field.type))
@@ -666,7 +911,7 @@ function areas(text, area) {
     return [...text.matchAll(new RegExp(`<${escape(area.tag)}(?:\\s[^>]*)?>([\\s\\S]*?)</${escape(area.tag)}>`, "gi"))].map((m) => m[1]).reverse();
   return [...text.matchAll(/```([\w-]*)[^\n]*\n([\s\S]*?)```/g)].filter((m) => !area.lang || m[1].toLowerCase() === area.lang.toLowerCase()).map((m) => m[2]).reverse();
 }
-function plain(text) {
+function plain2(text) {
   return text.replace(/<[^>]{0,200}>/g, " ").replace(/\*\*|__|`/g, "").replace(/\s+/g, " ").trim().replace(/^[:\-\u2013\u2014|]\s*/, "").slice(0, 300);
 }
 function jsonPath(value, path) {
@@ -674,7 +919,7 @@ function jsonPath(value, path) {
   for (const part of path.match(/[A-Za-z_$][\w$]*|\[\d+\]/g) ?? []) {
     if (current === null || current === undefined)
       return;
-    current = part.startsWith("[") ? Array.isArray(current) ? current[Number(part.slice(1, -1))] : undefined : record3(current)[part];
+    current = part.startsWith("[") ? Array.isArray(current) ? current[Number(part.slice(1, -1))] : undefined : record4(current)[part];
   }
   return current;
 }
@@ -682,26 +927,26 @@ function readField(field, reply, variables) {
   const from = field.source;
   if (from.kind === "variable") {
     const v = variables[from.name];
-    return typeof v === "string" && v.trim() ? plain(v) : undefined;
+    return typeof v === "string" && v.trim() ? plain2(v) : undefined;
   }
   for (const part of areas(reply, from.region)) {
     if (from.kind === "line") {
       const line = new RegExp(`^[\\s>*_\\-\u2022|#]*(?:\\*\\*|__)?${escape(from.label)}(?:\\*\\*|__)?\\s*(?::|\uFF1A|=|-|\u2013|\u2014)\\s*(.+)$`, "im").exec(part);
-      if (line && plain(line[1]))
-        return plain(line[1]);
+      if (line && plain2(line[1]))
+        return plain2(line[1]);
     } else if (from.kind === "tag") {
       const tag = new RegExp(`<${escape(from.tag)}(?:\\s[^>]*)?>([\\s\\S]*?)</${escape(from.tag)}>`, "i").exec(part);
-      if (tag && plain(tag[1]))
-        return plain(tag[1]);
+      if (tag && plain2(tag[1]))
+        return plain2(tag[1]);
     } else {
       try {
         const found = jsonPath(JSON.parse(part.trim()), from.path);
         if (typeof found === "string" && found.trim())
-          return plain(found);
+          return plain2(found);
         if (typeof found === "number" || typeof found === "boolean")
           return String(found);
         if (Array.isArray(found) && found.every((x) => typeof x === "string"))
-          return plain(found.join(", "));
+          return plain2(found.join(", "));
       } catch {}
     }
   }
@@ -758,20 +1003,20 @@ function trackerText(recipe, reply) {
 }
 
 // src/types.ts
-var VERSION = "0.1.1";
+var VERSION = "0.1.2";
 var MAX_VERSIONS = 12;
 var DEFAULT_SETTINGS = { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto" };
 var DEFAULT_PREFERENCES = { length: "medium", tone: "balanced", twist: true };
 
 // src/controller.ts
-var record4 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
+var record5 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
 var PACES = ["auto", "quiet", "fast"];
 function validPreferences(value) {
-  const v = record4(value);
+  const v = record5(value);
   return { length: ["short", "medium", "long"].includes(v.length) ? v.length : "medium", tone: ["light", "balanced", "dark"].includes(v.tone) ? v.tone : "balanced", twist: v.twist !== false };
 }
 function validSettings(value) {
-  const v = record4(value), every = Number(v.every), tokens = Number(v.maxOutputTokens);
+  const v = record5(value), every = Number(v.every), tokens = Number(v.maxOutputTokens);
   return {
     connectionId: typeof v.connectionId === "string" ? v.connectionId : "",
     maxOutputTokens: [8000, 16000, 32000, 64000].includes(tokens) ? tokens : DEFAULT_SETTINGS.maxOutputTokens,
@@ -813,17 +1058,17 @@ class NotebookController {
     return validSettings(await this.api.userStorage.getJson("settings.json", { fallback: DEFAULT_SETTINGS, userId: this.userId }));
   }
   async load(chatId) {
-    const saved = record4(await this.api.userStorage.getJson(this.path(chatId), { fallback: null, userId: this.userId }));
+    const saved = record5(await this.api.userStorage.getJson(this.path(chatId), { fallback: null, userId: this.userId }));
     if (saved.version !== 1 || saved.chatId !== chatId)
       return null;
     try {
       const versions = (Array.isArray(saved.versions) ? saved.versions : []).map((v) => {
-        const item = record4(v);
+        const item = record5(v);
         if (!Array.isArray(item.covered) || !item.covered.every((x) => typeof x === "string"))
           throw new Error("Bad version");
         return { notebook: validateNotebook(item.notebook), covered: item.covered, at: Number(item.at) || 0, reason: String(item.reason ?? ""), ...typeof item.location === "string" ? { location: item.location } : {} };
       });
-      const job = saved.job ? record4(saved.job) : null;
+      const job = saved.job ? record5(saved.job) : null;
       return {
         version: 1,
         chatId,
@@ -855,7 +1100,7 @@ class NotebookController {
     const chat = await this.api.chats.get(chatId, this.userId);
     if (!chat)
       return { name: "", supported: false, reason: "This chat is not available.", characterId: "" };
-    const meta = record4(chat.metadata);
+    const meta = record5(chat.metadata);
     if (!chat.character_id || meta.group === true || meta.is_group === true || meta.group_id || Array.isArray(meta.character_ids) && meta.character_ids.length > 1)
       return { name: chat.name, supported: false, reason: "Group chats are not supported yet. Use a chat with one character.", characterId: "" };
     return { name: chat.name, supported: true, reason: "", characterId: chat.character_id };
@@ -891,7 +1136,10 @@ class NotebookController {
     return this.serial(chatId, async () => {
       const info = await this.chatInfo(chatId);
       const state = await this.load(chatId) ?? this.blank(chatId);
-      const live = info.supported && state.versions.length && this.api.permissions.has("chats") && this.api.permissions.has("chat_mutation") ? await this.live(state, await this.api.chat.getMessages(chatId)) : null;
+      const readable = info.supported && this.api.permissions.has("chats") && this.api.permissions.has("chat_mutation");
+      const messages = readable ? await this.api.chat.getMessages(chatId) : null;
+      const live = messages && state.versions.length ? await this.live(state, messages) : null;
+      const earlierParts = messages && !live ? planHistory(conversation(messages)).earlier.length : 0;
       const notebook = live?.version.notebook ?? null;
       return {
         chatId,
@@ -913,7 +1161,8 @@ class NotebookController {
         repliesSinceCheck: live ? this.repliesSince(live) : 0,
         skipHours: state.skipHours,
         notebook,
-        behind: !!live && live.index !== state.versions.length - 1
+        behind: !!live && live.index !== state.versions.length - 1,
+        earlierParts
       };
     });
   }
@@ -943,25 +1192,32 @@ class NotebookController {
       throw new Error("Choose a connection in Grimoire settings first.");
     return (messages, signal) => askModel(this.api, this.userId, settings, messages, signal);
   }
-  async material(chatId, characterId, messages) {
+  async character(characterId) {
     const character = await this.api.characters.get(characterId, this.userId);
     if (!character)
       throw new Error("This chat\u2019s character could not be read.");
-    let persona = null;
-    if (this.api.permissions.has("personas")) {
-      try {
-        const p = await this.api.personas.getActive(this.userId);
-        if (p)
-          persona = { name: p.name, description: p.description.slice(0, 6000) };
-      } catch {}
+    return character;
+  }
+  async persona() {
+    if (!this.api.permissions.has("personas"))
+      return null;
+    try {
+      const p = await this.api.personas.getActive(this.userId);
+      return p ? { name: p.name, description: p.description.slice(0, 6000) } : null;
+    } catch {
+      return null;
     }
+  }
+  async material(chatId, characterId, messages, recent, storySoFar) {
+    const character = await this.character(characterId);
+    const persona = await this.persona();
     const lore = [];
     if (this.api.permissions.has("world_books")) {
       let room = 12000;
       for (const bookId of character.world_book_ids.slice(0, 4)) {
         try {
           const page = await this.api.world_books.entries.list(bookId, { limit: 100, userId: this.userId });
-          const entries = [...page.data].filter((e) => !record4(e).disabled).sort((a, b) => Number(record4(b).constant === true) - Number(record4(a).constant === true));
+          const entries = [...page.data].filter((e) => !record5(e).disabled).sort((a, b) => Number(record5(b).constant === true) - Number(record5(a).constant === true));
           for (const entry of entries) {
             const piece = `${entry.comment ? `${entry.comment}: ` : ""}${entry.content}`.slice(0, 2000);
             if (piece.length > room)
@@ -973,15 +1229,6 @@ class NotebookController {
       }
     }
     const turns = conversation(messages);
-    const chat = [];
-    let room = 40000;
-    for (const turn of [...turns].reverse()) {
-      const piece = turn.content.slice(0, 4000);
-      if (piece.length > room || chat.length >= 40)
-        break;
-      chat.unshift({ role: turn.role, content: piece });
-      room -= piece.length;
-    }
     let variables = {};
     try {
       variables = Object.fromEntries(Object.entries(await this.api.variables.chat.list(chatId)).slice(0, 40).map(([k, v]) => [k, String(v).slice(0, 500)]));
@@ -990,7 +1237,8 @@ class NotebookController {
       character: { name: character.name, description: character.description.slice(0, 12000), personality: character.personality.slice(0, 4000), scenario: character.scenario.slice(0, 4000), firstMessage: character.first_mes.slice(0, 6000) },
       persona,
       lore,
-      chat,
+      storySoFar,
+      chat: recent,
       replies: turns.filter((t) => t.role === "assistant").slice(-3).map((t) => t.content.slice(0, 6000)),
       variables
     };
@@ -1014,7 +1262,7 @@ class NotebookController {
   }
   explain(error) {
     if (error instanceof NotebookError)
-      return "The model\u2019s update did not pass Grimoire\u2019s checks, so the notebook was left as it was.";
+      return `The model\u2019s reply did not pass Grimoire\u2019s checks, so nothing was changed. Details: ${error.safe}`;
     if (error instanceof ModelError)
       return error.message;
     return error instanceof Error && error.message.length < 300 ? error.message : "Something went wrong. Your notebook was not changed.";
@@ -1035,10 +1283,25 @@ class NotebookController {
       this.track((async () => {
         try {
           const messages = await this.api.chat.getMessages(chatId);
-          const material = await this.material(chatId, info.characterId, messages);
+          const plan = planHistory(conversation(messages));
+          let storySoFar = "";
+          if (plan.earlier.length) {
+            const character = (await this.character(info.characterId)).name, persona = (await this.persona())?.name ?? "";
+            for (const [i, part] of plan.earlier.entries()) {
+              await this.progress(chatId, job, `Reading the story so far (${i + 1} of ${plan.earlier.length})`);
+              storySoFar = await askJson(ask, digestMessages({ character, persona, part: i + 1, parts: plan.earlier.length, record: storySoFar, chat: part }), (value) => {
+                const text = plainBlock(record5(value).record, 12000);
+                if (!text)
+                  throw new NotebookError('"record" is empty. Write the story so far as plain text.');
+                return text;
+              }, signal);
+            }
+            await this.progress(chatId, job, "Writing the notebook");
+          }
+          const material = await this.material(chatId, info.characterId, messages, plan.recent, storySoFar);
           const result = await askJson(ask, creationMessages(material, state.preferences), (value) => {
-            const output = record4(value);
-            return { notebook: withoutTimes(validateNotebook(output.notebook)), recipe: validateRecipe(output.tracker).recipe };
+            const output = record5(value);
+            return { notebook: withoutTimes(validateNotebook(tidyNotebook(output.notebook))), recipe: validateRecipe(output.tracker).recipe };
           }, signal);
           await this.serial(chatId, async () => {
             const current = await this.load(chatId) ?? state;
@@ -1073,6 +1336,16 @@ class NotebookController {
       })());
       return job;
     });
+  }
+  async progress(chatId, job, label) {
+    await this.serial(chatId, async () => {
+      const current = await this.load(chatId);
+      if (!current || current.job?.id !== job.id)
+        return;
+      current.job = { ...current.job, label };
+      await this.save(current);
+    });
+    this.changed();
   }
   async failJob(chatId, job, error) {
     await this.serial(chatId, async () => {
@@ -1121,11 +1394,11 @@ class NotebookController {
     this.track((async () => {
       try {
         const result = await askJson(ask, checkupMessages(input), (value) => {
-          const output = record4(value);
-          const revised = validateNotebook(output.notebook);
-          const merged = mergeRevision(base.notebook, revised, live.now);
+          const output = record5(value);
+          const revised = validateNotebook(tidyNotebook(output.notebook, base.notebook));
+          let merged = mergeRevision(base.notebook, revised, live.now);
           if (absoluteHours(liveClock(merged.clock, live.values, live.types).clock) < absoluteHours(live.clock))
-            throw new NotebookError("The story clock went backwards. Time only moves forward.");
+            merged = { ...merged, clock: live.clock };
           return { notebook: merged, recipe: output.tracker ? validateRecipe(output.tracker).recipe : null };
         }, signal);
         await this.serial(chatId, async () => {
@@ -1322,14 +1595,14 @@ class NotebookController {
 }
 
 // src/backend.ts
-var record5 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
+var record6 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
 var string = (v, name) => {
   if (typeof v !== "string" || !v)
     throw new Error(`${name} is required.`);
   return v;
 };
 async function handle(controller, action, input) {
-  const data = record5(input);
+  const data = record6(input);
   switch (action) {
     case "snapshot":
       return controller.snapshot(typeof data.chatId === "string" ? data.chatId : null);
@@ -1360,7 +1633,7 @@ async function handle(controller, action, input) {
   }
 }
 function macroIdentity(context) {
-  const value = record5(context), env = record5(value.env), chat = record5(env.chat), extra = record5(env.extra);
+  const value = record6(context), env = record6(value.env), chat = record6(env.chat), extra = record6(env.extra);
   const pick = (...values) => values.find((v) => typeof v === "string" && !!v.trim());
   return { chatId: pick(value.chatId, chat.id), userId: pick(value.userId, extra.userId) };
 }
@@ -1377,7 +1650,7 @@ function setupBackend(api) {
   };
   const stops = [];
   stops.push(api.onFrontendMessage((payload, userId, frontendSessionId) => {
-    const request = record5(payload);
+    const request = record6(payload);
     if (request.type !== "grimoire:request" || typeof request.id !== "string" || request.id.length > 100 || typeof request.action !== "string")
       return;
     handle(instance(userId), request.action, request.input).then((result) => api.sendToFrontend({ type: "grimoire:response", id: request.id, result }, userId, { frontendSessionId })).catch((error) => api.sendToFrontend({ type: "grimoire:response", id: request.id, error: error instanceof Error ? error.message : "Grimoire could not do that." }, userId, { frontendSessionId }));
@@ -1423,13 +1696,13 @@ function setupBackend(api) {
       api.sendToFrontend({ type: "grimoire:changed" }, key === "owner" ? undefined : key);
   }));
   stops.push(api.on("GENERATION_ENDED", (payload, userId) => {
-    const event = record5(payload);
+    const event = record6(payload);
     if (typeof event.chatId !== "string" || event.error || typeof event.messageId !== "string")
       return;
     instance(userId).afterReply(event.chatId, typeof event.generationType === "string" ? event.generationType : undefined).catch(() => {}).finally(() => api.sendToFrontend({ type: "grimoire:changed" }, userId));
   }));
   stops.push(api.on("CHAT_FORKED", (payload, userId) => {
-    const event = record5(payload);
+    const event = record6(payload);
     if (typeof event.sourceChatId === "string" && typeof event.forkedChatId === "string")
       instance(userId).fork(event.sourceChatId, event.forkedChatId).catch(() => {});
   }));

@@ -234,3 +234,33 @@ describe('model replies', () => {
     await expect(askJson(async () => 'still not json', [{ role: 'user', content: 'x' }], v => v)).rejects.toThrow('valid JSON');
   });
 });
+
+describe('planning a long chat', () => {
+  const { planHistory, EARLIER } = require('../src/history');
+  const turns = (n: number, size: number) => Array.from({ length: n }, (_, i) => ({ id: `m${i}`, role: i % 2 ? 'user' : 'assistant', content: `${i} ${'x'.repeat(size)}` }));
+  test('short chats are sent whole', () => {
+    expect(planHistory(turns(10, 100))).toMatchObject({ earlier: [] });
+  });
+  test('very long chats stay within a bounded number of parts', () => {
+    const plan = planHistory(turns(3000, 2500));
+    expect(plan.earlier.length).toBeLessThanOrEqual(EARLIER.maxParts);
+    expect(plan.earlier.flat().length + plan.recent.length).toBe(3000);
+  });
+});
+
+describe('tidying a revision', () => {
+  const { tidyNotebook } = require('../src/tidy');
+  test('what happened stays happened, and dropped parts come back', () => {
+    const before = stamp(validateNotebook(sampleNotebook()), 42);
+    before.threads[0].steps[0] = { ...before.threads[0].steps[0], status: 'shown', at: 50 };
+    before.beats[0].status = 'happened';
+    const revised: any = structuredClone(before);
+    revised.threads[0].steps = revised.threads[0].steps.slice(1); revised.beats = []; revised.people = [];
+    const tidy = validateNotebook(tidyNotebook(revised, before));
+    const merged = mergeRevision(before, tidy, 60);
+    expect(merged.threads[0].steps.map(s => [s.id, s.status])[0]).toEqual(['owner-notices', 'shown']);
+    expect(merged.threads[0].steps[0].at).toBe(50);
+    expect(merged.beats.find(b => b.id === 'ring-recognized')!.status).toBe('happened');
+    expect(merged.people).toHaveLength(3);
+  });
+});

@@ -9,6 +9,7 @@ It works with any card: downloaded, homemade, or made with Set Points. It never 
 ## What it does
 
 - **Writes a notebook from your card.** It reads the card, your persona, the card's lorebook, and anything already said, then plans the story: the central question, the hidden truth, a small supporting cast with their own goals, a few threads, and moments the story could reach.
+- **Works on old chats too.** A long chat is read from the very first message, in parts, into a record of the story so far. The notebook then picks up the threads and people the chat already has, and plans what comes next from there. The panel tells you how many parts it will read before you start.
 - **Keeps time in story time, not replies.** Threads move at their own speed (urgent, steady, or slow burn). Ignore the stolen ring for one evening and nothing happens; leave it for three days and the search has had time to reach you. Warning signs come before consequences.
 - **Pace you can set.** One button above the message box switches between:
   - **Auto**: Grimoire reads the story's rhythm. Urgent things can interrupt; slower ones wait for a natural break. After a big moment it leaves room to breathe; when things stall, it lets an existing thread move.
@@ -49,9 +50,11 @@ If you'd rather place it yourself, set **Settings → Where the note goes** to *
 
 ## Costs
 
-- Writing a notebook: one larger model request.
+- Writing a notebook: one larger model request. A long chat adds one request per part of its earlier history (at most 12, shown before you start).
 - Each check-up: one request.
 - Ordinary replies: no extra request. The note adds a few hundred tokens to the prompt.
+
+Small slips in the model's reply (an id with capitals, a field a little too long, one event too many, a stray tag) are tidied rather than rejected, and a check-up can't drop people or threads or undo what happened: anything it leaves out is put back. If a reply still can't be used, the panel says which field failed, without naming anything from the story.
 
 If a check-up fails, the automatic ones wait for the story to move on a little before trying again. **Check now** always works.
 

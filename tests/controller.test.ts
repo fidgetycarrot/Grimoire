@@ -35,14 +35,14 @@ function host(options: { group?: boolean; granted?: string[] } = {}) {
   return { api, storage, messages, add };
 }
 /** A scripted model: creation and check-up answers come from the given functions. */
-function model(answers: { create?: (input: any) => unknown; checkup?: (input: any) => unknown }) {
+function model(answers: { create?: (input: any) => unknown; checkup?: (input: any) => unknown; digest?: (input: any) => unknown }) {
   const calls: Array<{ task: string; input: any; messages: Message[] }> = [];
   let hold: Promise<void> | null = null;
   const ask = async (messages: Message[]) => {
     const input = JSON.parse(messages[1].content);
     calls.push({ task: input.task, input, messages });
     if (hold) await hold;
-    const answer = input.task === 'grimoire-create-v1' ? answers.create?.(input) : answers.checkup?.(input);
+    const answer = input.task === 'grimoire-create-v1' ? answers.create?.(input) : input.task === 'grimoire-digest-v1' ? answers.digest?.(input) : answers.checkup?.(input);
     return typeof answer === 'string' ? answer : JSON.stringify(answer);
   };
   return { ask, calls, pause() { let release!: () => void; hold = new Promise(r => { release = () => { hold = null; r(); }; }); return release; } };
@@ -80,7 +80,7 @@ describe('writing a notebook', () => {
   test('a failed or invalid reply leaves no notebook and says why', async () => {
     const h = host(); h.add('assistant', 'Hello.');
     await h.api.userStorage.setJson('settings.json', { connectionId: 'model' }, {});
-    const m = model({ create: () => ({ notebook: { ...sampleNotebook(), threads: 'nope' }, tracker: null }) });
+    const m = model({ create: () => ({ notebook: 'nope', tracker: null }) });
     const c = new NotebookController(h.api, undefined, () => {}, m.ask);
     await c.create('chat-1', {}); await c.waitForJobs();
     expect(m.calls).toHaveLength(2);
@@ -88,8 +88,42 @@ describe('writing a notebook', () => {
     expect(view.hasNotebook).toBe(false);
     expect(view.job).toMatchObject({ status: 'failed', label: 'The notebook could not be written' });
     // The panel never names threads or people from a failed check; the model gets the details to fix its reply.
-    expect(view.job!.error).toBe('The model’s update did not pass Grimoire’s checks, so the notebook was left as it was.');
-    expect(m.calls[1].messages.at(-1)!.content).toContain('threads must be a list');
+    // The panel's reason names only the field, never threads or people; the model gets the same reason to fix its reply.
+    expect(view.job!.error).toBe('The model’s reply did not pass Grimoire’s checks, so nothing was changed. Details: story.question is required.');
+    expect(m.calls[1].messages.at(-1)!.content).toContain('story.question is required');
+  });
+  test('a long chat is read from the beginning, part by part, before the notebook is written', async () => {
+    const h = host();
+    for (let i = 0; i < 120; i++) h.add(i % 2 ? 'user' : 'assistant', `Turn ${i}. ${'The river runs on. '.repeat(80)}`);
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model' }, {});
+    const labels: string[] = [];
+    const m = model({ create: created, digest: input => ({ record: `${input.record} Part ${input.part} read.`.trim() }) });
+    const c = new NotebookController(h.api, undefined, () => {}, m.ask);
+    const before = (await c.view('chat-1'))!;
+    expect(before.earlierParts).toBeGreaterThan(1);
+    const release = m.pause();
+    await c.create('chat-1', {});
+    for (let i = 0; i < 30 && !labels.length; i++) { await new Promise(r => setTimeout(r, 1)); const label = (await c.view('chat-1'))!.job!.label; if (label.startsWith('Reading')) labels.push(label); }
+    release(); await c.waitForJobs();
+    expect(labels[0]).toBe(`Reading the story so far (1 of ${before.earlierParts})`);
+    const digests = m.calls.filter(x => x.task === 'grimoire-digest-v1');
+    expect(digests).toHaveLength(before.earlierParts);
+    // The first part starts at the first message; each part carries the record so far.
+    expect(digests[0].input.chat[0].content).toStartWith('Turn 0.');
+    expect(digests[1].input.record).toBe('Part 1 read.');
+    const create = m.calls.find(x => x.task === 'grimoire-create-v1')!.input;
+    expect(create.storySoFar).toContain(`Part ${before.earlierParts} read.`);
+    expect(create.chat.at(-1).content).toStartWith('Turn 119.');
+    // Together the parts and the recent messages cover every turn exactly once.
+    const seen = [...digests.flatMap(d => d.input.chat), ...create.chat].map((t: any) => Number(/^Turn (\d+)/.exec(t.content)![1]));
+    expect(seen).toEqual(Array.from({ length: 120 }, (_, i) => i));
+    expect((await c.view('chat-1'))!).toMatchObject({ hasNotebook: true, job: { status: 'complete' }, earlierParts: 0 });
+  });
+  test('a short chat needs no extra reading', async () => {
+    const { m, c } = await ready();
+    expect(m.calls.filter(x => x.task === 'grimoire-digest-v1')).toHaveLength(0);
+    expect(m.calls[0].input.storySoFar).toBe('');
+    expect((await c.view('chat-1'))!.earlierParts).toBe(0);
   });
   test('without chat_mutation it explains what to grant before any model request', async () => {
     const h = host({ granted: ['generation', 'interceptor', 'chats', 'characters'] });
@@ -180,15 +214,38 @@ describe('check-ups', () => {
     await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
     expect(m.calls.at(-1)!.input.reason).toBe('Time moved on');
   });
-  test('a check-up that would drop a thread is asked once to fix it, then left out', async () => {
-    const { m, c } = await ready(undefined, model({ create: created, checkup: input => ({ notebook: { ...input.notebook, threads: input.notebook.threads.slice(1) }, tracker: null }) }));
+  test('a check-up that drops a thread or un-happens a step gets them put back, in one request', async () => {
+    const { m, c } = await ready(undefined, model({ create: created, checkup: input => {
+      const n = structuredClone(input.notebook); n.threads = n.threads.slice(1); n.people = n.people.slice(1); return { notebook: n, tracker: null };
+    } }));
     await c.checkup('chat-1', 'You asked for a check-up'); await c.waitForJobs();
-    expect(m.calls.filter(x => x.task === 'grimoire-checkup-v1').length).toBe(2);
-    expect(m.calls.at(-1)!.messages.at(-1)!.content).toContain('Keep the thread "The stolen ring"');
+    expect(m.calls.filter(x => x.task === 'grimoire-checkup-v1').length).toBe(1);
     const view = (await c.view('chat-1'))!;
-    expect(view.job).toMatchObject({ status: 'failed', label: 'The check-up could not finish' });
-    expect(view.job!.error).not.toContain('stolen ring');
-    expect(view.notebook!.threads).toHaveLength(2);
+    expect(view.job).toMatchObject({ status: 'complete' });
+    expect(view.notebook!.threads.map(t => t.id).sort()).toEqual(['stolen-ring', 'storm']);
+    expect(view.notebook!.people.map(p => p.id)).toContain('mira');
+  });
+  test('model slips are tidied instead of rejected', async () => {
+    const sloppy = () => {
+      const n: any = sampleNotebook();
+      n.people[1].id = 'Cole_The Barbarian'; n.threads[0].people = ['Oswin', 'Cole_The Barbarian'];
+      n.threads[0].speed = 'medium'; n.threads[0].steps[0].afterHours = '12 hours'; n.threads[1].id = 'storm'; n.threads[1].status = 'active';
+      n.people[0].wants = 'x '.repeat(500); n.people[0].hint = 'dry<br>humor {{char}}';
+      n.events = Array.from({ length: 70 }, (_, i) => `Event ${i}`); n.clock = { day: '3', hour: 25, label: '' };
+      return { notebook: n, tracker: null };
+    };
+    const { m, c } = await ready(undefined, model({ create: sloppy }));
+    expect(m.calls).toHaveLength(1);
+    const nb = (await c.view('chat-1'))!.notebook!;
+    expect(nb.people[1].id).toBe('cole-the-barbarian');
+    expect(nb.threads[0]).toMatchObject({ speed: 'steady', people: ['harbor-master', 'cole-the-barbarian'] });
+    expect(nb.threads[0].steps[0].afterHours).toBe(12);
+    expect(nb.threads[1].status).toBe('open');
+    expect(nb.people[0].wants.length).toBeLessThanOrEqual(600);
+    expect(nb.people[0].hint).toBe('dry humor');
+    expect(nb.events).toHaveLength(40);
+    expect(nb.events[0]).toStartWith('Earlier: Event 0; Event 1');
+    expect(nb.events.at(-1)).toBe('Event 69');
   });
   test('a result is thrown away if the chat it read changed meanwhile', async () => {
     const m = model({ create: created, checkup: input => ({ notebook: { ...input.notebook, summary: 'Stale.' }, tracker: null }) });
@@ -212,8 +269,8 @@ describe('check-ups', () => {
     const c = new NotebookController(h.api, undefined, () => {}, model({ create: () => ({ notebook: sampleNotebook(), tracker: null }), checkup: backwards }).ask);
     await c.create('chat-1', {}); await c.waitForJobs();
     await c.checkup('chat-1', 'test'); await c.waitForJobs();
-    expect((await c.view('chat-1'))!.job!.error).toContain('did not pass Grimoire’s checks');
-    expect(JSON.stringify((await c.view('chat-1'))!.job)).not.toContain('stolen ring');
+    // A clock that went back keeps the time from before the check-up.
+    expect((await c.view('chat-1'))!).toMatchObject({ clockText: 'Day 1, 18:00', job: { status: 'complete' } });
   });
   test('time cannot be skipped while an update is running', async () => {
     const m = model({ create: created, checkup: input => ({ notebook: input.notebook, tracker: null }) });

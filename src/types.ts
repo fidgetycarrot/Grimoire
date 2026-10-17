@@ -5,7 +5,7 @@ import type { ReasoningMode } from './model';
 import type { FieldCheck, Recipe } from './tracker';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.1.1';
+export const VERSION = '0.1.2';
 export const MAX_VERSIONS = 12;
 
 /** One saved state of the notebook and the chat history it describes. */
@@ -33,6 +33,8 @@ export interface ChatView {
   checks: FieldCheck[]; needsCheck: string; job: Job | null; updatedAt: number; repliesSinceCheck: number; skipHours: number;
   /** Shown only behind the spoiler fold. */
   notebook: Notebook | null; behind: boolean;
+  /** Before a notebook exists: how many parts of a long chat are read first, one request each. */
+  earlierParts: number;
 }
 export interface Snapshot {
   version: string; permissions: string[]; connections: Array<{ id: string; name: string; model: string }>;

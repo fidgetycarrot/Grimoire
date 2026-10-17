@@ -1,10 +1,11 @@
 import type { SpindleAPI, LlmMessageDTO, InterceptorContextDTO, InterceptorResultDTO } from 'lumiverse-spindle-types';
 import { absoluteHours, advanceClock, describeClock, durationHours, type StoryClock } from './clock';
-import { conversation, fingerprints, newestMatching, covers, type Turn } from './history';
+import { conversation, fingerprints, newestMatching, covers, planHistory, type Piece, type Turn } from './history';
 import { askJson, askModel, ModelError, type Ask } from './model';
 import { buildNote, liveClock, paceLine, type ClockSources } from './note';
 import { dueThreads, keepTimes, mergeRevision, NotebookError, stamp, validateNotebook, withoutTimes, type Pace, type Preferences } from './notebook';
-import { checkupMessages, creationMessages, type Material } from './prompts';
+import { checkupMessages, creationMessages, digestMessages, type Material } from './prompts';
+import { plainBlock, tidyNotebook } from './tidy';
 import { checkRecipe, readTracker, trackerText, validateRecipe, type FieldType, type Recipe } from './tracker';
 import { DEFAULT_PREFERENCES, DEFAULT_SETTINGS, MAX_VERSIONS, VERSION, type ChatState, type ChatView, type Job, type Settings, type Snapshot, type Version } from './types';
 
@@ -111,14 +112,18 @@ export class NotebookController {
     return this.serial(chatId, async () => {
       const info = await this.chatInfo(chatId);
       const state = await this.load(chatId) ?? this.blank(chatId);
-      const live = info.supported && state.versions.length && this.api.permissions.has('chats') && this.api.permissions.has('chat_mutation') ? await this.live(state, await this.api.chat.getMessages(chatId)) : null;
+      const readable = info.supported && this.api.permissions.has('chats') && this.api.permissions.has('chat_mutation');
+      const messages = readable ? await this.api.chat.getMessages(chatId) : null;
+      const live = messages && state.versions.length ? await this.live(state, messages) : null;
+      // Before a notebook exists, say how much of a long chat has to be read first (one request per part).
+      const earlierParts = messages && !live ? planHistory(conversation(messages)).earlier.length : 0;
       const notebook = live?.version.notebook ?? null;
       return {
         chatId, name: info.name, supported: info.supported, reason: info.reason, enabled: state.enabled, pace: state.pace, preferences: state.preferences,
         // Only code-made words reach the panel outside the spoiler fold; a model-written line could give something away.
         hasNotebook: !!notebook, summary: live ? `Last update: ${live.version.reason}` : '', clock: live?.clock ?? null, clockText: live ? describeClock(live.clock) : '', sources: live?.sources ?? null,
         checks: live ? state.checks : [], needsCheck: state.needsCheck || (live && live.index !== state.versions.length - 1 ? 'The chat changed since the last update.' : ''),
-        job: state.job, updatedAt: state.updatedAt, repliesSinceCheck: live ? this.repliesSince(live) : 0, skipHours: state.skipHours, notebook, behind: !!live && live.index !== state.versions.length - 1,
+        job: state.job, updatedAt: state.updatedAt, repliesSinceCheck: live ? this.repliesSince(live) : 0, skipHours: state.skipHours, notebook, behind: !!live && live.index !== state.versions.length - 1, earlierParts,
       };
     });
   }
@@ -138,11 +143,18 @@ export class NotebookController {
     if (!settings.connectionId) throw new Error('Choose a connection in Grimoire settings first.');
     return (messages, signal) => askModel(this.api, this.userId, settings, messages, signal);
   }
-  private async material(chatId: string, characterId: string, messages: Messages): Promise<Material> {
+  private async character(characterId: string) {
     const character = await this.api.characters.get(characterId, this.userId);
     if (!character) throw new Error('This chat’s character could not be read.');
-    let persona: Material['persona'] = null;
-    if (this.api.permissions.has('personas')) { try { const p = await this.api.personas.getActive(this.userId); if (p) persona = { name: p.name, description: p.description.slice(0, 6000) }; } catch { /* optional */ } }
+    return character;
+  }
+  private async persona(): Promise<Material['persona']> {
+    if (!this.api.permissions.has('personas')) return null;
+    try { const p = await this.api.personas.getActive(this.userId); return p ? { name: p.name, description: p.description.slice(0, 6000) } : null; } catch { return null; }
+  }
+  private async material(chatId: string, characterId: string, messages: Messages, recent: Piece[], storySoFar: string): Promise<Material> {
+    const character = await this.character(characterId);
+    const persona = await this.persona();
     const lore: string[] = [];
     if (this.api.permissions.has('world_books')) {
       let room = 12_000;
@@ -155,12 +167,10 @@ export class NotebookController {
       }
     }
     const turns = conversation(messages);
-    const chat: Material['chat'] = []; let room = 40_000;
-    for (const turn of [...turns].reverse()) { const piece = turn.content.slice(0, 4000); if (piece.length > room || chat.length >= 40) break; chat.unshift({ role: turn.role, content: piece }); room -= piece.length; }
     let variables: Record<string, string> = {};
     try { variables = Object.fromEntries(Object.entries(await this.api.variables.chat.list(chatId)).slice(0, 40).map(([k, v]) => [k, String(v).slice(0, 500)])); } catch { /* none */ }
     return { character: { name: character.name, description: character.description.slice(0, 12_000), personality: character.personality.slice(0, 4000), scenario: character.scenario.slice(0, 4000), firstMessage: character.first_mes.slice(0, 6000) },
-      persona, lore, chat, replies: turns.filter(t => t.role === 'assistant').slice(-3).map(t => t.content.slice(0, 6000)), variables };
+      persona, lore, storySoFar, chat: recent, replies: turns.filter(t => t.role === 'assistant').slice(-3).map(t => t.content.slice(0, 6000)), variables };
   }
   private startJob(state: ChatState, kind: Job['kind'], label: string): { job: Job; signal: AbortSignal } {
     if (this.running.has(state.chatId)) throw new Error('The notebook is already being updated. Wait for it to finish.');
@@ -174,7 +184,7 @@ export class NotebookController {
   async waitForJobs() { while (this.tasks.size) await Promise.all([...this.tasks]); }
   private explain(error: unknown) {
     // Check failures name threads and people, so the panel gets a spoiler-free version. The model still sees the details when asked to fix its reply.
-    if (error instanceof NotebookError) return 'The model’s update did not pass Grimoire’s checks, so the notebook was left as it was.';
+    if (error instanceof NotebookError) return `The model’s reply did not pass Grimoire’s checks, so nothing was changed. Details: ${error.safe}`;
     if (error instanceof ModelError) return error.message;
     return error instanceof Error && error.message.length < 300 ? error.message : 'Something went wrong. Your notebook was not changed.';
   }
@@ -193,10 +203,25 @@ export class NotebookController {
       this.track((async () => {
         try {
           const messages = await this.api.chat.getMessages(chatId);
-          const material = await this.material(chatId, info.characterId, messages);
+          const plan = planHistory(conversation(messages));
+          // A long chat is read from the start first, part by part, so older chats keep their history.
+          let storySoFar = '';
+          if (plan.earlier.length) {
+            const character = (await this.character(info.characterId)).name, persona = (await this.persona())?.name ?? '';
+            for (const [i, part] of plan.earlier.entries()) {
+              await this.progress(chatId, job, `Reading the story so far (${i + 1} of ${plan.earlier.length})`);
+              storySoFar = await askJson(ask, digestMessages({ character, persona, part: i + 1, parts: plan.earlier.length, record: storySoFar, chat: part }), value => {
+                const text = plainBlock(record(value).record, 12_000);
+                if (!text) throw new NotebookError('"record" is empty. Write the story so far as plain text.');
+                return text;
+              }, signal);
+            }
+            await this.progress(chatId, job, 'Writing the notebook');
+          }
+          const material = await this.material(chatId, info.characterId, messages, plan.recent, storySoFar);
           const result = await askJson(ask, creationMessages(material, state.preferences), value => {
             const output = record(value);
-            return { notebook: withoutTimes(validateNotebook(output.notebook)), recipe: validateRecipe(output.tracker).recipe };
+            return { notebook: withoutTimes(validateNotebook(tidyNotebook(output.notebook))), recipe: validateRecipe(output.tracker).recipe };
           }, signal);
           await this.serial(chatId, async () => {
             const current = await this.load(chatId) ?? state;
@@ -223,6 +248,15 @@ export class NotebookController {
       })());
       return job;
     });
+  }
+  /** Show how far a long job has got. */
+  private async progress(chatId: string, job: Job, label: string) {
+    await this.serial(chatId, async () => {
+      const current = await this.load(chatId);
+      if (!current || current.job?.id !== job.id) return;
+      current.job = { ...current.job, label }; await this.save(current);
+    });
+    this.changed();
   }
   private async failJob(chatId: string, job: Job, error: unknown) {
     await this.serial(chatId, async () => {
@@ -260,10 +294,11 @@ export class NotebookController {
       try {
         const result = await askJson(ask, checkupMessages(input), value => {
           const output = record(value);
-          const revised = validateNotebook(output.notebook);
-          const merged = mergeRevision(base.notebook, revised, live.now);
-          // Only the parts of the clock the notebook owns can go wrong here; tracker-owned parts are read again below.
-          if (absoluteHours(liveClock(merged.clock, live.values, live.types).clock) < absoluteHours(live.clock)) throw new NotebookError('The story clock went backwards. Time only moves forward.');
+          const revised = validateNotebook(tidyNotebook(output.notebook, base.notebook));
+          let merged = mergeRevision(base.notebook, revised, live.now);
+          // Time only moves forward. A clock that went back keeps the time from before the check-up;
+          // tracker-owned parts are read again below either way.
+          if (absoluteHours(liveClock(merged.clock, live.values, live.types).clock) < absoluteHours(live.clock)) merged = { ...merged, clock: live.clock };
           return { notebook: merged, recipe: output.tracker ? validateRecipe(output.tracker).recipe : null };
         }, signal);
         await this.serial(chatId, async () => {

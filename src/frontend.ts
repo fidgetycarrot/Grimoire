@@ -97,12 +97,15 @@ export function setup(ctx: SpindleFrontendContext) {
     const twistRow = el('label', 'gm-row gm-small'); twistRow.append(twist, document.createTextNode('A twist is allowed, if one fits'));
     const grid = el('div', 'gm-grid'); grid.append(labeled('Story length', length), labeled('Tone', tone));
     const noConnection = !snapshot?.settings.connectionId;
+    const parts = view.earlierParts ?? 0;
     const write = button('Write the notebook', async () => {
       await act('create', { chatId: view.chatId, preferences: { length: length.value, tone: tone.value, twist: twist.checked } });
-      notify('Writing the notebook. This uses one model request and can take a minute.');
+      notify(parts ? `Reading the chat, then writing the notebook. This uses ${parts + 1} model requests and can take a few minutes.` : 'Writing the notebook. This uses one model request and can take a minute.');
     }, 'primary');
     write.classList.add('gm-wide'); write.disabled = noConnection || view.job?.status === 'running';
-    card.append(grid, twistRow, write);
+    card.append(grid, twistRow);
+    if (parts) card.append(el('p', 'gm-hint', `This is a long chat. Grimoire reads it from the beginning first, in ${parts} ${parts === 1 ? 'part' : 'parts'} (one model request each), so the notebook knows the whole story so far. Then one more request writes the notebook.`));
+    card.append(write);
     if (noConnection) card.append(el('p', 'gm-notice', 'Choose a model connection in Settings first.'), button('Open settings', () => { page = 'settings'; render(); }));
     return card;
   }

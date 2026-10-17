@@ -31,14 +31,29 @@ const CRAFT = [
 export interface Material {
   character: { name: string; description: string; personality: string; scenario: string; firstMessage: string };
   persona: { name: string; description: string } | null;
-  lore: string[]; chat: Array<{ role: string; content: string }>;
+  lore: string[];
+  /** For a long chat: a record of everything before `chat`, read part by part. Empty otherwise. */
+  storySoFar: string;
+  chat: Array<{ role: string; content: string }>;
   replies: string[]; variables: Record<string, string>;
+}
+
+export interface DigestInput {
+  character: string; persona: string; part: number; parts: number;
+  record: string; chat: Array<{ role: string; content: string }>;
+}
+/** Reading the earlier part of a long chat, one part at a time, into a running record. */
+export function digestMessages(input: DigestInput): Message[] {
+  return [
+    { role: 'system', content: `${SAFETY}\nYou are reading a long roleplay chat in parts so a story notebook can be written for it later. "${input.character}" is the card's character; ${input.persona ? `"${input.persona}" is the player's character` : 'the player writes the user turns'}. This is part ${input.part} of ${input.parts} of the earlier chat, in order.\nReturn {"record": "..."}: the story so far, rewritten to include this part. Keep what a storyteller would need to continue it: what happened, in order and briefly; who has been met, what they want, and how they stand with the player character; promises, debts, secrets the player learned, and problems left open; where the story is now and how much story time has passed (days, time of day). Record what the chat establishes, not guesses. Compress older events as the record grows; keep it under about 1,200 words. Plain text, short lines, no headings.` },
+    { role: 'user', content: JSON.stringify({ task: 'grimoire-digest-v1', ...input }) },
+  ];
 }
 
 export function creationMessages(material: Material, preferences: Preferences): Message[] {
   const twist = preferences.twist ? 'A twist is allowed. If it fits, hide one in "hiddenTruth" and "twist", and plant clues as thread steps. It is optional, not the point.' : 'Do not plan a twist. Leave "twist" empty.';
   return [
-    { role: 'system', content: `${SAFETY}\nYou write a private story notebook for an ongoing roleplay chat. It gives the narrator a story of its own: where it is going, why, and how fast. The player must not see it.\nReturn {"notebook": ${SHAPE}, "tracker": {"fields": [], "note": ""}}.\n${CRAFT}\nStory length: ${preferences.length}. Tone: ${preferences.tone}. ${twist}\nIf the chat already has messages, start from what has happened: record it under events, mark people met, and set the clock to now.\n\nTracker: many presets make the narrator write a status block in each reply (time, place, who is present). Look at the sample replies and saved variables. For each of these fields that is reliably present, describe where it lives: "datetime" or "date" and "time" (the story date and time), "location", "present" (who is in the scene). Use only these methods:\n- {"kind":"variable","name":"exact saved variable name"}\n- {"kind":"line","label":"exact label text before the colon","region":{"kind":"whole"} or {"kind":"tag","tag":"tagname"} or {"kind":"fence","lang":"language or empty"}}\n- {"kind":"tag","tag":"tagname","region":...}\n- {"kind":"json","path":"dotted.path","region":{"kind":"tag",...} or {"kind":"fence",...}}\nEach field: {"name": "datetime|date|time|location|present", "type": "datetime|date|time|text|list", "source": {...}}. If there is no tracker, return an empty fields list. Never guess a format you cannot see.` },
+    { role: 'system', content: `${SAFETY}\nYou write a private story notebook for an ongoing roleplay chat. It gives the narrator a story of its own: where it is going, why, and how fast. The player must not see it.\nReturn {"notebook": ${SHAPE}, "tracker": {"fields": [], "note": ""}}.\n${CRAFT}\nStory length: ${preferences.length}. Tone: ${preferences.tone}. ${twist}\nIf the chat already has messages, start from what has happened: record it under events, mark people met, and set the clock to now. A long chat comes with "storySoFar", a record of everything before the messages in "chat"; treat it as part of the chat. Keep events compact: at most about 30 short lines, merging older ones. Threads and people the chat already started come first; plan new ones around them.\n\nTracker: many presets make the narrator write a status block in each reply (time, place, who is present). Look at the sample replies and saved variables. For each of these fields that is reliably present, describe where it lives: "datetime" or "date" and "time" (the story date and time), "location", "present" (who is in the scene). Use only these methods:\n- {"kind":"variable","name":"exact saved variable name"}\n- {"kind":"line","label":"exact label text before the colon","region":{"kind":"whole"} or {"kind":"tag","tag":"tagname"} or {"kind":"fence","lang":"language or empty"}}\n- {"kind":"tag","tag":"tagname","region":...}\n- {"kind":"json","path":"dotted.path","region":{"kind":"tag",...} or {"kind":"fence",...}}\nEach field: {"name": "datetime|date|time|location|present", "type": "datetime|date|time|text|list", "source": {...}}. If there is no tracker, return an empty fields list. Never guess a format you cannot see.` },
     { role: 'user', content: JSON.stringify({ task: 'grimoire-create-v1', preferences, ...material }) },
   ];
 }

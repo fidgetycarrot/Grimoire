@@ -21,7 +21,7 @@ function harness(chat: Partial<NonNullable<Snapshot['chat']>> | null = {}, setti
     settings: { connectionId: 'model', maxOutputTokens: 16000, reasoningMode: 'inherit', every: 8, placement: 'auto', ...settings },
     chat: chat === null ? null : { chatId: 'chat-1', name: 'Low Water', supported: true, reason: '', enabled: true, pace: 'auto', preferences: { length: 'medium', tone: 'balanced', twist: true }, hasNotebook: true,
       summary: 'Notebook updated after the tavern.', clock: { day: 2, hour: 21, label: '' }, clockText: 'Day 2, 21:00', sources: { day: 'notebook', hour: 'notebook', exact: false }, checks: [],
-      needsCheck: '', job: null, updatedAt: Date.now(), repliesSinceCheck: 2, skipHours: 0, notebook: stamp(validateNotebook(sampleNotebook()), 40), behind: false, ...chat },
+      needsCheck: '', job: null, updatedAt: Date.now(), repliesSinceCheck: 2, skipHours: 0, notebook: stamp(validateNotebook(sampleNotebook()), 40), behind: false, earlierParts: 0, ...chat },
   };
   const requests: Array<{ action: string; input: any }> = [];
   let receive: (m: unknown) => void = () => {};
