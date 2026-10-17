@@ -51,7 +51,9 @@ const FIELD_WORDS: Record<string, string> = { datetime: 'Date and time', date: '
 
 export function setup(ctx: SpindleFrontendContext) {
   let destroyed = false, snapshot: Snapshot | null = null, page: 'chat' | 'settings' = 'chat', editing = false, confirmDelete = false;
-  let refreshing: Promise<void> | null = null, again = false, polling: ReturnType<typeof setInterval> | undefined;
+  let refreshing: Promise<void> | null = null, again = false, againForced = false, polling: ReturnType<typeof setInterval> | undefined;
+  /** What the panel last drew, so a refresh that changes nothing draws nothing. */
+  let drawn = '', pendingDraw = false;
   const tab = ctx.ui.registerDrawerTab({ id: 'grimoire', title: 'Grimoire', shortName: 'Grimoire', description: 'The story behind your chat: where it is going, why, and how fast.', keywords: ['story', 'notebook', 'plot', 'pace', 'pacing'], iconSvg: ICON });
   const teardown: Array<() => void> = [ctx.dom.addStyle(styles)];
   const app = el('div', 'gm-app'); tab.root.append(app);
@@ -84,7 +86,7 @@ export function setup(ctx: SpindleFrontendContext) {
   function details(title: string, open = false) { const d = el('details', 'gm-details'); const s = el('summary', '', title); const inner = el('div', 'gm-stack'); d.append(s, inner); d.open = open; return { root: d, body: inner }; }
   const chatId = () => ctx.getActiveChat().chatId ?? null;
   async function act<T>(action: string, input: Record<string, unknown> = {}): Promise<T> {
-    const result = await rpc.request<T>(action, input); await refresh(); return result;
+    const result = await rpc.request<T>(action, input); await refresh(true); return result;
   }
 
   // ----- This chat -----
@@ -244,7 +246,7 @@ export function setup(ctx: SpindleFrontendContext) {
     if (!decisions.available) { quickOn.disabled = true; quickCard.append(el('p', 'gm-notice', decisions.reason || 'Decision models aren’t available.')); }
     else {
       if (!decisions.connections.length) quickCard.append(el('p', 'gm-notice', 'Add a decision connection in Lumiverse’s connection settings first (OpenRouter or TypeSafe).'));
-      quickCard.append(labeled('Decision connection', decision), labeled('Model', model, 'Any decision model works. Type its exact ID to use a different one than the connection’s, like ~typesafe/jev-latest.'));
+      quickCard.append(labeled('Decision connection', decision), labeled('Model', model, 'Any decision model works. To use a different one than the connection’s, type its exact ID. Pick one with a version in its name rather than one ending in “latest”, so it doesn’t change without you knowing.'));
     }
     const save = button('Save settings', async () => { await act('settings', { settings: { connectionId: connection.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, placement: placement.value, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } }); notify('Settings saved.'); }, 'primary');
     body.append(card, quickCard, save);
@@ -254,12 +256,24 @@ export function setup(ctx: SpindleFrontendContext) {
     if (destroyed) return;
     for (const [key, b] of tabButtons) { b.setAttribute('aria-selected', String(page === key)); }
     const openDetails = [...body.querySelectorAll('details')].map(d => d.open);
+    // Redrawing empties the panel for a moment, and the drawer would jump to the top. Put every scroll position back.
+    const scrolled: Array<[Element, number]> = [];
+    for (let node: Element | null = app; node; node = node.parentElement) if (node.scrollTop > 0) scrolled.push([node, node.scrollTop]);
     body.replaceChildren();
     if (page === 'settings') renderSettings(); else renderChat();
     // Keep folds open across refreshes so a check-up never snaps the notebook shut.
     body.querySelectorAll('details').forEach((d, i) => { if (openDetails[i]) d.open = true; });
+    for (const [node, top] of scrolled) node.scrollTop = top;
+    drawn = page + JSON.stringify(snapshot); pendingDraw = false;
     updatePaceButton();
   }
+  /** Background refreshes never redraw over something the player is in the middle of. */
+  function busyHere(): boolean {
+    if (page === 'settings') return true;
+    const active = document.activeElement;
+    return !!active && body.contains(active) && /^(INPUT|SELECT|TEXTAREA)$/.test(active.tagName);
+  }
+  body.addEventListener('focusout', () => { setTimeout(() => { if (pendingDraw && !busyHere() && !editing) render(); }, 0); });
 
   // ----- Pace button above the input -----
   let mount: HTMLElement | null = null, paceButton: HTMLButtonElement | null = null;
@@ -288,9 +302,10 @@ export function setup(ctx: SpindleFrontendContext) {
     extras.setEnabled(active);
   }
 
-  async function refresh(): Promise<void> {
+  /** forced: after the player did something, or switched chats. Otherwise it is a background check for news. */
+  async function refresh(forced = false): Promise<void> {
     if (destroyed) return;
-    if (refreshing) { again = true; return refreshing; }
+    if (refreshing) { again = true; againForced ||= forced; return refreshing; }
     refreshing = (async () => {
       try {
         snapshot = await rpc.request<Snapshot>('snapshot', { chatId: chatId() });
@@ -298,13 +313,15 @@ export function setup(ctx: SpindleFrontendContext) {
         if (running && !polling) polling = setInterval(() => void refresh(), 2500);
         if (!running && polling) { clearInterval(polling); polling = undefined; }
         tab.setBadge(running ? '…' : null);
-        if (!editing) render(); else updatePaceButton();
+        const changed = page + JSON.stringify(snapshot) !== drawn;
+        if (editing || (!forced && (!changed || busyHere()))) { pendingDraw ||= changed; updatePaceButton(); }
+        else render();
       } catch (error) { notify(error instanceof Error ? error.message : String(error), 'error'); }
-      finally { refreshing = null; if (again && !destroyed) { again = false; void refresh(); } }
+      finally { refreshing = null; if (again && !destroyed) { const f = againForced; again = false; againForced = false; void refresh(f); } }
     })();
     return refreshing;
   }
-  teardown.push(tab.onActivate(() => void refresh()), ctx.events.on('CHAT_CHANGED', () => { editing = false; void refresh(); }), ctx.events.on('CHAT_SWITCHED', () => { editing = false; void refresh(); }));
-  render(); ctx.ready(); void refresh();
+  teardown.push(tab.onActivate(() => void refresh()), ctx.events.on('CHAT_CHANGED', () => { editing = false; void refresh(true); }), ctx.events.on('CHAT_SWITCHED', () => { editing = false; void refresh(true); }));
+  render(); ctx.ready(); void refresh(true);
   return () => { if (destroyed) return; destroyed = true; if (polling) clearInterval(polling); rpc.destroy(); for (const fn of teardown.reverse()) fn(); app.remove(); tab.destroy(); };
 }

@@ -5,7 +5,7 @@ import type { ReasoningMode } from './model';
 import type { FieldCheck, Recipe } from './tracker';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.2.0';
+export const VERSION = '0.2.1';
 export const MAX_VERSIONS = 16;
 
 /** One saved state of the notebook and the chat history it describes. */

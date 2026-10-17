@@ -670,7 +670,7 @@ Rules for the update:
 - Rhythm: how the story feels right now (peak during a big moment, aftermath right after one, stalled if nothing has changed for a while).
 - Pace mode chosen by the player: ${input.pace}. In quiet mode, do not start new trouble; urgent things still play out.
 - Summary: one short line the player sees, with no spoilers, like "Notebook updated after the tavern."
-- tracker: ${input.recipe.fields.length ? "return null unless the tracker fields listed as unavailable can now be read from the replies, or the format changed; then return a corrected recipe in the same format as before." : 'no tracker is known yet. If the raw replies in "replies" carry a status block (time, place, who is present) in every reply, return a recipe for it; otherwise return null.'}${input.replies.length ? ` Recipe methods:
+- tracker: ${input.recipe.fields.length ? "return null unless the tracker fields listed as unavailable can now be read from the replies, or the format changed; then return a corrected recipe in the same format as before." : 'no tracker is known yet. If the raw replies in "replies" carry a status block (time, place, who is present), as tags, tag attributes, or labeled lines, return a recipe for it; otherwise return null. The opening message is left out, because presets seldom add a tracker to it.'}${input.replies.length ? ` Recipe methods:
 ${TRACKER_METHODS}` : ""}
 ${CRAFT}` },
     { role: "user", content: JSON.stringify({ task: "grimoire-checkup-v1", ...input }) }
@@ -1132,9 +1132,63 @@ function trackerText(recipe, reply) {
   return [...pieces].join(`
 `).slice(0, 2000);
 }
+var GUESS = [
+  { name: "date", type: "date", attributes: ["date", "day"], labels: ["Date", "Day"] },
+  { name: "time", type: "time", attributes: ["time"], labels: ["Time", "Time of day"] },
+  { name: "location", type: "text", attributes: ["location", "place"], labels: ["Location", "Place", "Setting"] },
+  { name: "present", type: "list", attributes: ["present", "characters"], labels: ["Present", "Characters present", "Characters", "Cast", "Who is here"] }
+];
+function wrapping(text, at) {
+  const open = /<([A-Za-z][\w:.-]{0,40})(?:\s[^>]*)?>/g;
+  let best = null;
+  for (const m of text.matchAll(open)) {
+    if (m.index >= at)
+      break;
+    if (m[0].endsWith("/>"))
+      continue;
+    const close = text.indexOf(`</${m[1]}>`, m.index + m[0].length);
+    if (close > at && TAG.test(m[1]))
+      best = { tag: m[1], start: m.index };
+  }
+  return best?.tag ?? null;
+}
+function guessRecipe(replies) {
+  const sample = replies.slice(0, 2).filter((r) => r.trim());
+  if (!sample.length)
+    return { fields: [], note: "" };
+  const fields = [];
+  for (const want of GUESS) {
+    const candidates = [];
+    const newest = sample[0];
+    for (const m of newest.matchAll(/<([A-Za-z][\w:.-]{0,40})\b[^>]*>/g)) {
+      for (const a of m[0].matchAll(/\s([A-Za-z][\w:-]{0,40})\s*=\s*(?:"[^"]*"|'[^']*')/g)) {
+        if (want.attributes.includes(a[1].toLowerCase()) && TAG.test(m[1]))
+          candidates.push({ kind: "attribute", tag: m[1], attribute: a[1], region: { kind: "whole" } });
+      }
+    }
+    for (const label of want.labels) {
+      const line = new RegExp(`^[\\s>*_\\-\u2022|#]*(?:\\*\\*|__)?${escape(label)}(?:\\*\\*|__)?\\s*[:\uFF1A]`, "gim");
+      for (const m of newest.matchAll(line)) {
+        const tag = wrapping(newest, m.index);
+        candidates.push({ kind: "line", label, region: tag ? { kind: "tag", tag } : { kind: "whole" } });
+      }
+    }
+    for (const source of candidates) {
+      const field = { name: want.name, type: want.type, source };
+      if (sample.every((reply) => {
+        const v = readField(field, reply, {});
+        return v !== undefined && fits(field.type, v);
+      })) {
+        fields.push(field);
+        break;
+      }
+    }
+  }
+  return { fields, note: fields.length ? "Found by Grimoire in your replies." : "" };
+}
 
 // src/types.ts
-var VERSION = "0.2.0";
+var VERSION = "0.2.1";
 var MAX_VERSIONS = 16;
 var DEFAULT_SETTINGS = { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto", quick: { enabled: false, connectionId: "", model: "" } };
 var DEFAULT_PREFERENCES = { length: "medium", tone: "balanced", twist: true };
@@ -1281,6 +1335,18 @@ class NotebookController {
       if (!live.state.versions[i].quick)
         return live.state.versions[i];
     return live.state.versions[0];
+  }
+  trackerSamples(turns) {
+    return turns.filter((t, i) => t.role === "assistant" && !(i === 0)).map((t) => t.content).reverse();
+  }
+  learnTracker(state, turns) {
+    if (state.recipe.fields.length)
+      return false;
+    const found = guessRecipe(this.trackerSamples(turns));
+    if (!found.fields.length)
+      return false;
+    state.recipe = found;
+    return true;
   }
   repliesSince(live) {
     return live.turns.slice(this.fullVersion(live).covered.length).filter((t) => t.role === "assistant").length;
@@ -1472,13 +1538,15 @@ class NotebookController {
             current.recipe = result.recipe;
             const after = await this.api.chat.getMessages(chatId);
             const turns = conversation(after), prints = await fingerprints(turns);
+            this.learnTracker(current, turns);
+            const learned = current.recipe;
             const replies = turns.filter((t) => t.role === "assistant").map((t) => t.content).reverse();
             let variables = {};
             try {
               variables = await this.api.variables.chat.list(chatId);
             } catch {}
-            const checks = checkRecipe(result.recipe, replies, variables), values = readTracker(result.recipe, checks, replies, variables);
-            const types = Object.fromEntries(result.recipe.fields.map((f) => [f.name, f.type]));
+            const checks = checkRecipe(learned, replies, variables), values = readTracker(learned, checks, replies, variables);
+            const types = Object.fromEntries(learned.fields.map((f) => [f.name, f.type]));
             const { clock } = liveClock(result.notebook.clock, values, types);
             const notebook = stamp({ ...result.notebook, clock }, absoluteHours(clock));
             const covered = await fingerprints(conversation(messages));
@@ -1553,7 +1621,7 @@ class NotebookController {
       due: dueThreads(base.notebook, live.now).map((d) => ({ thread: d.thread.id, step: d.step.id })),
       skipHours: state.skipHours,
       reason,
-      replies: learning ? live.replies.slice(0, 2).map((r) => r.slice(0, 20000)) : []
+      replies: learning ? this.trackerSamples(live.turns).slice(0, 2).map((r) => r.slice(0, 20000)) : []
     };
     this.track((async () => {
       try {
@@ -1578,6 +1646,8 @@ class NotebookController {
           }
           if (result.recipe && result.recipe.fields.length)
             current.recipe = result.recipe;
+          else
+            this.learnTracker(current, live.turns);
           const types = Object.fromEntries(current.recipe.fields.map((f) => [f.name, f.type]));
           const { clock } = liveClock(result.notebook.clock, live.values, types);
           const version = { notebook: { ...result.notebook, clock }, covered: read, at: Date.now(), reason, ...live.values.location ? { location: live.values.location } : {} };
@@ -1742,7 +1812,10 @@ class NotebookController {
       this.runQuick(chatId, quick.live, quick.settings);
   }
   async decide(state, live, settings, extra) {
-    const chatId = state.chatId, full = this.fullVersion(live), since = this.repliesSince(live);
+    const chatId = state.chatId;
+    if (this.learnTracker(state, live.turns))
+      live = await this.live(state, await this.api.chat.getMessages(chatId));
+    const full = this.fullVersion(live), since = this.repliesSince(live);
     const behind = live.index !== state.versions.length - 1;
     const moved = !!live.values.location && !!full.location && live.values.location.toLowerCase() !== full.location.toLowerCase() && since >= 2;
     const jumped = live.now - absoluteHours(full.notebook.clock) >= 6 && since >= 1;

@@ -294,27 +294,43 @@ describe('presets that show their tracker only after the first replies', () => {
     { name: 'time', type: 'time', source: { kind: 'attribute', tag: 'scene_header', attribute: 'time' } },
     { name: 'location', type: 'text', source: { kind: 'attribute', tag: 'scene_header', attribute: 'location' } },
   ], note: 'scene header attributes' };
-  test('the first reply after the notebook triggers one look for the tracker, with the raw replies', async () => {
+  test('a header-style tracker is found in code after the first reply, with no model request', async () => {
     const h = host(); h.add('assistant', 'The ferry bell rings.');
     await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 8 }, {});
-    const m = model({ create: () => ({ notebook: sampleNotebook(), tracker: { fields: [], note: 'none yet' } }),
-      checkup: input => ({ notebook: input.notebook, tracker: input.replies.length ? headerRecipe : null }) });
+    const m = model({ create: () => ({ notebook: sampleNotebook(), tracker: { fields: [], note: 'none yet' } }), checkup: input => ({ notebook: input.notebook, tracker: null }) });
     const c = new NotebookController(h.api, undefined, () => {}, m.ask);
     await c.create('chat-1', {}); await c.waitForJobs();
     h.add('user', 'I wait.'); h.add('assistant', `${header('7:15 PM', 'The ferry')}<div style="color:red"><style>.x{}</style>Mira coils the rope.</div>`);
     await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+    expect(m.calls.filter(x => x.task === 'grimoire-checkup-v1')).toHaveLength(0);
+    const view = (await c.view('chat-1'))!;
+    expect(view.checks.map(x => [x.name, x.status])).toEqual([['time', 'verified'], ['location', 'verified']]);
+    expect(view.sources!.hour).toBe('tracker');
+  });
+  test('a layout only a model can describe gets one look, with the raw replies but not the greeting', async () => {
+    const fence = (time: string) => `Mira coils the rope.\n\n\`\`\`status\n{"when": "${time}", "where": "The ferry"}\n\`\`\``;
+    const jsonRecipe = { fields: [{ name: 'time', type: 'time', source: { kind: 'json', path: 'when', region: { kind: 'fence', lang: 'status' } } }], note: 'json block' };
+    const h = host(); h.add('assistant', 'The ferry bell rings.');
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 8 }, {});
+    const m = model({ create: () => ({ notebook: sampleNotebook(), tracker: { fields: [], note: 'none yet' } }),
+      checkup: input => ({ notebook: input.notebook, tracker: input.replies.length ? jsonRecipe : null }) });
+    const c = new NotebookController(h.api, undefined, () => {}, m.ask);
+    await c.create('chat-1', {}); await c.waitForJobs();
+    h.add('user', 'I wait.'); h.add('assistant', `<div style="color:red"><style>.x{}</style>${fence('7:15 PM')}</div>`);
+    await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
     const checkups = m.calls.filter(x => x.task === 'grimoire-checkup-v1');
     expect(checkups).toHaveLength(1);
     expect(checkups[0].input.reason).toBe('Looking for your preset’s tracker');
-    expect(checkups[0].input.replies[0]).toContain('<scene_header location="The ferry"');
-    // The chat itself is sent as words: the header's facts stay, the styling goes.
-    expect(checkups[0].input.chat.at(-1).content).toContain('[scene_header location: The ferry; time: 7:15 PM]');
+    expect(checkups[0].input.replies).toHaveLength(1);
+    expect(checkups[0].input.replies[0]).toContain('"when": "7:15 PM"');
+    expect(checkups[0].messages[0].content).toContain('The opening message is left out');
+    // The chat itself is sent as words: the styling goes.
     expect(checkups[0].input.chat.at(-1).content).not.toContain('style');
     const view = (await c.view('chat-1'))!;
-    expect(view.checks.map(x => x.status)).toEqual(['verified', 'verified']);
+    expect(view.checks.map(x => x.status)).toEqual(['verified']);
     expect(view.sources!.hour).toBe('tracker');
     // It looks only once on its own; later replies wait for the usual reasons.
-    h.add('user', 'I wait more.'); h.add('assistant', 'Nothing happens.');
+    h.add('user', 'I wait more.'); h.add('assistant', fence('7:30 PM'));
     await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
     expect(m.calls.filter(x => x.task === 'grimoire-checkup-v1')).toHaveLength(1);
   });

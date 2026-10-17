@@ -8,7 +8,7 @@ import { checkupMessages, creationMessages, digestMessages, type Material } from
 import { plainBlock, tidyNotebook } from './tidy';
 import { applyQuick, quickError, quickQuestions, quickState } from './quick';
 import type { DecisionResult } from 'lumiverse-spindle-types';
-import { checkRecipe, readTracker, trackerText, validateRecipe, type FieldType, type Recipe } from './tracker';
+import { checkRecipe, guessRecipe, readTracker, trackerText, validateRecipe, type FieldType, type Recipe } from './tracker';
 import { DEFAULT_PREFERENCES, DEFAULT_SETTINGS, MAX_VERSIONS, VERSION, type ChatState, type ChatView, type Job, type Settings, type Snapshot, type Version } from './types';
 
 const record = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
@@ -127,6 +127,18 @@ export class NotebookController {
   private fullVersion(live: Live): Version {
     for (let i = live.index; i >= 0; i--) if (!live.state.versions[i].quick) return live.state.versions[i];
     return live.state.versions[0];
+  }
+  /** Replies to learn a tracker from, newest first. An opening message seldom has one, so it doesn't count. */
+  private trackerSamples(turns: Turn[]): string[] {
+    return turns.filter((t, i) => t.role === 'assistant' && !(i === 0)).map(t => t.content).reverse();
+  }
+  /** Try to find the tracker in code, for free. Returns true if one was found. */
+  private learnTracker(state: ChatState, turns: Turn[]): boolean {
+    if (state.recipe.fields.length) return false;
+    const found = guessRecipe(this.trackerSamples(turns));
+    if (!found.fields.length) return false;
+    state.recipe = found;
+    return true;
   }
   private repliesSince(live: Live) { return live.turns.slice(this.fullVersion(live).covered.length).filter(t => t.role === 'assistant').length; }
 
@@ -254,11 +266,13 @@ export class NotebookController {
             current.recipe = result.recipe;
             const after = await this.api.chat.getMessages(chatId);
             const turns = conversation(after), prints = await fingerprints(turns);
+            this.learnTracker(current, turns);
+            const learned = current.recipe;
             const replies = turns.filter(t => t.role === 'assistant').map(t => t.content).reverse();
             let variables: Record<string, string> = {};
             try { variables = await this.api.variables.chat.list(chatId); } catch { /* none */ }
-            const checks = checkRecipe(result.recipe, replies, variables), values = readTracker(result.recipe, checks, replies, variables);
-            const types = Object.fromEntries(result.recipe.fields.map(f => [f.name, f.type])) as Record<string, FieldType>;
+            const checks = checkRecipe(learned, replies, variables), values = readTracker(learned, checks, replies, variables);
+            const types = Object.fromEntries(learned.fields.map(f => [f.name, f.type])) as Record<string, FieldType>;
             const { clock } = liveClock(result.notebook.clock, values, types);
             const notebook = stamp({ ...result.notebook, clock }, absoluteHours(clock));
             // Covers only what the model actually read, so a reply that arrived meanwhile is picked up by the next check-up.
@@ -317,7 +331,7 @@ export class NotebookController {
     const input = {
       notebook: { ...base.notebook, clock: live.clock }, pace: state.pace, chat, trackerText: live.text, trackerValues: live.values, trackerChecks: live.state.checks, recipe: state.recipe,
       clockOwner: { day: live.sources.day, hour: live.sources.hour }, due: dueThreads(base.notebook, live.now).map(d => ({ thread: d.thread.id, step: d.step.id })),
-      skipHours: state.skipHours, reason, replies: learning ? live.replies.slice(0, 2).map(r => r.slice(0, 20_000)) : [],
+      skipHours: state.skipHours, reason, replies: learning ? this.trackerSamples(live.turns).slice(0, 2).map(r => r.slice(0, 20_000)) : [],
     };
     this.track((async () => {
       try {
@@ -341,6 +355,7 @@ export class NotebookController {
             await this.save(current); return;
           }
           if (result.recipe && result.recipe.fields.length) current.recipe = result.recipe;
+          else this.learnTracker(current, live.turns);
           const types = Object.fromEntries(current.recipe.fields.map(f => [f.name, f.type])) as Record<string, FieldType>;
           const { clock } = liveClock(result.notebook.clock, live.values, types);
           const version: Version = { notebook: { ...result.notebook, clock }, covered: read, at: Date.now(), reason, ...(live.values.location ? { location: live.values.location } : {}) };
@@ -465,7 +480,10 @@ export class NotebookController {
   }
   /** Must run inside the chat's queue. Saves the state, then starts a check-up if one is due. */
   private async decide(state: ChatState, live: Live, settings: Settings, extra: string) {
-    const chatId = state.chatId, full = this.fullVersion(live), since = this.repliesSince(live);
+    const chatId = state.chatId;
+    // A tracker that shows up once the narrator starts replying is looked for in code first, for free.
+    if (this.learnTracker(state, live.turns)) live = (await this.live(state, await this.api.chat.getMessages(chatId)))!;
+    const full = this.fullVersion(live), since = this.repliesSince(live);
     const behind = live.index !== state.versions.length - 1;
     const moved = !!live.values.location && !!full.location && live.values.location.toLowerCase() !== full.location.toLowerCase() && since >= 2;
     const jumped = live.now - absoluteHours(full.notebook.clock) >= 6 && since >= 1;

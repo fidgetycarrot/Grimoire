@@ -154,3 +154,55 @@ export function trackerText(recipe: Recipe, reply: string): string {
   }
   return [...pieces].join('\n').slice(0, 2000);
 }
+
+/**
+ * Find a tracker without a model. Many presets use one of two shapes: facts
+ * in a tag's attributes (<scene_header location="…" time="…">) or labeled
+ * lines (Time: …, Location: …), often inside a tag. Candidates are tried in
+ * that order, and a field is kept only if it reads and fits in every sampled
+ * reply, so prose that happens to say "Time:" once doesn't count.
+ */
+const GUESS: Array<{ name: string; type: FieldType; attributes: string[]; labels: string[] }> = [
+  { name: 'date', type: 'date', attributes: ['date', 'day'], labels: ['Date', 'Day'] },
+  { name: 'time', type: 'time', attributes: ['time'], labels: ['Time', 'Time of day'] },
+  { name: 'location', type: 'text', attributes: ['location', 'place'], labels: ['Location', 'Place', 'Setting'] },
+  { name: 'present', type: 'list', attributes: ['present', 'characters'], labels: ['Present', 'Characters present', 'Characters', 'Cast', 'Who is here'] },
+];
+/** The innermost tag that wraps a position in the text, if any. */
+function wrapping(text: string, at: number): string | null {
+  const open = /<([A-Za-z][\w:.-]{0,40})(?:\s[^>]*)?>/g;
+  let best: { tag: string; start: number } | null = null;
+  for (const m of text.matchAll(open)) {
+    if (m.index! >= at) break;
+    if (m[0].endsWith('/>')) continue;
+    const close = text.indexOf(`</${m[1]}>`, m.index! + m[0].length);
+    if (close > at && TAG.test(m[1])) best = { tag: m[1], start: m.index! };
+  }
+  return best?.tag ?? null;
+}
+export function guessRecipe(replies: string[]): Recipe {
+  const sample = replies.slice(0, 2).filter(r => r.trim());
+  if (!sample.length) return { fields: [], note: '' };
+  const fields: RecipeField[] = [];
+  for (const want of GUESS) {
+    const candidates: FieldSource[] = [];
+    const newest = sample[0];
+    for (const m of newest.matchAll(/<([A-Za-z][\w:.-]{0,40})\b[^>]*>/g)) {
+      for (const a of m[0].matchAll(/\s([A-Za-z][\w:-]{0,40})\s*=\s*(?:"[^"]*"|'[^']*')/g)) {
+        if (want.attributes.includes(a[1].toLowerCase()) && TAG.test(m[1])) candidates.push({ kind: 'attribute', tag: m[1], attribute: a[1], region: { kind: 'whole' } });
+      }
+    }
+    for (const label of want.labels) {
+      const line = new RegExp(`^[\\s>*_\\-•|#]*(?:\\*\\*|__)?${escape(label)}(?:\\*\\*|__)?\\s*[:：]`, 'gim');
+      for (const m of newest.matchAll(line)) {
+        const tag = wrapping(newest, m.index!);
+        candidates.push({ kind: 'line', label, region: tag ? { kind: 'tag', tag } : { kind: 'whole' } });
+      }
+    }
+    for (const source of candidates) {
+      const field: RecipeField = { name: want.name, type: want.type, source };
+      if (sample.every(reply => { const v = readField(field, reply, {}); return v !== undefined && fits(field.type, v); })) { fields.push(field); break; }
+    }
+  }
+  return { fields, note: fields.length ? 'Found by Grimoire in your replies.' : '' };
+}

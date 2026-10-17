@@ -59,7 +59,7 @@ function nextStep(thread, now) {
 }
 
 // src/types.ts
-var VERSION = "0.2.0";
+var VERSION = "0.2.1";
 
 // src/frontend.ts
 var ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8 3v18"/><path d="M12 8h3M12 12h3"/></svg>';
@@ -140,7 +140,8 @@ var STATUS_WORDS = { verified: "Read from your preset", waiting: "Waiting for a 
 var FIELD_WORDS = { datetime: "Date and time", date: "Date", time: "Time", location: "Place", present: "Who is here" };
 function setup(ctx) {
   let destroyed = false, snapshot = null, page = "chat", editing = false, confirmDelete = false;
-  let refreshing = null, again = false, polling;
+  let refreshing = null, again = false, againForced = false, polling;
+  let drawn = "", pendingDraw = false;
   const tab = ctx.ui.registerDrawerTab({ id: "grimoire", title: "Grimoire", shortName: "Grimoire", description: "The story behind your chat: where it is going, why, and how fast.", keywords: ["story", "notebook", "plot", "pace", "pacing"], iconSvg: ICON });
   const teardown = [ctx.dom.addStyle(styles)];
   const app = el("div", "gm-app");
@@ -224,7 +225,7 @@ function setup(ctx) {
   const chatId = () => ctx.getActiveChat().chatId ?? null;
   async function act(action, input = {}) {
     const result = await rpc.request(action, input);
-    await refresh();
+    await refresh(true);
     return result;
   }
   function renderStart(view) {
@@ -538,7 +539,7 @@ function setup(ctx) {
     } else {
       if (!decisions.connections.length)
         quickCard.append(el("p", "gm-notice", "Add a decision connection in Lumiverse’s connection settings first (OpenRouter or TypeSafe)."));
-      quickCard.append(labeled("Decision connection", decision), labeled("Model", model, "Any decision model works. Type its exact ID to use a different one than the connection’s, like ~typesafe/jev-latest."));
+      quickCard.append(labeled("Decision connection", decision), labeled("Model", model, "Any decision model works. To use a different one than the connection’s, type its exact ID. Pick one with a version in its name rather than one ending in “latest”, so it doesn’t change without you knowing."));
     }
     const save = button("Save settings", async () => {
       await act("settings", { settings: { connectionId: connection.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, placement: placement.value, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } });
@@ -553,6 +554,10 @@ function setup(ctx) {
       b.setAttribute("aria-selected", String(page === key));
     }
     const openDetails = [...body.querySelectorAll("details")].map((d) => d.open);
+    const scrolled = [];
+    for (let node = app;node; node = node.parentElement)
+      if (node.scrollTop > 0)
+        scrolled.push([node, node.scrollTop]);
     body.replaceChildren();
     if (page === "settings")
       renderSettings();
@@ -562,8 +567,24 @@ function setup(ctx) {
       if (openDetails[i])
         d.open = true;
     });
+    for (const [node, top] of scrolled)
+      node.scrollTop = top;
+    drawn = page + JSON.stringify(snapshot);
+    pendingDraw = false;
     updatePaceButton();
   }
+  function busyHere() {
+    if (page === "settings")
+      return true;
+    const active = document.activeElement;
+    return !!active && body.contains(active) && /^(INPUT|SELECT|TEXTAREA)$/.test(active.tagName);
+  }
+  body.addEventListener("focusout", () => {
+    setTimeout(() => {
+      if (pendingDraw && !busyHere() && !editing)
+        render();
+    }, 0);
+  });
   let mount = null, paceButton = null;
   try {
     mount = ctx.ui.mount("chat_actions");
@@ -607,11 +628,12 @@ function setup(ctx) {
     extras.setSubtitle(active ? `Grimoire · tap for ${PACE_LABELS[nextPace(view.pace)].name}` : "Grimoire is off in this chat");
     extras.setEnabled(active);
   }
-  async function refresh() {
+  async function refresh(forced = false) {
     if (destroyed)
       return;
     if (refreshing) {
       again = true;
+      againForced ||= forced;
       return refreshing;
     }
     refreshing = (async () => {
@@ -625,17 +647,21 @@ function setup(ctx) {
           polling = undefined;
         }
         tab.setBadge(running ? "…" : null);
-        if (!editing)
-          render();
-        else
+        const changed = page + JSON.stringify(snapshot) !== drawn;
+        if (editing || !forced && (!changed || busyHere())) {
+          pendingDraw ||= changed;
           updatePaceButton();
+        } else
+          render();
       } catch (error) {
         notify(error instanceof Error ? error.message : String(error), "error");
       } finally {
         refreshing = null;
         if (again && !destroyed) {
+          const f = againForced;
           again = false;
-          refresh();
+          againForced = false;
+          refresh(f);
         }
       }
     })();
@@ -643,14 +669,14 @@ function setup(ctx) {
   }
   teardown.push(tab.onActivate(() => void refresh()), ctx.events.on("CHAT_CHANGED", () => {
     editing = false;
-    refresh();
+    refresh(true);
   }), ctx.events.on("CHAT_SWITCHED", () => {
     editing = false;
-    refresh();
+    refresh(true);
   }));
   render();
   ctx.ready();
-  refresh();
+  refresh(true);
   return () => {
     if (destroyed)
       return;

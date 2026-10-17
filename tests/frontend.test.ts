@@ -40,7 +40,7 @@ function harness(chat: Partial<NonNullable<Snapshot['chat']>> | null = {}, setti
   } as unknown as SpindleFrontendContext;
   cleanups.push(setup(ctx));
   const button = (text: string) => Array.from(root.querySelectorAll('button')).find(b => b.textContent === text) as unknown as HTMLButtonElement | undefined;
-  return { root, bar, state, requests, button, extras, window };
+  return { root, bar, state, requests, button, extras, window, changed: () => receive({ type: 'grimoire:changed' }) };
 }
 
 describe('the panel', () => {
@@ -130,6 +130,39 @@ describe('the quick check settings', () => {
   test('the chat page says when the quick check last ran', async () => {
     const h = harness({ quick: { at: Date.now() - 120_000, ok: false, error: 'The decision model took too long to answer.' } }, { quick: { enabled: true, connectionId: '', model: '' } }); await tick();
     expect(h.root.textContent).toContain('The last quick check didn’t run: The decision model took too long to answer.');
+  });
+});
+
+describe('background updates', () => {
+  test('a refresh that changes nothing leaves the panel alone', async () => {
+    const h = harness(); await tick();
+    const before = h.button('Check now');
+    h.changed(); await tick();
+    expect(h.button('Check now')).toBe(before);
+  });
+  test('a refresh that changes something keeps the scroll position', async () => {
+    const h = harness(); await tick();
+    const scroller = h.root as unknown as HTMLElement; scroller.scrollTop = 420;
+    h.state.chat!.repliesSinceCheck = 5; h.changed(); await tick();
+    expect(h.root.textContent).toContain('5 replies since the last update');
+    expect(scroller.scrollTop).toBe(420);
+  });
+  test('settings being edited are never redrawn by a background update', async () => {
+    const h = harness(); await tick();
+    Array.from(h.root.querySelectorAll('button')).find(b => b.textContent === 'Settings')!.click(); await tick();
+    const every = h.root.querySelector('input[type=number]') as unknown as HTMLInputElement; every.value = '12';
+    h.state.chat!.repliesSinceCheck = 6; h.changed(); await tick();
+    expect((h.root.querySelector('input[type=number]') as unknown as HTMLInputElement).value).toBe('12');
+    h.button('Save settings')!.click(); await tick();
+    expect(h.requests.find(r => r.action === 'settings')!.input.settings.every).toBe(12);
+  });
+  test('typing in the chat page is not interrupted either, and the update lands afterwards', async () => {
+    const h = harness(); await tick();
+    const amount = h.root.querySelector('input[type=number]') as unknown as HTMLInputElement; amount.focus(); amount.value = '4';
+    h.state.chat!.repliesSinceCheck = 7; h.changed(); await tick();
+    expect(h.root.querySelector('input[type=number]') as unknown).toBe(amount);
+    amount.blur(); await tick();
+    expect(h.root.textContent).toContain('7 replies since the last update');
   });
 });
 

@@ -323,3 +323,22 @@ describe('quick check answers', () => {
     expect(kept.at(-1).reason).toBe('Quick 19');
   });
 });
+
+describe('finding a tracker without a model', () => {
+  const { guessRecipe } = require('../src/tracker');
+  const sola = (time: string, place: string, day: number) => `<scene_header sky="day" location="${place}" time="${time}" />\n\nThe crowd roars. Time: is relative, she says.\n<sola_hud>\n<date>\nDay: Day ${day}\nTime: Morning (${time})\n</date>\n<char_matrix>\nLocation: ${place} · booth\n</char_matrix>\n</sola_hud>`;
+  test('reads attributes first, then labeled lines inside their tag', () => {
+    const recipe = guessRecipe([sola('11:20 AM', 'Artist Alley', 1), sola('11:05 AM', 'Hall H', 1)]);
+    expect(recipe.fields.map((f: any) => [f.name, f.source.kind, f.source.tag ?? f.source.region?.tag])).toEqual([
+      ['date', 'line', 'date'], ['time', 'attribute', 'scene_header'], ['location', 'attribute', 'scene_header'],
+    ]);
+    const checks = checkRecipe(recipe, [sola('2:00 PM', 'Hall H', 2)], {});
+    expect(readTracker(recipe, checks, [sola('2:00 PM', 'Hall H', 2)], {})).toEqual({ date: 'Day 2', time: '2:00 PM', location: 'Hall H' });
+  });
+  test('labeled lines work too, and a one-off line in prose is not a tracker', () => {
+    const block = (t: string) => `Prose.\n\n**Time:** ${t}\n**Location:** The docks`;
+    expect(guessRecipe([block('9:15 PM'), block('8:50 PM')]).fields.map((f: any) => f.name)).toEqual(['time', 'location']);
+    expect(guessRecipe(['She said: Time: never.', 'No tracker here.']).fields).toEqual([]);
+    expect(guessRecipe([]).fields).toEqual([]);
+  });
+});
