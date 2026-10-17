@@ -333,7 +333,7 @@ export class NotebookController {
     const input = {
       notebook: { ...base.notebook, clock: live.clock }, pace: state.pace, chat, trackerText: live.text, trackerValues: live.values, trackerChecks: live.state.checks, recipe: state.recipe,
       clockOwner: { day: live.sources.day, hour: live.sources.hour }, due: dueThreads(base.notebook, live.now).map(d => ({ thread: d.thread.id, step: d.step.id })),
-      skipHours: state.skipHours, reason, replies: learning ? this.trackerSamples(live.turns).slice(0, 2).map(r => r.slice(0, 20_000)) : [],
+      skipHours: state.skipHours, reason, preferences: state.preferences, replies: learning ? this.trackerSamples(live.turns).slice(0, 2).map(r => r.slice(0, 20_000)) : [],
     };
     this.track((async () => {
       try {

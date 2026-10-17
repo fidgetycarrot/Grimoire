@@ -75,6 +75,8 @@ describe('writing a notebook', () => {
     expect(sent.chat).toHaveLength(3);
     expect(sent.replies).toHaveLength(2);
     expect(m.calls[0].messages[0].content).toContain('Do not plan a twist');
+    // Pacing follows the chosen length, and threads are staggered.
+    expect(m.calls[0].messages[0].content).toContain('At most one thread (the scene\'s immediate problem) should come to a head within the first story day');
     const view = (await c.view('chat-1'))!;
     expect(view).toMatchObject({ enabled: true, hasNotebook: true, behind: false, needsCheck: '', job: { status: 'complete' } });
     expect(view.checks.map(x => x.status)).toEqual(['verified', 'verified', 'verified']);
@@ -200,6 +202,8 @@ describe('check-ups', () => {
     const checkups = m.calls.filter(x => x.task === 'grimoire-checkup-v1');
     expect(checkups).toHaveLength(1);
     expect(checkups[0].input.reason).toBe('3 replies since the last update');
+    expect(checkups[0].input.preferences.length).toBe('short');
+    expect(checkups[0].messages[0].content).toContain('Story length chosen by the player: short');
     expect(checkups[0].input.clockOwner).toEqual({ day: 'tracker', hour: 'tracker' });
     expect(checkups[0].input.trackerText).toContain('Location: The ferry');
     const view = (await c.view('chat-1'))!;

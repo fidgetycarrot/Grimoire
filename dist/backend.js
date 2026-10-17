@@ -625,8 +625,10 @@ var CRAFT = [
   "2. Decide what is really going on: causes and motives before the chat began. Every thread and beat must follow from these, so the narrator never has to invent reasons on the spot.",
   "3. Give each important person a want and a current plan. They act on it offscreen too.",
   "4. Plan a small supporting cast (about two to four people beyond the card's character) so the world is not just the main character. They have their own lives and are met when they fit.",
-  "5. Threads are open problems or opportunities. Each has a speed (urgent: minutes to hours; steady: hours to days; slow: days to weeks) and two to five steps toward its consequence. Most steps are signs the player could notice; only the last is the consequence itself. afterHours is story time after the previous step (or the thread's start) before the step becomes due.",
-  "6. Beats are possible moments, not a script. Each says what it sets up or pays off and what must be true first.",
+  "5. Threads are open problems or opportunities, one problem each: an unrelated subplot is its own thread. Each has a speed (urgent: minutes to hours; steady: a day to several days; slow: a week or more) and two to five steps toward its consequence. Most steps are signs the player could notice; only the last is the consequence itself. afterHours is story time after the previous step (or the thread's start) before the step becomes due.",
+  "5b. Pacing is the shape of the whole story, not just the next scene. Stagger the threads so they come to a head at different times, with room between them, and fit the story length: short, the threads can resolve within a few story days; medium, spread them over a week or two of story time; long, over weeks or more. At most one thread (the scene's immediate problem) should come to a head within the first story day; the others begin with small signs and build. Mix speeds: usually no more than one urgent thread, and for medium or long stories at least one slow one. If the card fixes an event at a certain time (a show tonight, a deadline), use it, but let only the threads that truly depend on it peak there.",
+  "6. Beats are possible moments, not a script. Each says what it sets up or pays off and what must be true first. Most should be low intensity; plan no more than two high-intensity moments at a time, so big moments stay big.",
+  "6b. Prefer causes people chose over coincidence. If two threads connect, it should be because someone wanted something, not luck. One coincidence to start a story is fine; more feel contrived.",
   "7. The player character belongs to the player. Never plan their decisions, words, or feelings; plan the world around them.",
   '8. Keep secrets out of "hint" fields: those are shown to the narrator. Secrets go in "hiddenTruth" and "why".',
   "9. Ordinary details may stay ordinary. A few well-tied threads beat many loose ones: about two to four open threads."
@@ -665,7 +667,7 @@ Rules for the update:
 - Steps: mark "shown" when the player saw or heard the sign in the chat, "offscreen" when it happened where the player could not see, "skipped" when it no longer applies. A step that is merely due has not happened. Never mark shown something the chat does not show.
 - Keep every person and thread. Mark people "gone" and close threads with a closedReason instead of removing them. Something that happened cannot un-happen.
 - People invented in the chat: add them only if they matter (they act, recur, or tie into a thread). Mark people met once the player has met them.
-- Revise future beats and plans when the player's choices change what makes sense. Change how the story gets somewhere, not why, unless the player has made the old why impossible. Do not force the player back onto an old plan.
+- Revise future beats and plans when the player's choices change what makes sense. Keep the pacing rules below: if waiting steps are packed too tightly for the story's length (several threads peaking on the same night, steady steps hours apart), spread them out by raising afterHours on waiting steps. Story length chosen by the player: ${input.preferences.length}. Change how the story gets somewhere, not why, unless the player has made the old why impossible. Do not force the player back onto an old plan.
 - Add threads the player started. Tie useful invented details to threads or people. Some presets add panels to each reply (scene notes, character thoughts, "seeds"): what they say happened in the scene happened, but their guesses and seeds are the narrator's inventions. Fit them to the notebook's truth where they can; never let them overwrite it. Keep the notebook compact: merge old events, drop beats that no longer fit (mark them dropped).
 - Clock: ${input.clockOwner.day === "tracker" && input.clockOwner.hour === "tracker" ? "the tracker owns the time; copy its current day and hour." : `set the story time as of the last message. The tracker owns: ${[input.clockOwner.day === "tracker" ? "the day" : "", input.clockOwner.hour === "tracker" ? "the hour" : ""].filter(Boolean).join(" and ") || "nothing"}; you set the rest.`} Time only moves forward. Do not count the same time twice.
 - Rhythm: how the story feels right now (peak during a big moment, aftermath right after one, stalled if nothing has changed for a while).
@@ -1186,7 +1188,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.2.3";
+var VERSION = "0.2.4";
 var MAX_VERSIONS = 16;
 var DEFAULT_SETTINGS = { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto", quick: { enabled: false, connectionId: "", model: "" } };
 var DEFAULT_PREFERENCES = { length: "medium", tone: "balanced", twist: true };
@@ -1622,6 +1624,7 @@ class NotebookController {
       due: dueThreads(base.notebook, live.now).map((d) => ({ thread: d.thread.id, step: d.step.id })),
       skipHours: state.skipHours,
       reason,
+      preferences: state.preferences,
       replies: learning ? this.trackerSamples(live.turns).slice(0, 2).map((r) => r.slice(0, 20000)) : []
     };
     this.track((async () => {
