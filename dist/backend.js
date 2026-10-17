@@ -288,6 +288,17 @@ async function askJson(ask, messages, check, signal) {
 // src/notebook.ts
 var LIMITS = Object.freeze({ people: 24, threads: 12, steps: 6, beats: 16, events: 40, truths: 12, text: 600, short: 160 });
 var ID = /^[a-z0-9][a-z0-9-]{0,40}$/;
+var count = (v) => typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 1e7 ? v : undefined;
+var moment = (now) => typeof now === "number" ? { hours: now } : now;
+var WAITS = {
+  short: { urgent: 2, steady: 8, slow: 20 },
+  medium: { urgent: 4, steady: 15, slow: 40 },
+  long: { urgent: 6, steady: 30, slow: 80 }
+};
+function waitsFor(setting, pace) {
+  const base = WAITS[setting] ?? WAITS.medium, f = pace === "fast" ? 0.5 : 1;
+  return { urgent: Math.max(1, Math.ceil(base.urgent * f)), steady: Math.max(1, Math.ceil(base.steady * f)), slow: Math.max(1, Math.ceil(base.slow * f)) };
+}
 var record2 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
 
 class NotebookError extends Error {
@@ -387,7 +398,8 @@ function validateNotebook(value) {
         sign: text(s.sign, `${p}.sign`),
         afterHours: after,
         status: choice(s.status, ["waiting", "shown", "offscreen", "skipped"], `${p}.status`, "waiting"),
-        ...typeof at === "number" && Number.isFinite(at) ? { at } : {}
+        ...typeof at === "number" && Number.isFinite(at) ? { at } : {},
+        ...count(s.atReply) !== undefined ? { atReply: count(s.atReply) } : {}
       };
     }), `${path}.steps`);
     const peopleIds = list(t.people, `${path}.people`, 8).map((x, j) => id(x, `${path}.people[${j}]`)).filter((x) => personIds.has(x));
@@ -403,7 +415,8 @@ function validateNotebook(value) {
       ifFollowed: text(t.ifFollowed, `${path}.ifFollowed`),
       ifIgnored: text(t.ifIgnored, `${path}.ifIgnored`),
       steps,
-      ...typeof t.startAt === "number" && Number.isFinite(t.startAt) ? { startAt: t.startAt } : {}
+      ...typeof t.startAt === "number" && Number.isFinite(t.startAt) ? { startAt: t.startAt } : {},
+      ...count(t.startReply) !== undefined ? { startReply: count(t.startReply) } : {}
     };
   }), "threads");
   const threadIds = new Set(threads.map((t) => t.id));
@@ -461,9 +474,9 @@ function mergeRevision(previous, revised, now) {
   const fresh = withoutTimes(revised);
   return stamp({ ...fresh, threads: fresh.threads.map((thread) => {
     const old = previous.threads.find((t) => t.id === thread.id);
-    return { ...thread, ...old?.startAt !== undefined ? { startAt: old.startAt } : {}, steps: thread.steps.map((step) => {
+    return { ...thread, ...old?.startAt !== undefined ? { startAt: old.startAt } : {}, ...old?.startReply !== undefined ? { startReply: old.startReply } : {}, steps: thread.steps.map((step) => {
       const before = old?.steps.find((s) => s.id === step.id);
-      return before?.at !== undefined ? { ...step, at: before.at } : step;
+      return { ...step, ...before?.at !== undefined ? { at: before.at } : {}, ...before?.atReply !== undefined ? { atReply: before.atReply } : {} };
     }) };
   }) }, now);
 }
@@ -471,20 +484,29 @@ function keepTimes(previous, edited, now) {
   const fresh = withoutTimes(edited);
   return stamp({ ...fresh, threads: fresh.threads.map((thread) => {
     const old = previous.threads.find((t) => t.id === thread.id);
-    return { ...thread, ...old?.startAt !== undefined ? { startAt: old.startAt } : {}, steps: thread.steps.map((step) => {
-      const at = old?.steps.find((s) => s.id === step.id)?.at;
-      return at !== undefined && step.status !== "waiting" ? { ...step, at } : step;
+    return { ...thread, ...old?.startAt !== undefined ? { startAt: old.startAt } : {}, ...old?.startReply !== undefined ? { startReply: old.startReply } : {}, steps: thread.steps.map((step) => {
+      const before = old?.steps.find((s) => s.id === step.id);
+      return step.status === "waiting" ? step : { ...step, ...before?.at !== undefined ? { at: before.at } : {}, ...before?.atReply !== undefined ? { atReply: before.atReply } : {} };
     }) };
   }) }, now);
 }
 function withoutTimes(notebook) {
-  return { ...notebook, threads: notebook.threads.map(({ startAt: _start, ...thread }) => ({ ...thread, steps: thread.steps.map(({ at: _at, ...step }) => step) })) };
+  return { ...notebook, threads: notebook.threads.map(({ startAt: _start, startReply: _reply, ...thread }) => ({ ...thread, steps: thread.steps.map(({ at: _at, atReply: _atReply, ...step }) => step) })) };
 }
 function stamp(notebook, now) {
+  const m = moment(now), reply = m.reply;
   return { ...notebook, threads: notebook.threads.map((thread) => ({
     ...thread,
-    startAt: thread.startAt ?? now,
-    steps: thread.steps.map((step) => step.status !== "waiting" && step.at === undefined ? { ...step, at: now } : step)
+    startAt: thread.startAt ?? m.hours,
+    ...thread.startReply === undefined && reply !== undefined ? { startReply: reply } : {},
+    steps: thread.steps.map((step) => step.status === "waiting" ? step : { ...step, at: step.at ?? m.hours, ...step.atReply === undefined && reply !== undefined ? { atReply: reply } : {} })
+  })) };
+}
+function fillReplies(notebook, reply) {
+  return { ...notebook, threads: notebook.threads.map((thread) => ({
+    ...thread,
+    startReply: thread.startReply ?? reply,
+    steps: thread.steps.map((step) => step.status === "waiting" || step.atReply !== undefined ? step : { ...step, atReply: reply })
   })) };
 }
 function nextStep(thread, now) {
@@ -493,10 +515,13 @@ function nextStep(thread, now) {
   const index = thread.steps.findIndex((step) => step.status === "waiting");
   if (index < 0)
     return null;
-  const before = thread.steps.slice(0, index).reverse().find((step) => step.at !== undefined);
-  const base = Math.min(before?.at ?? thread.startAt ?? now, now);
+  const m = moment(now), earlier = thread.steps.slice(0, index).reverse();
+  const base = Math.min(earlier.find((step) => step.at !== undefined)?.at ?? thread.startAt ?? m.hours, m.hours);
   const step = thread.steps[index];
-  return { step, due: now >= base + step.afterHours };
+  const byTime = m.hours >= base + step.afterHours;
+  const fromReply = earlier.find((step) => step.atReply !== undefined)?.atReply ?? thread.startReply;
+  const byReplies = m.reply !== undefined && m.waits !== undefined && fromReply !== undefined && m.reply - fromReply >= m.waits[thread.speed];
+  return { step, due: byTime || byReplies };
 }
 function dueThreads(notebook, now) {
   return notebook.threads.flatMap((thread) => {
@@ -626,7 +651,7 @@ var CRAFT = [
   "3. Give each important person a want and a current plan. They act on it offscreen too.",
   "4. Plan a small supporting cast (about two to four people beyond the card's character) so the world is not just the main character. They have their own lives and are met when they fit.",
   "5. Threads are open problems or opportunities, one problem each: an unrelated subplot is its own thread. Each has a speed (urgent: minutes to hours; steady: a day to several days; slow: a week or more) and two to five steps toward its consequence. Most steps are signs the player could notice; only the last is the consequence itself. afterHours is story time after the previous step (or the thread's start) before the step becomes due.",
-  "5b. Pacing is the shape of the whole story, not just the next scene. Stagger the threads so they come to a head at different times, with room between them, and fit the story length: short, the threads can resolve within a few story days; medium, spread them over a week or two of story time; long, over weeks or more. At most one thread (the scene's immediate problem) should come to a head within the first story day; the others begin with small signs and build. Mix speeds: usually no more than one urgent thread, and for medium or long stories at least one slow one. If the card fixes an event at a certain time (a show tonight, a deadline), use it, but let only the threads that truly depend on it peak there.",
+  "5b. The story is open-ended: plan its first arc (the story question and two to four threads); later check-ups open new arcs as these resolve. Pacing is the shape of the arc, not just the next scene. Stagger the threads so they come to a head at different times, with room between them. Only the scene's immediate problem should come to a head soon; the others begin with small signs and build. Mix speeds: usually no more than one urgent thread, and at least one slow one. Keep story time realistic: Grimoire also moves a thread on after a number of replies, so never squeeze story time to keep things moving. If the card fixes an event at a certain time (a show tonight, a deadline), use it, but let only the threads that truly depend on it peak there.",
   "6. Beats are possible moments, not a script. Each says what it sets up or pays off and what must be true first. Most should be low intensity; plan no more than two high-intensity moments at a time, so big moments stay big.",
   "6b. Prefer causes people chose over coincidence. If two threads connect, it should be because someone wanted something, not luck. One coincidence to start a story is fine; more feel contrived.",
   "7. The player character belongs to the player. Never plan their decisions, words, or feelings; plan the world around them.",
@@ -649,7 +674,7 @@ function creationMessages(material, preferences) {
 You write a private story notebook for an ongoing roleplay chat. It gives the narrator a story of its own: where it is going, why, and how fast. The player must not see it.
 Return {"notebook": ${SHAPE}, "tracker": {"fields": [], "note": ""}}.
 ${CRAFT}
-Story length: ${preferences.length}. Tone: ${preferences.tone}. ${twist}
+Tone: ${preferences.tone}. ${twist}
 If the chat already has messages, start from what has happened: record it under events, mark people met, and set the clock to now. A long chat comes with "storySoFar", a record of everything before the messages in "chat"; treat it as part of the chat. Keep events compact: at most about 30 short lines, merging older ones. Threads and people the chat already started come first; plan new ones around them.
 
 Tracker: many presets make the narrator write a status block in each reply (time, place, who is present). Look at the sample replies and saved variables. For each of these fields that is reliably present, describe where it lives: "datetime" or "date" and "time" (the story date and time), "location", "present" (who is in the scene). Use only these methods:
@@ -667,7 +692,8 @@ Rules for the update:
 - Steps: mark "shown" when the player saw or heard the sign in the chat, "offscreen" when it happened where the player could not see, "skipped" when it no longer applies. A step that is merely due has not happened. Never mark shown something the chat does not show.
 - Keep every person and thread. Mark people "gone" and close threads with a closedReason instead of removing them. Something that happened cannot un-happen.
 - People invented in the chat: add them only if they matter (they act, recur, or tie into a thread). Mark people met once the player has met them.
-- Revise future beats and plans when the player's choices change what makes sense. Keep the pacing rules below: if waiting steps are packed too tightly for the story's length (several threads peaking on the same night, steady steps hours apart), spread them out by raising afterHours on waiting steps. Story length chosen by the player: ${input.preferences.length}. Change how the story gets somewhere, not why, unless the player has made the old why impossible. Do not force the player back onto an old plan.
+- Revise future beats and plans when the player's choices change what makes sense. Keep the pacing rules below: if waiting steps are packed too tightly (several threads peaking on the same night, steady steps hours apart), spread them out by raising afterHours on waiting steps. Change how the story gets somewhere, not why, unless the player has made the old why impossible. Do not force the player back onto an old plan.
+- When most threads have closed or the story question has been answered, open the next arc: a new story question if needed, and new threads that grow from what has happened and from what people now want. The story goes on as long as the player plays.
 - Add threads the player started. Tie useful invented details to threads or people. Some presets add panels to each reply (scene notes, character thoughts, "seeds"): what they say happened in the scene happened, but their guesses and seeds are the narrator's inventions. Fit them to the notebook's truth where they can; never let them overwrite it. Keep the notebook compact: merge old events, drop beats that no longer fit (mark them dropped).
 - Clock: ${input.clockOwner.day === "tracker" && input.clockOwner.hour === "tracker" ? "the tracker owns the time; copy its current day and hour." : `set the story time as of the last message. The tracker owns: ${[input.clockOwner.day === "tracker" ? "the day" : "", input.clockOwner.hour === "tracker" ? "the hour" : ""].filter(Boolean).join(" and ") || "nothing"}; you set the rest.`} Time only moves forward. Do not count the same time twice.
 - Rhythm: how the story feels right now (peak during a big moment, aftermath right after one, stalled if nothing has changed for a while).
@@ -912,6 +938,7 @@ function quickState(notebook, clock, playerMessage, latestReply) {
 }
 var yes = (answer) => answer?.type === "noul" && answer.noul >= QUICK.yes;
 function applyQuick(current, plan, result, now) {
+  const hours = typeof now === "number" ? now : now.hours, reply = typeof now === "number" ? undefined : now.reply;
   const answers = result.answers;
   const notebook = structuredClone(current);
   let marked = 0;
@@ -922,7 +949,9 @@ function applyQuick(current, plan, result, now) {
       const step = notebook.threads.find((t) => t.id === mark.thread)?.steps.find((s) => s.id === mark.step);
       if (step?.status === "waiting") {
         step.status = "shown";
-        step.at = now;
+        step.at = hours;
+        if (reply !== undefined)
+          step.atReply = reply;
         marked++;
       }
     } else {
@@ -1188,17 +1217,17 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.2.4";
+var VERSION = "0.3.0";
 var MAX_VERSIONS = 16;
-var DEFAULT_SETTINGS = { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto", quick: { enabled: false, connectionId: "", model: "" } };
-var DEFAULT_PREFERENCES = { length: "medium", tone: "balanced", twist: true };
+var DEFAULT_SETTINGS = { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto", quick: { enabled: false, connectionId: "", model: "" }, wait: "medium" };
+var DEFAULT_PREFERENCES = { tone: "balanced", twist: true };
 
 // src/controller.ts
 var record5 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
 var PACES = ["auto", "quiet", "fast"];
 function validPreferences(value) {
   const v = record5(value);
-  return { length: ["short", "medium", "long"].includes(v.length) ? v.length : "medium", tone: ["light", "balanced", "dark"].includes(v.tone) ? v.tone : "balanced", twist: v.twist !== false };
+  return { tone: ["light", "balanced", "dark"].includes(v.tone) ? v.tone : "balanced", twist: v.twist !== false };
 }
 function prune(versions) {
   if (versions.length <= MAX_VERSIONS)
@@ -1222,7 +1251,8 @@ function validSettings(value) {
     reasoningMode: ["inherit", "off", "low"].includes(v.reasoningMode) ? v.reasoningMode : "inherit",
     every: Number.isInteger(every) && every >= 2 && every <= 50 ? every : DEFAULT_SETTINGS.every,
     placement: v.placement === "macro" ? "macro" : "auto",
-    quick: { enabled: quick.enabled === true, connectionId: plainSetting(quick.connectionId, 120), model: plainSetting(quick.model, 200) }
+    quick: { enabled: quick.enabled === true, connectionId: plainSetting(quick.connectionId, 120), model: plainSetting(quick.model, 200) },
+    wait: v.wait === "short" || v.wait === "long" ? v.wait : "medium"
   };
 }
 
@@ -1317,6 +1347,7 @@ class NotebookController {
     if (index < 0)
       index = 0;
     const version = state.versions[index];
+    version.notebook = fillReplies(version.notebook, turns.slice(0, version.covered.length).filter((t) => t.role === "assistant").length);
     const replies = turns.filter((t) => t.role === "assistant").map((t) => t.content).reverse();
     let variables = {};
     if (state.recipe.fields.some((f) => f.source.kind === "variable")) {
@@ -1329,7 +1360,9 @@ class NotebookController {
     const types = Object.fromEntries(state.recipe.fields.map((f) => [f.name, f.type]));
     const { clock, sources } = liveClock(version.notebook.clock, values, types);
     state.checks = checks;
-    return { state, turns, prints, index, matched, version, replies, values, types, clock, sources, now: absoluteHours(clock), text: replies[0] ? trackerText(state.recipe, replies[0]) : "" };
+    const now = absoluteHours(clock), settings = await this.settings();
+    const moment = { hours: now, reply: replies.length, waits: waitsFor(settings.wait, state.pace) };
+    return { state, turns, prints, index, matched, version, replies, values, types, clock, sources, now, moment, text: replies[0] ? trackerText(state.recipe, replies[0]) : "" };
   }
   fullVersion(live) {
     for (let i = live.index;i >= 0; i--) {
@@ -1387,7 +1420,8 @@ class NotebookController {
         notebook,
         behind: !!live && live.index !== state.versions.length - 1,
         earlierParts,
-        quick: state.quick
+        quick: state.quick,
+        dueIds: live ? dueThreads(live.version.notebook, live.moment).map((d) => d.thread.id) : []
       };
     });
   }
@@ -1551,7 +1585,7 @@ class NotebookController {
             const checks = checkRecipe(learned, replies, variables), values = readTracker(learned, checks, replies, variables);
             const types = Object.fromEntries(learned.fields.map((f) => [f.name, f.type]));
             const { clock } = liveClock(result.notebook.clock, values, types);
-            const notebook = stamp({ ...result.notebook, clock }, absoluteHours(clock));
+            const notebook = stamp({ ...result.notebook, clock }, { hours: absoluteHours(clock), reply: conversation(messages).filter((t) => t.role === "assistant").length });
             const covered = await fingerprints(conversation(messages));
             current.versions = [{ notebook, covered, at: Date.now(), reason: "Notebook written", ...values.location ? { location: values.location } : {} }];
             current.checks = checks;
@@ -1621,7 +1655,7 @@ class NotebookController {
       trackerChecks: live.state.checks,
       recipe: state.recipe,
       clockOwner: { day: live.sources.day, hour: live.sources.hour },
-      due: dueThreads(base.notebook, live.now).map((d) => ({ thread: d.thread.id, step: d.step.id })),
+      due: dueThreads(base.notebook, live.moment).map((d) => ({ thread: d.thread.id, step: d.step.id })),
       skipHours: state.skipHours,
       reason,
       preferences: state.preferences,
@@ -1632,7 +1666,7 @@ class NotebookController {
         const result = await askJson(ask, checkupMessages(input), (value) => {
           const output = record5(value);
           const revised = validateNotebook(tidyNotebook(output.notebook, base.notebook));
-          let merged = mergeRevision(base.notebook, revised, live.now);
+          let merged = mergeRevision(base.notebook, revised, live.moment);
           if (absoluteHours(liveClock(merged.clock, live.values, live.types).clock) < absoluteHours(live.clock))
             merged = { ...merged, clock: live.clock };
           return { notebook: merged, recipe: output.tracker ? validateRecipe(output.tracker).recipe : null };
@@ -1722,7 +1756,7 @@ class NotebookController {
       const live = await this.live(state, await this.api.chat.getMessages(chatId));
       if (!live)
         throw new Error("Write a notebook for this chat first.");
-      const edited = keepTimes(live.version.notebook, validateNotebook(value), live.now);
+      const edited = keepTimes(live.version.notebook, validateNotebook(value), live.moment);
       state.versions.push({ ...live.version, notebook: edited, at: Date.now(), reason: "Edited by you" });
       state.versions = prune(state.versions);
       await this.save(state);
@@ -1751,7 +1785,7 @@ class NotebookController {
       const recent = live.turns.slice(-2).map((t) => t.content).join(`
 `);
       const clockMayLag = (live.sources.day !== "tracker" || live.sources.hour !== "tracker") && this.repliesSince(live) > 0;
-      return buildNote({ notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.now, recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag });
+      return buildNote({ notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag });
     });
   }
   async macro(name, chatId) {
@@ -1828,7 +1862,7 @@ class NotebookController {
       return;
     }
     const findTracker = !state.recipe.fields.length && !state.trackerTried && since >= 1;
-    const urgent = !(settings.quick.enabled && this.decisionsReady()) && since >= 2 && full.reason !== "Checking on an urgent development" && dueThreads(live.version.notebook, live.now).some((d) => d.thread.speed === "urgent");
+    const urgent = !(settings.quick.enabled && this.decisionsReady()) && since >= 2 && full.reason !== "Checking on an urgent development" && dueThreads(live.version.notebook, live.moment).some((d) => d.thread.speed === "urgent");
     const reason = state.needsCheck ? state.needsCheck.startsWith("The chat changed") ? "Caught up after the chat changed" : state.needsCheck : unmatched ? "The chat changed before the notebook was written" : extra ? extra : moved ? "The scene moved" : jumped ? "Time moved on" : findTracker ? "Looking for your preset\u2019s tracker" : urgent ? "Checking on an urgent development" : since >= settings.every ? `${since} replies since the last update` : "";
     if (findTracker)
       state.trackerTried = true;
@@ -1851,7 +1885,7 @@ class NotebookController {
   runQuick(chatId, live, settings) {
     this.quickRunning.add(chatId);
     const task = (async () => {
-      const plan = quickQuestions(live.version.notebook, live.now);
+      const plan = quickQuestions(live.version.notebook, live.moment);
       const reply = live.turns.at(-1), player = [...live.turns].reverse().find((t) => t.role === "user");
       let result = null, error = "";
       try {
@@ -1876,7 +1910,7 @@ class NotebookController {
         state.quick = { at: Date.now(), ok: !!result, error };
         let extra = "";
         if (result && covers(live.prints, now.prints)) {
-          const outcome = applyQuick(now.version.notebook, plan, result, now.now);
+          const outcome = applyQuick(now.version.notebook, plan, result, now.moment);
           if (outcome.changed) {
             state.versions.push({ notebook: outcome.notebook, covered: live.prints, at: Date.now(), reason: "Quick check", quick: true, ...now.values.location ? { location: now.values.location } : {} });
             state.versions = prune(state.versions);

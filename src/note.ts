@@ -1,5 +1,5 @@
 import { describeClock, describeDuration, readDay, readTime, type StoryClock } from './clock';
-import { dueThreads, type Notebook, type Pace, type Person } from './notebook';
+import { dueThreads, type Moment, type Notebook, type Pace, type Person } from './notebook';
 import type { FieldType } from './tracker';
 
 export interface ClockSources { day: 'tracker' | 'notebook'; hour: 'tracker' | 'notebook' | 'unknown'; exact: boolean }
@@ -50,7 +50,7 @@ const RHYTHM: Record<Notebook['rhythm'], string> = {
   stalled: 'Pace: things have been quiet for a while. Let an existing thread move, using one of the developments below.',
 };
 
-export interface NoteInput { notebook: Notebook; pace: Pace; clock: StoryClock; now: number; recent: string; trackerPresent?: string; skipHours?: number; /** True when the time comes from the last check-up, not from a tracker reading of the latest reply. */ clockMayLag?: boolean }
+export interface NoteInput { notebook: Notebook; pace: Pace; clock: StoryClock; now: number | Moment; recent: string; trackerPresent?: string; skipHours?: number; /** True when the time comes from the last check-up, not from a tracker reading of the latest reply. */ clockMayLag?: boolean }
 /**
  * The short private note added before a reply. Built by code from the
  * notebook; no model call. It carries reasons and narrator-safe hints, never

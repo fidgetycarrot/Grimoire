@@ -1,11 +1,11 @@
 import type { StoryClock } from './clock';
 import type { ClockSources } from './note';
-import type { Notebook, Pace, Preferences } from './notebook';
+import type { Notebook, Pace, Preferences, WaitSetting } from './notebook';
 import type { ReasoningMode } from './model';
 import type { FieldCheck, Recipe } from './tracker';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.2.4';
+export const VERSION = '0.3.0';
 export const MAX_VERSIONS = 16;
 
 /** One saved state of the notebook and the chat history it describes. */
@@ -28,9 +28,9 @@ export interface ChatState {
 }
 /** The quick check after each reply. An empty connection means the default decision connection; an empty model means the connection's model. */
 export interface QuickSettings { enabled: boolean; connectionId: string; model: string }
-export interface Settings { connectionId: string; maxOutputTokens: number; reasoningMode: ReasoningMode; every: number; placement: 'auto' | 'macro'; quick: QuickSettings }
-export const DEFAULT_SETTINGS: Settings = { connectionId: '', maxOutputTokens: 16000, reasoningMode: 'inherit', every: 8, placement: 'auto', quick: { enabled: false, connectionId: '', model: '' } };
-export const DEFAULT_PREFERENCES: Preferences = { length: 'medium', tone: 'balanced', twist: true };
+export interface Settings { connectionId: string; maxOutputTokens: number; reasoningMode: ReasoningMode; every: number; placement: 'auto' | 'macro'; quick: QuickSettings; /** The most replies a planned development waits, as a size. */ wait: WaitSetting }
+export const DEFAULT_SETTINGS: Settings = { connectionId: '', maxOutputTokens: 16000, reasoningMode: 'inherit', every: 8, placement: 'auto', quick: { enabled: false, connectionId: '', model: '' }, wait: 'medium' };
+export const DEFAULT_PREFERENCES: Preferences = { tone: 'balanced', twist: true };
 
 export interface ChatView {
   chatId: string; name: string; supported: boolean; reason: string;
@@ -42,6 +42,8 @@ export interface ChatView {
   /** Before a notebook exists: how many parts of a long chat are read first, one request each. */
   earlierParts: number;
   quick: ChatState['quick'];
+  /** Threads whose next step is due now, for the spoiler fold. */
+  dueIds: string[];
 }
 export interface Snapshot {
   version: string; permissions: string[]; connections: Array<{ id: string; name: string; model: string }>;

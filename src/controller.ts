@@ -3,7 +3,7 @@ import { absoluteHours, advanceClock, describeClock, durationHours, type StoryCl
 import { conversation, fingerprints, newestMatching, covers, planHistory, readable, type Piece, type Turn } from './history';
 import { askJson, askModel, ModelError, type Ask } from './model';
 import { buildNote, liveClock, paceLine, type ClockSources } from './note';
-import { dueThreads, keepTimes, mergeRevision, NotebookError, stamp, validateNotebook, withoutTimes, type Pace, type Preferences } from './notebook';
+import { dueThreads, fillReplies, keepTimes, mergeRevision, NotebookError, stamp, validateNotebook, waitsFor, withoutTimes, type Moment, type Pace, type Preferences } from './notebook';
 import { checkupMessages, creationMessages, digestMessages, type Material } from './prompts';
 import { plainBlock, tidyNotebook } from './tidy';
 import { applyQuick, quickError, quickQuestions, quickState } from './quick';
@@ -14,11 +14,11 @@ import { DEFAULT_PREFERENCES, DEFAULT_SETTINGS, MAX_VERSIONS, VERSION, type Chat
 const record = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
 const PACES: Pace[] = ['auto', 'quiet', 'fast'];
 type Messages = Awaited<ReturnType<SpindleAPI['chat']['getMessages']>>;
-interface Live { state: ChatState; turns: Turn[]; prints: string[]; index: number; /** False when no saved version fits the chat, so the oldest one stands in. */ matched: boolean; version: Version; replies: string[]; values: Record<string, string>; types: Record<string, FieldType>; clock: StoryClock; sources: ClockSources; now: number; text: string }
+interface Live { state: ChatState; turns: Turn[]; prints: string[]; index: number; /** False when no saved version fits the chat, so the oldest one stands in. */ matched: boolean; version: Version; replies: string[]; values: Record<string, string>; types: Record<string, FieldType>; clock: StoryClock; sources: ClockSources; now: number; /** Story hours, replies so far, and how long steps may wait. */ moment: Moment; text: string }
 
 function validPreferences(value: unknown): Preferences {
   const v = record(value);
-  return { length: ['short', 'medium', 'long'].includes(v.length as string) ? v.length as Preferences['length'] : 'medium', tone: ['light', 'balanced', 'dark'].includes(v.tone as string) ? v.tone as Preferences['tone'] : 'balanced', twist: v.twist !== false };
+  return { tone: ['light', 'balanced', 'dark'].includes(v.tone as string) ? v.tone as Preferences['tone'] : 'balanced', twist: v.twist !== false };
 }
 /**
  * Keep the base version, the newest full update, and the most recent ones.
@@ -42,6 +42,7 @@ export function validSettings(value: unknown): Settings {
     every: Number.isInteger(every) && every >= 2 && every <= 50 ? every : DEFAULT_SETTINGS.every,
     placement: v.placement === 'macro' ? 'macro' : 'auto',
     quick: { enabled: quick.enabled === true, connectionId: plainSetting(quick.connectionId, 120), model: plainSetting(quick.model, 200) },
+    wait: v.wait === 'short' || v.wait === 'long' ? v.wait : 'medium',
   };
 }
 
@@ -114,6 +115,8 @@ export class NotebookController {
     const matched = index >= 0;
     if (index < 0) index = 0;
     const version = state.versions[index];
+    // Older notebooks have no reply counts: count from the reply the version was made at.
+    version.notebook = fillReplies(version.notebook, turns.slice(0, version.covered.length).filter(t => t.role === 'assistant').length);
     const replies = turns.filter(t => t.role === 'assistant').map(t => t.content).reverse();
     let variables: Record<string, string> = {};
     if (state.recipe.fields.some(f => f.source.kind === 'variable')) { try { variables = await this.api.variables.chat.list(state.chatId); } catch { /* unavailable */ } }
@@ -122,7 +125,9 @@ export class NotebookController {
     const types = Object.fromEntries(state.recipe.fields.map(f => [f.name, f.type])) as Record<string, FieldType>;
     const { clock, sources } = liveClock(version.notebook.clock, values, types);
     state.checks = checks;
-    return { state, turns, prints, index, matched, version, replies, values, types, clock, sources, now: absoluteHours(clock), text: replies[0] ? trackerText(state.recipe, replies[0]) : '' };
+    const now = absoluteHours(clock), settings = await this.settings();
+    const moment: Moment = { hours: now, reply: replies.length, waits: waitsFor(settings.wait, state.pace) };
+    return { state, turns, prints, index, matched, version, replies, values, types, clock, sources, now, moment, text: replies[0] ? trackerText(state.recipe, replies[0]) : '' };
   }
   /** The newest full update at or before the version in use. Quick checks keep the notebook current, but don't count as a check-up. */
   private fullVersion(live: Live): Version {
@@ -160,7 +165,7 @@ export class NotebookController {
         // Only code-made words reach the panel outside the spoiler fold; a model-written line could give something away.
         hasNotebook: !!notebook, summary: live ? `Last update: ${this.fullVersion(live).reason}` : '', clock: live?.clock ?? null, clockText: live ? describeClock(live.clock) : '', sources: live?.sources ?? null,
         checks: live ? state.checks : [], needsCheck: state.needsCheck || (live && !live.matched ? 'The chat changed before the notebook was written.' : ''),
-        job: state.job, updatedAt: state.updatedAt, repliesSinceCheck: live ? this.repliesSince(live) : 0, skipHours: state.skipHours, notebook, behind: !!live && live.index !== state.versions.length - 1, earlierParts, quick: state.quick,
+        job: state.job, updatedAt: state.updatedAt, repliesSinceCheck: live ? this.repliesSince(live) : 0, skipHours: state.skipHours, notebook, behind: !!live && live.index !== state.versions.length - 1, earlierParts, quick: state.quick, dueIds: live ? dueThreads(live.version.notebook, live.moment).map(d => d.thread.id) : [],
       };
     });
   }
@@ -276,7 +281,7 @@ export class NotebookController {
             const checks = checkRecipe(learned, replies, variables), values = readTracker(learned, checks, replies, variables);
             const types = Object.fromEntries(learned.fields.map(f => [f.name, f.type])) as Record<string, FieldType>;
             const { clock } = liveClock(result.notebook.clock, values, types);
-            const notebook = stamp({ ...result.notebook, clock }, absoluteHours(clock));
+            const notebook = stamp({ ...result.notebook, clock }, { hours: absoluteHours(clock), reply: conversation(messages).filter(t => t.role === 'assistant').length });
             // Covers only what the model actually read, so a reply that arrived meanwhile is picked up by the next check-up.
             const covered = await fingerprints(conversation(messages));
             current.versions = [{ notebook, covered, at: Date.now(), reason: 'Notebook written', ...(values.location ? { location: values.location } : {}) }];
@@ -332,7 +337,7 @@ export class NotebookController {
     const learning = !state.recipe.fields.length || live.state.checks.some(c => c.status === 'unavailable');
     const input = {
       notebook: { ...base.notebook, clock: live.clock }, pace: state.pace, chat, trackerText: live.text, trackerValues: live.values, trackerChecks: live.state.checks, recipe: state.recipe,
-      clockOwner: { day: live.sources.day, hour: live.sources.hour }, due: dueThreads(base.notebook, live.now).map(d => ({ thread: d.thread.id, step: d.step.id })),
+      clockOwner: { day: live.sources.day, hour: live.sources.hour }, due: dueThreads(base.notebook, live.moment).map(d => ({ thread: d.thread.id, step: d.step.id })),
       skipHours: state.skipHours, reason, preferences: state.preferences, replies: learning ? this.trackerSamples(live.turns).slice(0, 2).map(r => r.slice(0, 20_000)) : [],
     };
     this.track((async () => {
@@ -340,7 +345,7 @@ export class NotebookController {
         const result = await askJson(ask, checkupMessages(input), value => {
           const output = record(value);
           const revised = validateNotebook(tidyNotebook(output.notebook, base.notebook));
-          let merged = mergeRevision(base.notebook, revised, live.now);
+          let merged = mergeRevision(base.notebook, revised, live.moment);
           // Time only moves forward. A clock that went back keeps the time from before the check-up;
           // tracker-owned parts are read again below either way.
           if (absoluteHours(liveClock(merged.clock, live.values, live.types).clock) < absoluteHours(live.clock)) merged = { ...merged, clock: live.clock };
@@ -413,7 +418,7 @@ export class NotebookController {
       const live = await this.live(state, await this.api.chat.getMessages(chatId));
       if (!live) throw new Error('Write a notebook for this chat first.');
       // Your edits may remove things; only the recorded times are carried over.
-      const edited = keepTimes(live.version.notebook, validateNotebook(value), live.now);
+      const edited = keepTimes(live.version.notebook, validateNotebook(value), live.moment);
       state.versions.push({ ...live.version, notebook: edited, at: Date.now(), reason: 'Edited by you' });
       state.versions = prune(state.versions);
       await this.save(state);
@@ -433,7 +438,7 @@ export class NotebookController {
       if (!live) return '';
       const recent = live.turns.slice(-2).map(t => t.content).join('\n');
       const clockMayLag = (live.sources.day !== 'tracker' || live.sources.hour !== 'tracker') && this.repliesSince(live) > 0;
-      return buildNote({ notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.now, recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag });
+      return buildNote({ notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag });
     });
   }
   async macro(name: 'note' | 'clock' | 'pace', chatId: string | undefined): Promise<string> {
@@ -497,7 +502,7 @@ export class NotebookController {
     const findTracker = !state.recipe.fields.length && !state.trackerTried && since >= 1;
     // An urgent development was offered: see whether it happened before offering it again, once per stretch.
     // The quick check answers this itself, so it is only needed without one.
-    const urgent = !(settings.quick.enabled && this.decisionsReady()) && since >= 2 && full.reason !== 'Checking on an urgent development' && dueThreads(live.version.notebook, live.now).some(d => d.thread.speed === 'urgent');
+    const urgent = !(settings.quick.enabled && this.decisionsReady()) && since >= 2 && full.reason !== 'Checking on an urgent development' && dueThreads(live.version.notebook, live.moment).some(d => d.thread.speed === 'urgent');
     const reason = state.needsCheck ? (state.needsCheck.startsWith('The chat changed') ? 'Caught up after the chat changed' : state.needsCheck) : unmatched ? 'The chat changed before the notebook was written' : extra ? extra : moved ? 'The scene moved' : jumped ? 'Time moved on'
       : findTracker ? 'Looking for your preset’s tracker' : urgent ? 'Checking on an urgent development' : since >= settings.every ? `${since} replies since the last update` : '';
     if (findTracker) state.trackerTried = true;
@@ -519,7 +524,7 @@ export class NotebookController {
   private runQuick(chatId: string, live: Live, settings: Settings) {
     this.quickRunning.add(chatId);
     const task = (async () => {
-      const plan = quickQuestions(live.version.notebook, live.now);
+      const plan = quickQuestions(live.version.notebook, live.moment);
       const reply = live.turns.at(-1)!, player = [...live.turns].reverse().find(t => t.role === 'user');
       let result: DecisionResult | null = null, error = '';
       try {
@@ -539,7 +544,7 @@ export class NotebookController {
         let extra = '';
         // The reply it judged must still be in the chat. A swipe or edit meanwhile means the answers are about a reply that is gone.
         if (result && covers(live.prints, now.prints)) {
-          const outcome = applyQuick(now.version.notebook, plan, result, now.now);
+          const outcome = applyQuick(now.version.notebook, plan, result, now.moment);
           if (outcome.changed) {
             state.versions.push({ notebook: outcome.notebook, covered: live.prints, at: Date.now(), reason: 'Quick check', quick: true, ...(now.values.location ? { location: now.values.location } : {}) });
             state.versions = prune(state.versions);

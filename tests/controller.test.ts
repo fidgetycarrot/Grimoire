@@ -60,7 +60,7 @@ async function ready(h = host(), m = model({ create: created, checkup: input => 
   h.add('assistant', `Mira takes your coin.${tracker('Day 1, 18:20', 'The ferry')}`);
   await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 3 }, {});
   const c = new NotebookController(h.api, undefined, () => {}, m.ask);
-  await c.create('chat-1', { length: 'short', tone: 'balanced', twist: false });
+  await c.create('chat-1', { tone: 'balanced', twist: false });
   await c.waitForJobs();
   return { h, m, c };
 }
@@ -76,7 +76,8 @@ describe('writing a notebook', () => {
     expect(sent.replies).toHaveLength(2);
     expect(m.calls[0].messages[0].content).toContain('Do not plan a twist');
     // Pacing follows the chosen length, and threads are staggered.
-    expect(m.calls[0].messages[0].content).toContain('At most one thread (the scene\'s immediate problem) should come to a head within the first story day');
+    expect(m.calls[0].messages[0].content).toContain('The story is open-ended');
+    expect(m.calls[0].messages[0].content).not.toContain('Story length');
     const view = (await c.view('chat-1'))!;
     expect(view).toMatchObject({ enabled: true, hasNotebook: true, behind: false, needsCheck: '', job: { status: 'complete' } });
     expect(view.checks.map(x => x.status)).toEqual(['verified', 'verified', 'verified']);
@@ -202,8 +203,8 @@ describe('check-ups', () => {
     const checkups = m.calls.filter(x => x.task === 'grimoire-checkup-v1');
     expect(checkups).toHaveLength(1);
     expect(checkups[0].input.reason).toBe('3 replies since the last update');
-    expect(checkups[0].input.preferences.length).toBe('short');
-    expect(checkups[0].messages[0].content).toContain('Story length chosen by the player: short');
+    expect(checkups[0].input.preferences).toEqual({ tone: 'balanced', twist: false });
+    expect(checkups[0].messages[0].content).toContain('open the next arc');
     expect(checkups[0].input.clockOwner).toEqual({ day: 'tracker', hour: 'tracker' });
     expect(checkups[0].input.trackerText).toContain('Location: The ferry');
     const view = (await c.view('chat-1'))!;
@@ -460,6 +461,22 @@ describe('the quick check', () => {
     expect((await c.snapshot('chat-1')).decisions).toMatchObject({ available: false, reason: expect.stringContaining('Update Lumiverse') });
     // Without it, the old rule checks on the urgent development instead.
     expect(m.calls.filter(x => x.task === 'grimoire-checkup-v1').map(x => x.input.reason)).toEqual(['Checking on an urgent development']);
+  });
+});
+
+describe('long scenes', () => {
+  test('a planned development comes due after enough replies, even if story time barely moves', async () => {
+    const h = host(); h.add('assistant', `The ferry bell rings.${tracker('Day 1, 18:00', 'The ferry')}`);
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 50, wait: 'short' }, {});
+    const slowPlan = () => { const n: any = sampleNotebook(); n.threads[0].steps[0].afterHours = 48; n.threads[1].status = 'paused'; return { notebook: n, tracker: recipe }; };
+    const c = new NotebookController(h.api, undefined, () => {}, model({ create: slowPlan }).ask);
+    await c.create('chat-1', {}); await c.waitForJobs();
+    for (let i = 0; i < 7; i++) { h.add('user', `Talk ${i}.`); h.add('assistant', `They talk.${tracker('Day 1, 18:0' + i, 'The ferry')}`); }
+    expect(await c.noteFor('chat-1')).not.toContain('A shout from the manor');
+    expect((await c.view('chat-1'))!.dueIds).toEqual([]);
+    h.add('user', 'Talk more.'); h.add('assistant', `They talk.${tracker('Day 1, 18:09', 'The ferry')}`);
+    expect(await c.noteFor('chat-1')).toContain('A shout from the manor');
+    expect((await c.view('chat-1'))!.dueIds).toEqual(['stolen-ring']);
   });
 });
 

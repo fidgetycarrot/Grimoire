@@ -10,11 +10,11 @@ export type Speed = 'urgent' | 'steady' | 'slow';
 export type StepStatus = 'waiting' | 'shown' | 'offscreen' | 'skipped';
 export type Rhythm = 'calm' | 'rising' | 'peak' | 'aftermath' | 'stalled';
 export type Pace = 'auto' | 'quiet' | 'fast';
-export interface Step { id: string; text: string; sign: string; afterHours: number; status: StepStatus; at?: number }
+export interface Step { id: string; text: string; sign: string; afterHours: number; status: StepStatus; at?: number; /** Code-owned: how many replies the chat had when it happened. */ atReply?: number }
 export interface Thread {
   id: string; title: string; speed: Speed; why: string; hint: string; people: string[];
   status: 'open' | 'paused' | 'closed'; closedReason: string; ifFollowed: string; ifIgnored: string;
-  steps: Step[]; startAt?: number;
+  steps: Step[]; startAt?: number; /** Code-owned: how many replies the chat had when the thread began. */ startReply?: number;
 }
 export interface Person { id: string; name: string; aliases: string[]; role: string; wants: string; doing: string; hint: string; met: boolean; status: 'active' | 'gone' }
 export interface Beat { id: string; text: string; purpose: string; conditions: string; thread: string; intensity: 'low' | 'high'; status: 'possible' | 'happened' | 'dropped' }
@@ -23,10 +23,34 @@ export interface Notebook {
   version: 1; story: Story; people: Person[]; threads: Thread[]; beats: Beat[];
   events: string[]; clock: StoryClock; rhythm: Rhythm; summary: string;
 }
-export interface Preferences { length: 'short' | 'medium' | 'long'; tone: 'light' | 'balanced' | 'dark'; twist: boolean }
+export interface Preferences { tone: 'light' | 'balanced' | 'dark'; twist: boolean }
 export const LIMITS = Object.freeze({ people: 24, threads: 12, steps: 6, beats: 16, events: 40, truths: 12, text: 600, short: 160 });
 
 const ID = /^[a-z0-9][a-z0-9-]{0,40}$/;
+const count = (v: unknown) => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 10_000_000 ? v : undefined;
+
+/**
+ * When something happens is measured two ways: story hours, and replies.
+ * Story time says what is plausible (a search party can't arrive in five
+ * minutes). Replies say when the story should move: in a roleplay one story
+ * day can be a hundred replies, and a thread must not sit silent that long.
+ * A step is due when either has passed. `waits` is the most replies a step
+ * waits, by the thread's speed.
+ */
+export type Waits = Record<Speed, number>;
+export interface Moment { hours: number; reply?: number; waits?: Waits }
+const moment = (now: number | Moment): Moment => typeof now === 'number' ? { hours: now } : now;
+export type WaitSetting = 'short' | 'medium' | 'long';
+export const WAITS: Record<WaitSetting, Waits> = {
+  short: { urgent: 2, steady: 8, slow: 20 },
+  medium: { urgent: 4, steady: 15, slow: 40 },
+  long: { urgent: 6, steady: 30, slow: 80 },
+};
+/** Fast pace halves the waits. Quiet keeps them; it holds slower developments back in the note instead. */
+export function waitsFor(setting: WaitSetting, pace: Pace): Waits {
+  const base = WAITS[setting] ?? WAITS.medium, f = pace === 'fast' ? 0.5 : 1;
+  return { urgent: Math.max(1, Math.ceil(base.urgent * f)), steady: Math.max(1, Math.ceil(base.steady * f)), slow: Math.max(1, Math.ceil(base.slow * f)) };
+}
 const record = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
 /**
  * A notebook that failed the checks. `message` goes back to the model so it can
@@ -99,7 +123,7 @@ export function validateNotebook(value: unknown): Notebook {
       const s = record(raw), at = s.at, after = s.afterHours, p = `${path}.steps[${j}]`;
       if (typeof after !== 'number' || !Number.isFinite(after) || after < 0 || after > 24 * 365) fail(`${p}.afterHours must be a number of story hours.`);
       return { id: id(s.id, `${p}.id`), text: text(s.text, `${p}.text`, LIMITS.text, false), sign: text(s.sign, `${p}.sign`), afterHours: after as number,
-        status: choice(s.status, ['waiting', 'shown', 'offscreen', 'skipped'] as const, `${p}.status`, 'waiting'), ...(typeof at === 'number' && Number.isFinite(at) ? { at } : {}) };
+        status: choice(s.status, ['waiting', 'shown', 'offscreen', 'skipped'] as const, `${p}.status`, 'waiting'), ...(typeof at === 'number' && Number.isFinite(at) ? { at } : {}), ...(count(s.atReply) !== undefined ? { atReply: count(s.atReply) } : {}) };
     }), `${path}.steps`);
     const peopleIds = list(t.people, `${path}.people`, 8).map((x, j) => id(x, `${path}.people[${j}]`)).filter(x => personIds.has(x));
     return {
@@ -108,6 +132,7 @@ export function validateNotebook(value: unknown): Notebook {
       status: choice(t.status, ['open', 'paused', 'closed'] as const, `${path}.status`, 'open'), closedReason: text(t.closedReason, `${path}.closedReason`, LIMITS.short),
       ifFollowed: text(t.ifFollowed, `${path}.ifFollowed`), ifIgnored: text(t.ifIgnored, `${path}.ifIgnored`), steps,
       ...(typeof t.startAt === 'number' && Number.isFinite(t.startAt) ? { startAt: t.startAt } : {}),
+      ...(count(t.startReply) !== undefined ? { startReply: count(t.startReply) } : {}),
     };
   }), 'threads');
   const threadIds = new Set(threads.map(t => t.id));
@@ -134,7 +159,7 @@ export function validateNotebook(value: unknown): Notebook {
  * (they can be marked gone or closed, with a reason), and something that
  * already happened can't un-happen. Code keeps the times it recorded.
  */
-export function mergeRevision(previous: Notebook, revised: Notebook, now: number): Notebook {
+export function mergeRevision(previous: Notebook, revised: Notebook, now: number | Moment): Notebook {
   for (const person of previous.people) if (!revised.people.some(p => p.id === person.id)) failMerge(`Keep ${person.name} in the notebook (mark them gone if they have left the story).`);
   for (const thread of previous.threads) {
     const next = revised.threads.find(t => t.id === thread.id);
@@ -150,43 +175,56 @@ export function mergeRevision(previous: Notebook, revised: Notebook, now: number
   const fresh = withoutTimes(revised);
   return stamp({ ...fresh, threads: fresh.threads.map(thread => {
     const old = previous.threads.find(t => t.id === thread.id);
-    return { ...thread, ...(old?.startAt !== undefined ? { startAt: old.startAt } : {}), steps: thread.steps.map(step => {
+    return { ...thread, ...(old?.startAt !== undefined ? { startAt: old.startAt } : {}), ...(old?.startReply !== undefined ? { startReply: old.startReply } : {}), steps: thread.steps.map(step => {
       const before = old?.steps.find(s => s.id === step.id);
-      return before?.at !== undefined ? { ...step, at: before.at } : step;
+      return { ...step, ...(before?.at !== undefined ? { at: before.at } : {}), ...(before?.atReply !== undefined ? { atReply: before.atReply } : {}) };
     }) };
   }) }, now);
 }
 /** For edits made by the player: anything may change, but recorded times stay with their ids. */
-export function keepTimes(previous: Notebook, edited: Notebook, now: number): Notebook {
+export function keepTimes(previous: Notebook, edited: Notebook, now: number | Moment): Notebook {
   const fresh = withoutTimes(edited);
   return stamp({ ...fresh, threads: fresh.threads.map(thread => {
     const old = previous.threads.find(t => t.id === thread.id);
-    return { ...thread, ...(old?.startAt !== undefined ? { startAt: old.startAt } : {}), steps: thread.steps.map(step => { const at = old?.steps.find(s => s.id === step.id)?.at; return at !== undefined && step.status !== 'waiting' ? { ...step, at } : step; }) };
+    return { ...thread, ...(old?.startAt !== undefined ? { startAt: old.startAt } : {}), ...(old?.startReply !== undefined ? { startReply: old.startReply } : {}), steps: thread.steps.map(step => {
+      const before = old?.steps.find(s => s.id === step.id);
+      return step.status === 'waiting' ? step : { ...step, ...(before?.at !== undefined ? { at: before.at } : {}), ...(before?.atReply !== undefined ? { atReply: before.atReply } : {}) };
+    }) };
   }) }, now);
 }
 /** Drop any times a model wrote. Only code records when things began or happened. */
 export function withoutTimes(notebook: Notebook): Notebook {
-  return { ...notebook, threads: notebook.threads.map(({ startAt: _start, ...thread }) => ({ ...thread, steps: thread.steps.map(({ at: _at, ...step }) => step) })) };
+  return { ...notebook, threads: notebook.threads.map(({ startAt: _start, startReply: _reply, ...thread }) => ({ ...thread, steps: thread.steps.map(({ at: _at, atReply: _atReply, ...step }) => step) })) };
 }
 /** Fill in code-owned times: when a thread began, when a step happened. */
-export function stamp(notebook: Notebook, now: number): Notebook {
-  return { ...notebook, threads: notebook.threads.map(thread => ({ ...thread, startAt: thread.startAt ?? now,
-    steps: thread.steps.map(step => step.status !== 'waiting' && step.at === undefined ? { ...step, at: now } : step) })) };
+export function stamp(notebook: Notebook, now: number | Moment): Notebook {
+  const m = moment(now), reply = m.reply;
+  return { ...notebook, threads: notebook.threads.map(thread => ({ ...thread, startAt: thread.startAt ?? m.hours,
+    ...(thread.startReply === undefined && reply !== undefined ? { startReply: reply } : {}),
+    steps: thread.steps.map(step => step.status === 'waiting' ? step : { ...step, at: step.at ?? m.hours, ...(step.atReply === undefined && reply !== undefined ? { atReply: reply } : {}) }) })) };
+}
+/** Older notebooks have no reply counts: count from the reply the version was made at. */
+export function fillReplies(notebook: Notebook, reply: number): Notebook {
+  return { ...notebook, threads: notebook.threads.map(thread => ({ ...thread, startReply: thread.startReply ?? reply,
+    steps: thread.steps.map(step => step.status === 'waiting' || step.atReply !== undefined ? step : { ...step, atReply: reply }) })) };
 }
 
-/** The next step of a thread, and whether enough story time has passed for it. */
-export function nextStep(thread: Thread, now: number): { step: Step; due: boolean } | null {
+/** The next step of a thread, and whether enough story time, or enough replies, have passed for it. */
+export function nextStep(thread: Thread, now: number | Moment): { step: Step; due: boolean } | null {
   if (thread.status !== 'open') return null;
   const index = thread.steps.findIndex(step => step.status === 'waiting');
   if (index < 0) return null;
-  const before = thread.steps.slice(0, index).reverse().find(step => step.at !== undefined);
+  const m = moment(now), earlier = thread.steps.slice(0, index).reverse();
   // Nothing starts in the future. A clock that turned out earlier than first guessed
   // (the notebook assumed noon, then the tracker said 11:20) counts from now.
-  const base = Math.min(before?.at ?? thread.startAt ?? now, now);
+  const base = Math.min(earlier.find(step => step.at !== undefined)?.at ?? thread.startAt ?? m.hours, m.hours);
   const step = thread.steps[index];
-  return { step, due: now >= base + step.afterHours };
+  const byTime = m.hours >= base + step.afterHours;
+  const fromReply = earlier.find(step => step.atReply !== undefined)?.atReply ?? thread.startReply;
+  const byReplies = m.reply !== undefined && m.waits !== undefined && fromReply !== undefined && m.reply - fromReply >= m.waits[thread.speed];
+  return { step, due: byTime || byReplies };
 }
-export function dueThreads(notebook: Notebook, now: number): Array<{ thread: Thread; step: Step }> {
+export function dueThreads(notebook: Notebook, now: number | Moment): Array<{ thread: Thread; step: Step }> {
   return notebook.threads.flatMap(thread => { const next = nextStep(thread, now); return next?.due ? [{ thread, step: next.step }] : []; });
 }
 export const nowOf = (notebook: Notebook) => absoluteHours(notebook.clock);

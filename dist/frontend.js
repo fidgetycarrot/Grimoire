@@ -44,22 +44,8 @@ function describeDuration(hours) {
   return `${n} weeks`;
 }
 
-// src/notebook.ts
-var LIMITS = Object.freeze({ people: 24, threads: 12, steps: 6, beats: 16, events: 40, truths: 12, text: 600, short: 160 });
-function nextStep(thread, now) {
-  if (thread.status !== "open")
-    return null;
-  const index = thread.steps.findIndex((step) => step.status === "waiting");
-  if (index < 0)
-    return null;
-  const before = thread.steps.slice(0, index).reverse().find((step) => step.at !== undefined);
-  const base = Math.min(before?.at ?? thread.startAt ?? now, now);
-  const step = thread.steps[index];
-  return { step, due: now >= base + step.afterHours };
-}
-
 // src/types.ts
-var VERSION = "0.2.4";
+var VERSION = "0.3.0";
 
 // src/frontend.ts
 var ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8 3v18"/><path d="M12 8h3M12 12h3"/></svg>';
@@ -231,7 +217,6 @@ function setup(ctx) {
   function renderStart(view) {
     const card = el("section", "gm-card gm-stack");
     card.append(el("h2", "", "Start a story notebook"), el("p", "gm-small", "Grimoire reads this chat’s card, your persona, the card’s lorebook, and anything already said. It writes a private plan for the story: what is really going on, what people want, and the threads that will move over time. You won’t see it unless you open it."));
-    const length = select([["short", "Short, a few sessions"], ["medium", "Medium"], ["long", "Long, a slow burn"]], view.preferences.length);
     const tone = select([["light", "Light"], ["balanced", "Balanced"], ["dark", "Dark"]], view.preferences.tone);
     const twist = el("input");
     twist.type = "checkbox";
@@ -239,12 +224,12 @@ function setup(ctx) {
     twist.style.width = "auto";
     const twistRow = el("label", "gm-row gm-small");
     twistRow.append(twist, document.createTextNode("A twist is allowed, if one fits"));
-    const grid = el("div", "gm-grid");
-    grid.append(labeled("Story length", length), labeled("Tone", tone));
+    const grid = el("div", "gm-stack");
+    grid.append(labeled("Tone", tone, "The story keeps going as long as you play: when its threads wrap up, a check-up starts the next part from what happened."));
     const noConnection = !snapshot?.settings.connectionId;
     const parts = view.earlierParts ?? 0;
     const write = button("Write the notebook", async () => {
-      await act("create", { chatId: view.chatId, preferences: { length: length.value, tone: tone.value, twist: twist.checked } });
+      await act("create", { chatId: view.chatId, preferences: { tone: tone.value, twist: twist.checked } });
       notify(parts ? `Reading the chat, then writing the notebook. This uses ${parts + 1} model requests and can take a few minutes.` : "Writing the notebook. This uses one model request and can take a minute.");
     }, "primary");
     write.classList.add("gm-wide");
@@ -336,7 +321,7 @@ function setup(ctx) {
     d.body.append(list, el("p", "gm-hint", "Each fact has one owner. Anything read from your preset is never asked for twice."));
     return d.root;
   }
-  function renderBook(notebook, now) {
+  function renderBook(notebook, due) {
     const book = el("div", "gm-book"), section = (title) => {
       const s = el("section");
       s.append(el("h4", "", title));
@@ -373,8 +358,7 @@ function setup(ctx) {
     for (const t of notebook.threads) {
       const e = el("div", "gm-entry"), title = el("p");
       title.append(el("strong", "", t.title), el("span", "gm-chip", t.status === "open" ? t.speed : t.status));
-      const next = now === null ? null : nextStep(t, now);
-      if (next?.due) {
+      if (due.includes(t.id)) {
         const c = el("span", "gm-chip", "due");
         c.dataset.tone = "due";
         title.append(c);
@@ -417,8 +401,7 @@ function setup(ctx) {
     if (!view.notebook)
       return d.root;
     if (!editing) {
-      const now = view.clock ? view.clock.day * 24 + (view.clock.hour ?? 12) : null;
-      d.body.append(renderBook(view.notebook, now), button("Edit as text", () => {
+      d.body.append(renderBook(view.notebook, view.dueIds ?? []), button("Edit as text", () => {
         editing = true;
         render();
         d.root.open = true;
@@ -505,7 +488,7 @@ function setup(ctx) {
     body.append(remove);
   }
   function renderSettings() {
-    const settings = { ...snapshot?.settings ?? { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto", quick: { enabled: false, connectionId: "", model: "" } } };
+    const settings = { ...snapshot?.settings ?? { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto", quick: { enabled: false, connectionId: "", model: "" }, wait: "medium" } };
     const card = el("section", "gm-card gm-stack");
     const connection = select([["", "Choose a connection"], ...(snapshot?.connections ?? []).map((c) => [c.id, `${c.name}${c.model ? ` · ${c.model}` : ""}`])], settings.connectionId);
     const every = el("input");
@@ -515,10 +498,11 @@ function setup(ctx) {
     every.value = String(settings.every);
     const tokens = select([["8000", "8,000"], ["16000", "16,000"], ["32000", "32,000"], ["64000", "64,000"]], String(settings.maxOutputTokens));
     const reasoning = select([["inherit", "Use the connection’s setting"], ["off", "Off"], ["low", "Low"]], settings.reasoningMode);
+    const wait = select([["short", "A few replies (about 8)"], ["medium", "Some replies (about 15)"], ["long", "Many replies (about 30)"]], settings.wait ?? "medium");
     const placement = select([["auto", "Added for me"], ["macro", "In my preset, with {{grimoire_note}}"]], settings.placement);
     const grid = el("div", "gm-grid");
     grid.append(labeled("Response room (tokens)", tokens), labeled("Reasoning", reasoning));
-    card.append(el("h2", "", "Settings"), labeled("Model connection", connection, "Used to write notebooks and run check-ups. Your chat keeps its own connection. A cheaper model may do, but test it on a chat first."), labeled("Check-up after this many replies", every, "A fallback. Check-ups also run when the scene changes or time jumps."), grid, labeled("Where the note goes", placement, "Added for me puts a short private note before each reply. If your preset uses {{grimoire_note}}, choose that so the note is never added twice. {{grimoire_clock}} and {{grimoire_pace}} work either way."));
+    card.append(el("h2", "", "Settings"), labeled("Model connection", connection, "Used to write notebooks and run check-ups. Your chat keeps its own connection. A cheaper model may do, but test it on a chat first."), labeled("Longest a story thread waits", wait, "A thread moves on when enough story time has passed, or after this many replies, whichever comes first, so a long scene never leaves the story stuck. Urgent threads wait less and slow ones longer. Big scenes still aren’t interrupted for slow threads; they come in at the next break."), labeled("Check-up after this many replies", every, "A fallback. Check-ups also run when the scene changes or time jumps."), grid, labeled("Where the note goes", placement, "Added for me puts a short private note before each reply. If your preset uses {{grimoire_note}}, choose that so the note is never added twice. {{grimoire_clock}} and {{grimoire_pace}} work either way."));
     const decisions = snapshot?.decisions ?? { available: false, reason: "", connections: [] };
     const quickCard = el("section", "gm-card gm-stack");
     const quickRow = el("label", "gm-switch"), quickOn = el("input");
@@ -544,7 +528,7 @@ function setup(ctx) {
       quickCard.append(labeled("Decision connection", decision), labeled("Model", model, "Any decision model works. To use a different one than the connection’s, type its exact ID. Pick one with a version in its name rather than one ending in “latest”, so it doesn’t change without you knowing."));
     }
     const save = button("Save settings", async () => {
-      await act("settings", { settings: { connectionId: connection.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, placement: placement.value, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } });
+      await act("settings", { settings: { connectionId: connection.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, placement: placement.value, wait: wait.value, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } });
       notify("Settings saved.");
     }, "primary");
     body.append(card, quickCard, save);

@@ -359,3 +359,39 @@ describe('clock guesses', () => {
     expect(validateNotebook(tidyNotebook(raw)).clock.hour).toBeNull();
   });
 });
+
+describe('replies as well as story time', () => {
+  const { waitsFor, fillReplies } = require('../src/notebook');
+  const thread = () => { const nb = stamp(validateNotebook(sampleNotebook()), { hours: 42, reply: 10 }); return nb; };
+  test('a step is due after enough replies even when story time barely moves', () => {
+    const nb = thread(), steady = nb.threads[0];
+    expect(steady.startReply).toBe(10);
+    const waits = waitsFor('medium', 'auto');
+    expect(waits).toEqual({ urgent: 4, steady: 15, slow: 40 });
+    expect(nextStep(steady, { hours: 43, reply: 24, waits })!.due).toBe(false);
+    expect(nextStep(steady, { hours: 43, reply: 25, waits })!.due).toBe(true);
+    // Story time still works alone, as before.
+    expect(nextStep(steady, { hours: 54, reply: 11, waits })!.due).toBe(true);
+    expect(nextStep(steady, 43)!.due).toBe(false);
+  });
+  test('fast pace halves the waits, and the size setting scales them', () => {
+    expect(waitsFor('medium', 'fast')).toEqual({ urgent: 2, steady: 8, slow: 20 });
+    expect(waitsFor('short', 'auto').steady).toBe(8);
+    expect(waitsFor('long', 'quiet').steady).toBe(30);
+  });
+  test('the count restarts from the last step that happened, and survives a check-up', () => {
+    const nb = thread();
+    nb.threads[0].steps[0] = { ...nb.threads[0].steps[0], status: 'shown', at: 44, atReply: 20 };
+    const waits = waitsFor('medium', 'auto');
+    expect(nextStep(nb.threads[0], { hours: 45, reply: 34, waits })!.due).toBe(false);
+    expect(nextStep(nb.threads[0], { hours: 45, reply: 35, waits })!.due).toBe(true);
+    const merged = mergeRevision(nb, validateNotebook(withoutTimes(structuredClone(nb))), { hours: 46, reply: 36 });
+    expect(merged.threads[0].startReply).toBe(10);
+    expect(merged.threads[0].steps[0].atReply).toBe(20);
+  });
+  test('older notebooks without reply counts count from when they were made', () => {
+    const old = stamp(validateNotebook(sampleNotebook()), 42);
+    expect(old.threads[0].startReply).toBeUndefined();
+    expect(fillReplies(old, 7).threads[0].startReply).toBe(7);
+  });
+});

@@ -1,6 +1,6 @@
 import type { DecisionAnswer, DecisionQuestion, DecisionResult } from 'lumiverse-spindle-types';
 import { describeClock, type StoryClock } from './clock';
-import { dueThreads, type Notebook, type Rhythm } from './notebook';
+import { dueThreads, type Moment, type Notebook, type Rhythm } from './notebook';
 
 /**
  * The quick check: after each reply, a decision model answers a few
@@ -32,7 +32,7 @@ export interface QuickPlan {
   marks: Record<string, { kind: 'step'; thread: string; step: string } | { kind: 'beat'; beat: string }>;
 }
 
-export function quickQuestions(notebook: Notebook, now: number): QuickPlan {
+export function quickQuestions(notebook: Notebook, now: number | Moment): QuickPlan {
   const questions: Record<string, DecisionQuestion> = {}, marks: QuickPlan['marks'] = {};
   dueThreads(notebook, now).forEach(({ thread, step }, i) => {
     const key = `due_${i + 1}`;
@@ -69,7 +69,8 @@ export interface QuickOutcome { notebook: Notebook; changed: boolean; marked: nu
  * Apply answers onto the notebook as it is now (it may have changed while the
  * question was out). Only waiting steps and possible beats can be marked.
  */
-export function applyQuick(current: Notebook, plan: QuickPlan, result: DecisionResult, now: number): QuickOutcome {
+export function applyQuick(current: Notebook, plan: QuickPlan, result: DecisionResult, now: number | Moment): QuickOutcome {
+  const hours = typeof now === 'number' ? now : now.hours, reply = typeof now === 'number' ? undefined : now.reply;
   const answers = result.answers as Record<string, DecisionAnswer>;
   const notebook = structuredClone(current);
   let marked = 0;
@@ -77,7 +78,7 @@ export function applyQuick(current: Notebook, plan: QuickPlan, result: DecisionR
     if (!yes(answers[key])) continue;
     if (mark.kind === 'step') {
       const step = notebook.threads.find(t => t.id === mark.thread)?.steps.find(s => s.id === mark.step);
-      if (step?.status === 'waiting') { step.status = 'shown'; step.at = now; marked++; }
+      if (step?.status === 'waiting') { step.status = 'shown'; step.at = hours; if (reply !== undefined) step.atReply = reply; marked++; }
     } else {
       const beat = notebook.beats.find(b => b.id === mark.beat);
       if (beat?.status === 'possible') { beat.status = 'happened'; marked++; }

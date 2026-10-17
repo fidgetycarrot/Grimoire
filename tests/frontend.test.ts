@@ -18,11 +18,11 @@ function harness(chat: Partial<NonNullable<Snapshot['chat']>> | null = {}, setti
   const state: Snapshot = {
     version: '0.1.0', permissions: ['generation', 'interceptor', 'chats', 'characters'], notice: '',
     connections: [{ id: 'model', name: 'Writer', model: 'm' }],
-    settings: { connectionId: 'model', maxOutputTokens: 16000, reasoningMode: 'inherit', every: 8, placement: 'auto', quick: { enabled: false, connectionId: '', model: '' }, ...settings },
+    settings: { connectionId: 'model', maxOutputTokens: 16000, reasoningMode: 'inherit', every: 8, placement: 'auto', quick: { enabled: false, connectionId: '', model: '' }, wait: 'medium', ...settings },
     decisions: { available: true, reason: '', connections: [{ id: 'dec', name: 'Jev', provider: 'typesafe', model: '~typesafe/jev-latest', isDefault: true }] },
-    chat: chat === null ? null : { chatId: 'chat-1', name: 'Low Water', supported: true, reason: '', enabled: true, pace: 'auto', preferences: { length: 'medium', tone: 'balanced', twist: true }, hasNotebook: true,
+    chat: chat === null ? null : { chatId: 'chat-1', name: 'Low Water', supported: true, reason: '', enabled: true, pace: 'auto', preferences: { tone: 'balanced', twist: true }, hasNotebook: true,
       summary: 'Notebook updated after the tavern.', clock: { day: 2, hour: 21, label: '' }, clockText: 'Day 2, 21:00', sources: { day: 'notebook', hour: 'notebook', exact: false }, checks: [],
-      needsCheck: '', job: null, updatedAt: Date.now(), repliesSinceCheck: 2, skipHours: 0, notebook: stamp(validateNotebook(sampleNotebook()), 40), behind: false, earlierParts: 0, quick: null, ...chat },
+      needsCheck: '', job: null, updatedAt: Date.now(), repliesSinceCheck: 2, skipHours: 0, notebook: stamp(validateNotebook(sampleNotebook()), 40), behind: false, earlierParts: 0, quick: null, dueIds: [], ...chat },
   };
   const requests: Array<{ action: string; input: any }> = [];
   let receive: (m: unknown) => void = () => {};
@@ -79,7 +79,7 @@ describe('the panel', () => {
   test('a chat without a notebook offers to write one, and needs a connection first', async () => {
     const h = harness({ hasNotebook: false, notebook: null }); await tick();
     h.button('Write the notebook')!.click(); await tick();
-    expect(h.requests.find(r => r.action === 'create')!.input).toEqual({ chatId: 'chat-1', preferences: { length: 'medium', tone: 'balanced', twist: true } });
+    expect(h.requests.find(r => r.action === 'create')!.input).toEqual({ chatId: 'chat-1', preferences: { tone: 'balanced', twist: true } });
     const none = harness({ hasNotebook: false, notebook: null }, { connectionId: '' }); await tick();
     expect(none.button('Write the notebook')!.disabled).toBe(true);
     expect(none.root.textContent).toContain('Choose a model connection in Settings first.');
@@ -105,6 +105,21 @@ describe('the panel', () => {
     expect(h.root.textContent).toContain('Group chats are not supported yet');
     const none = harness(null); await tick();
     expect(none.root.textContent).toContain('Open a chat to use Grimoire.');
+  });
+});
+
+describe('pacing settings', () => {
+  test('the longest wait is saved, and starting a notebook asks no length question', async () => {
+    const start = harness({ hasNotebook: false, notebook: null }); await tick();
+    expect(start.root.textContent).not.toContain('Story length');
+    expect(start.root.textContent).toContain('The story keeps going as long as you play');
+    const h = harness(); await tick();
+    Array.from(h.root.querySelectorAll('button')).find(b => b.textContent === 'Settings')!.click(); await tick();
+    expect(h.root.textContent).toContain('Longest a story thread waits');
+    const wait = Array.from(h.root.querySelectorAll('select')).find(s => Array.from(s.options).some(o => o.value === 'long')) as unknown as HTMLSelectElement;
+    wait.value = 'long';
+    h.button('Save settings')!.click(); await tick();
+    expect(h.requests.find(r => r.action === 'settings')!.input.settings.wait).toBe('long');
   });
 });
 
