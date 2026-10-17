@@ -4,6 +4,10 @@ import type { Notebook } from '../src/notebook';
 export function sampleNotebook(): Notebook {
   return {
     version: 1,
+    arc: { shape: 'conflict', stage: 'setup', turn: '' },
+    seeds: [
+      { id: 'green-wax', detail: 'Oswin seals his letters with green wax.', payoff: 'The ring box in the next town is sealed with the same green wax, tying the sale to Oswin.', pays: 'stolen-ring', status: 'waiting' },
+    ],
     story: { question: 'Will the stolen ring be returned before its owner finds out who took it?', stakes: 'The player\'s standing in Low Water.', direction: 'A return, a bargain, or a reckoning.', hiddenTruth: ['The harbor master took the ring to pay a gambling debt.'], twist: '' },
     people: [
       { id: 'mira', name: 'Mira', aliases: ['the ferrywoman'], role: 'ferry keeper', wants: 'to keep the ferry running', doing: 'patching the chain', hint: 'dry humor, watches everyone', met: true, status: 'active' },

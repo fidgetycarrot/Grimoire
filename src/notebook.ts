@@ -19,12 +19,31 @@ export interface Thread {
 export interface Person { id: string; name: string; aliases: string[]; role: string; wants: string; doing: string; hint: string; met: boolean; status: 'active' | 'gone' }
 export interface Beat { id: string; text: string; purpose: string; conditions: string; thread: string; intensity: 'low' | 'high'; status: 'possible' | 'happened' | 'dropped' }
 export interface Story { question: string; stakes: string; direction: string; hiddenTruth: string[]; twist: string }
+/**
+ * The shape of the current arc. Conflict: setup, rising action, climax,
+ * resolution. Kishōtenketsu: introduction (ki), development (shō), a turn
+ * that casts what came before in a new light (ten), and bringing it together
+ * (ketsu); no conflict is needed. The model picks the shape per arc.
+ */
+export type Shape = 'conflict' | 'kishotenketsu';
+export const STAGES: Record<Shape, readonly string[]> = { conflict: ['setup', 'rising', 'climax', 'resolution'], kishotenketsu: ['ki', 'sho', 'ten', 'ketsu'] };
+export interface Arc { shape: Shape; stage: string; /** Kishōtenketsu: what the turn is. Secret; the narrator learns it only at the turn. */ turn: string }
+/**
+ * A breadcrumb: an ordinary-looking detail mentioned in passing now and paid
+ * off later. The narrator sees only the detail when planting it; what it
+ * means (the payoff) is shown only when it is time to pay it off.
+ */
+export interface Seed {
+  id: string; detail: string; payoff: string; /** A thread id, a beat id, "turn", or empty. */ pays: string;
+  status: 'waiting' | 'planted' | 'paid' | 'dropped';
+  /** Code-owned reply counts. */ plantedAt?: number; paidAt?: number;
+}
 export interface Notebook {
-  version: 1; story: Story; people: Person[]; threads: Thread[]; beats: Beat[];
+  version: 1; story: Story; arc: Arc; people: Person[]; threads: Thread[]; beats: Beat[]; seeds: Seed[];
   events: string[]; clock: StoryClock; rhythm: Rhythm; summary: string;
 }
 export interface Preferences { tone: 'light' | 'balanced' | 'dark'; twist: boolean }
-export const LIMITS = Object.freeze({ people: 24, threads: 12, steps: 6, beats: 16, events: 40, truths: 12, text: 600, short: 160 });
+export const LIMITS = Object.freeze({ people: 24, threads: 12, steps: 6, beats: 16, seeds: 12, events: 40, truths: 12, text: 600, short: 160 });
 
 const ID = /^[a-z0-9][a-z0-9-]{0,40}$/;
 const count = (v: unknown) => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 10_000_000 ? v : undefined;
@@ -141,8 +160,20 @@ export function validateNotebook(value: unknown): Notebook {
     return { id: id(b.id, `${path}.id`), text: text(b.text, `${path}.text`, LIMITS.text, false), purpose: text(b.purpose, `${path}.purpose`), conditions: text(b.conditions, `${path}.conditions`),
       thread, intensity: choice(b.intensity, ['low', 'high'] as const, `${path}.intensity`, 'low'), status: choice(b.status, ['possible', 'happened', 'dropped'] as const, `${path}.status`, 'possible') };
   }), 'beats');
+  const arcInput = record(input.arc), shape = choice(arcInput.shape, ['conflict', 'kishotenketsu'] as const, 'arc.shape', 'conflict');
+  const stage = arcInput.stage === undefined ? STAGES[shape][0] : arcInput.stage;
+  if (!STAGES[shape].includes(stage as string)) fail(`arc.stage must be one of: ${STAGES[shape].join(', ')}.`);
+  const linkable = new Set([...threadIds, ...beats.map(b => b.id), 'turn']);
+  const seeds = unique(list(input.seeds, 'seeds', LIMITS.seeds).map((item, i): Seed => {
+    const s = record(item), path = `seeds[${i}]`, pays = typeof s.pays === 'string' && linkable.has(s.pays) ? s.pays : '';
+    return { id: id(s.id, `${path}.id`), detail: text(s.detail, `${path}.detail`, LIMITS.short, false), payoff: text(s.payoff, `${path}.payoff`), pays,
+      status: choice(s.status, ['waiting', 'planted', 'paid', 'dropped'] as const, `${path}.status`, 'waiting'),
+      ...(count(s.plantedAt) !== undefined ? { plantedAt: count(s.plantedAt) } : {}), ...(count(s.paidAt) !== undefined ? { paidAt: count(s.paidAt) } : {}) };
+  }), 'seeds');
   return {
     version: 1,
+    arc: { shape, stage: stage as string, turn: text(arcInput.turn, 'arc.turn') },
+    seeds,
     story: { question: text(story.question, 'story.question', LIMITS.text, false), stakes: text(story.stakes, 'story.stakes'), direction: text(story.direction, 'story.direction'),
       hiddenTruth: list(story.hiddenTruth, 'story.hiddenTruth', LIMITS.truths).map((x, i) => text(x, `story.hiddenTruth[${i}]`, LIMITS.text, false)), twist: text(story.twist, 'story.twist') },
     people, threads, beats,
@@ -172,8 +203,13 @@ export function mergeRevision(previous: Notebook, revised: Notebook, now: number
     }
   }
   for (const beat of previous.beats) if (beat.status === 'happened' && revised.beats.find(b => b.id === beat.id)?.status !== 'happened') failMerge(`Beat "${beat.id}" already happened. Keep it marked as happened.`);
-  const fresh = withoutTimes(revised);
-  return stamp({ ...fresh, threads: fresh.threads.map(thread => {
+  for (const seed of previous.seeds) {
+    const next = revised.seeds.find(s => s.id === seed.id);
+    if (!next) failMerge(`Keep seed "${seed.id}" (mark it dropped if it no longer fits).`);
+    if (seed.status !== 'waiting' && next!.status === 'waiting') failMerge(`Seed "${seed.id}" was already planted and can't go back to waiting.`);
+  }
+  const fresh = withoutTimes(holdTurn(previous, revised));
+  return stamp({ ...fresh, seeds: carrySeedTimes(previous, fresh.seeds), threads: fresh.threads.map(thread => {
     const old = previous.threads.find(t => t.id === thread.id);
     return { ...thread, ...(old?.startAt !== undefined ? { startAt: old.startAt } : {}), ...(old?.startReply !== undefined ? { startReply: old.startReply } : {}), steps: thread.steps.map(step => {
       const before = old?.steps.find(s => s.id === step.id);
@@ -184,7 +220,7 @@ export function mergeRevision(previous: Notebook, revised: Notebook, now: number
 /** For edits made by the player: anything may change, but recorded times stay with their ids. */
 export function keepTimes(previous: Notebook, edited: Notebook, now: number | Moment): Notebook {
   const fresh = withoutTimes(edited);
-  return stamp({ ...fresh, threads: fresh.threads.map(thread => {
+  return stamp({ ...fresh, seeds: carrySeedTimes(previous, fresh.seeds), threads: fresh.threads.map(thread => {
     const old = previous.threads.find(t => t.id === thread.id);
     return { ...thread, ...(old?.startAt !== undefined ? { startAt: old.startAt } : {}), ...(old?.startReply !== undefined ? { startReply: old.startReply } : {}), steps: thread.steps.map(step => {
       const before = old?.steps.find(s => s.id === step.id);
@@ -194,19 +230,39 @@ export function keepTimes(previous: Notebook, edited: Notebook, now: number | Mo
 }
 /** Drop any times a model wrote. Only code records when things began or happened. */
 export function withoutTimes(notebook: Notebook): Notebook {
-  return { ...notebook, threads: notebook.threads.map(({ startAt: _start, startReply: _reply, ...thread }) => ({ ...thread, steps: thread.steps.map(({ at: _at, atReply: _atReply, ...step }) => step) })) };
+  return { ...notebook, seeds: notebook.seeds.map(({ plantedAt: _p, paidAt: _q, ...seed }) => seed),
+    threads: notebook.threads.map(({ startAt: _start, startReply: _reply, ...thread }) => ({ ...thread, steps: thread.steps.map(({ at: _at, atReply: _atReply, ...step }) => step) })) };
 }
 /** Fill in code-owned times: when a thread began, when a step happened. */
 export function stamp(notebook: Notebook, now: number | Moment): Notebook {
   const m = moment(now), reply = m.reply;
-  return { ...notebook, threads: notebook.threads.map(thread => ({ ...thread, startAt: thread.startAt ?? m.hours,
+  const seeds = reply === undefined ? notebook.seeds : notebook.seeds.map(seed => ({ ...seed,
+    ...(seed.status !== 'waiting' && seed.plantedAt === undefined ? { plantedAt: reply } : {}), ...(seed.status === 'paid' && seed.paidAt === undefined ? { paidAt: reply } : {}) }));
+  return { ...notebook, seeds, threads: notebook.threads.map(thread => ({ ...thread, startAt: thread.startAt ?? m.hours,
     ...(thread.startReply === undefined && reply !== undefined ? { startReply: reply } : {}),
     steps: thread.steps.map(step => step.status === 'waiting' ? step : { ...step, at: step.at ?? m.hours, ...(step.atReply === undefined && reply !== undefined ? { atReply: reply } : {}) }) })) };
 }
 /** Older notebooks have no reply counts: count from the reply the version was made at. */
 export function fillReplies(notebook: Notebook, reply: number): Notebook {
-  return { ...notebook, threads: notebook.threads.map(thread => ({ ...thread, startReply: thread.startReply ?? reply,
+  return { ...notebook, seeds: notebook.seeds.map(seed => seed.status !== 'waiting' && seed.plantedAt === undefined ? { ...seed, plantedAt: reply } : seed), threads: notebook.threads.map(thread => ({ ...thread, startReply: thread.startReply ?? reply,
     steps: thread.steps.map(step => step.status === 'waiting' || step.atReply !== undefined ? step : { ...step, atReply: reply }) })) };
+}
+
+/** Seeds keep the reply counts code recorded for them. */
+function carrySeedTimes(previous: Notebook, seeds: Seed[]): Seed[] {
+  return seeds.map(seed => { const old = previous.seeds.find(s => s.id === seed.id); return { ...seed, ...(old?.plantedAt !== undefined ? { plantedAt: old.plantedAt } : {}), ...(old?.paidAt !== undefined ? { paidAt: old.paidAt } : {}) }; });
+}
+/**
+ * The turn waits for its breadcrumbs: a kishōtenketsu arc can't move to its
+ * turn until the seeds that prepare it have been planted (two, or all of
+ * them if there are fewer). Otherwise it stays where it was.
+ */
+export function holdTurn(previous: Notebook, revised: Notebook): Notebook {
+  if (revised.arc.shape !== 'kishotenketsu' || revised.arc.stage !== 'ten' || (previous.arc.shape === 'kishotenketsu' && previous.arc.stage === 'ten')) return revised;
+  const prepared = revised.seeds.filter(s => s.pays === 'turn' && s.status !== 'dropped');
+  const planted = prepared.filter(s => s.status === 'planted' || s.status === 'paid').length;
+  if (planted >= Math.min(2, prepared.length)) return revised;
+  return { ...revised, arc: { ...revised.arc, stage: previous.arc.shape === 'kishotenketsu' ? previous.arc.stage : 'sho' } };
 }
 
 /** The next step of a thread, and whether enough story time, or enough replies, have passed for it. */

@@ -45,7 +45,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.3.1";
+var VERSION = "0.4.0";
 
 // src/frontend.ts
 var ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8 3v18"/><path d="M12 8h3M12 12h3"/></svg>';
@@ -355,6 +355,11 @@ function setup(ctx) {
         ul.append(el("li", "", `Twist: ${notebook.story.twist}`));
       s.append(ul);
     }
+    const STAGE_WORDS = { setup: "Setup", rising: "Rising action", climax: "Climax", resolution: "Resolution", ki: "Introduction", sho: "Development", ten: "The turn", ketsu: "Bringing it together" };
+    const arc = section("Shape of this part");
+    arc.append(el("p", "", `${notebook.arc.shape === "kishotenketsu" ? "Kishōtenketsu" : "Conflict"}: ${STAGE_WORDS[notebook.arc.stage] ?? notebook.arc.stage}`));
+    if (notebook.arc.turn)
+      arc.append(el("p", "gm-meta", `The turn: ${notebook.arc.turn}`));
     const people = section("People");
     for (const p of notebook.people) {
       const e = el("div", "gm-entry");
@@ -401,6 +406,21 @@ function setup(ctx) {
       ul.append(li);
     }
     beats.append(ul);
+    if (notebook.seeds.length) {
+      const s = section("Breadcrumbs"), list = el("ul");
+      for (const seed of notebook.seeds) {
+        const li = el("li", "gm-small", seed.detail);
+        if (seed.status !== "waiting") {
+          const c = el("span", "gm-chip", seed.status);
+          if (seed.status === "paid")
+            c.dataset.tone = "done";
+          li.append(c);
+        }
+        li.append(el("div", "gm-meta", `Later: ${seed.payoff}`));
+        list.append(li);
+      }
+      s.append(list);
+    }
     if (notebook.events.length) {
       const s = section("What has happened"), list = el("ul");
       for (const ev of notebook.events)

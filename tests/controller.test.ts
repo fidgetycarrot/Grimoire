@@ -379,7 +379,7 @@ describe('the quick check', () => {
     h.add('user', 'I look at the sky.'); h.add('assistant', `<div style="color:red">Shutters bang all along the street.</div>${tracker('Day 1, 18:10', 'The ferry')}`);
     await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
     const sent = h.decisionCalls[0];
-    expect(Object.keys(sent.questions)).toEqual(['due_1', 'moment_1', 'moment_2', 'rhythm', 'new_turn']);
+    expect(Object.keys(sent.questions)).toEqual(['due_1', 'moment_1', 'moment_2', 'detail_mentioned', 'rhythm', 'new_turn']);
     expect(sent.questions.due_1.instructions).toContain('Shutters bang');
     expect(sent.state.latestReply).toContain('Shutters bang all along the street.');
     expect(sent.state.latestReply).not.toContain('style');
@@ -396,6 +396,17 @@ describe('the quick check', () => {
     expect(m.calls.filter(x => x.task === 'grimoire-checkup-v1')).toHaveLength(0);
     // Regenerating that reply goes back to the notebook from before it.
     expect(await c.noteFor('chat-1', h.messages.at(-1).id)).toContain('Shutters bang');
+  });
+  test('a detail the narrator mentioned is marked planted, with the reply it happened in', async () => {
+    const { h, c } = await quickReady(answers({ detail_mentioned: noul(0.91) }));
+    expect(await c.noteFor('chat-1')).toContain('Oswin seals his letters with green wax');
+    h.add('user', 'I watch Oswin.'); h.add('assistant', `Oswin presses green wax onto a letter.${tracker('Day 1, 18:05', 'The ferry')}`);
+    await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+    const seed = (await c.view('chat-1'))!.notebook!.seeds[0];
+    expect(seed).toMatchObject({ status: 'planted', plantedAt: 2 });
+    // Planted: it isn't offered again, and its meaning stays hidden for now.
+    const note = await c.noteFor('chat-1');
+    expect(note).not.toContain('green wax');
   });
   test('something new in the story starts a full check-up right away', async () => {
     const { h, m, c } = await quickReady(answers({ new_turn: noul(0.88) }));

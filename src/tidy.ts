@@ -1,5 +1,5 @@
 import { readTime } from './clock';
-import { LIMITS, type Notebook } from './notebook';
+import { LIMITS, STAGES, type Notebook, type Shape } from './notebook';
 
 /**
  * Tidy a notebook as a model wrote it, before the strict checks.
@@ -132,6 +132,30 @@ export function tidyNotebook(value: unknown, previous?: Notebook): unknown {
   }
   beats = cap(beats, LIMITS.beats, b => (b.status === 'happened' ? 4 : b.status === 'possible' ? 2 : 0));
 
+  // Breadcrumbs: details mentioned now and paid off later. Planted ones stay planted; dropped ones come back.
+  const linkable = new Map<string, string>([...threads.map(t => [t.id, t.id] as [string, string]), ...threads.map(t => [slug(t.title), t.id] as [string, string]), ...beats.map(b => [b.id, b.id] as [string, string]), ['turn', 'turn']]);
+  let seeds = ids(array(input.seeds).map(raw => {
+    const s = record(raw), detail = plain(s.detail, LIMITS.short) || plain(s.text, LIMITS.short);
+    return { id: slug(s.id) || slug(detail).slice(0, 30), detail, payoff: plain(s.payoff), pays: linkable.get(slug(s.pays)) ?? '',
+      status: pick(s.status, ['waiting', 'planted', 'paid', 'dropped'] as const, { mentioned: 'planted', shown: 'planted', used: 'paid', 'paid-off': 'paid', resolved: 'paid', done: 'paid', cancelled: 'dropped', skipped: 'dropped' }, 'waiting') };
+  }).filter(s => s.detail), 'seed');
+  if (previous) for (const old of previous.seeds) {
+    const next = seeds.find(s => s.id === old.id);
+    if (!next) seeds.push(structuredClone(old));
+    else if (old.status !== 'waiting' && next.status === 'waiting') next.status = old.status;
+  }
+  const keptSeeds = new Set(previous?.seeds.map(s => s.id));
+  seeds = cap(seeds, LIMITS.seeds, s => (keptSeeds.has(s.id) ? 4 : 0) + (s.status === 'planted' ? 2 : s.status === 'waiting' ? 1 : 0));
+
+  // The arc: a shape and a stage that belongs to it.
+  const a = record(input.arc), shapeWord = typeof a.shape === 'string' ? a.shape.toLowerCase().replace(/[^a-z]/g, '') : '';
+  const shape: Shape = shapeWord.startsWith('kish') ? 'kishotenketsu' : shapeWord === 'conflict' ? 'conflict' : previous?.arc.shape ?? 'conflict';
+  const stageWord = typeof a.stage === 'string' ? a.stage.toLowerCase().normalize('NFKD').replace(/[^a-z]/g, '') : '';
+  const STAGE_WORDS: Record<string, string> = { introduction: 'ki', development: 'sho', shou: 'sho', turn: 'ten', twist: 'ten', conclusion: 'ketsu', reconciliation: 'ketsu', together: 'ketsu', risingaction: 'rising', build: 'rising', resolve: 'resolution', aftermath: 'resolution' };
+  const named = STAGES[shape].includes(stageWord) ? stageWord : STAGE_WORDS[stageWord];
+  const stage = named && STAGES[shape].includes(named) ? named : previous && previous.arc.shape === shape ? previous.arc.stage : STAGES[shape][0];
+  const arc = { shape, stage, turn: plain(a.turn) };
+
   // Too many events: fold the oldest into one line rather than lose them silently.
   let events = array(input.events).map(e => plain(typeof e === 'string' ? e : record(e).text)).filter(Boolean);
   if (events.length > LIMITS.events) { const fold = events.length - LIMITS.events + 1; events = [plain(`Earlier: ${events.slice(0, fold).join('; ')}`), ...events.slice(fold)]; }
@@ -146,7 +170,7 @@ export function tidyNotebook(value: unknown, previous?: Notebook): unknown {
     version: 1,
     story: { question, stakes: plain(story.stakes), direction: plain(story.direction),
       hiddenTruth: array(story.hiddenTruth).map(x => plain(x)).filter(Boolean).slice(0, LIMITS.truths), twist: plain(story.twist) },
-    people, threads, beats, events, clock,
+    arc, people, threads, beats, seeds, events, clock,
     rhythm: pick(input.rhythm, ['calm', 'rising', 'peak', 'aftermath', 'stalled'] as const, RHYTHM, 'calm'),
     summary: plain(input.summary, LIMITS.short),
   };

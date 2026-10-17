@@ -6,7 +6,7 @@ import type { FieldCheck, Recipe } from './tracker';
 import type { SkipOffer } from './skip';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.3.1';
+export const VERSION = '0.4.0';
 export const MAX_VERSIONS = 16;
 
 /** One saved state of the notebook and the chat history it describes. */

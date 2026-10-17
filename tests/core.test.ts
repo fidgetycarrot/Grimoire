@@ -304,7 +304,7 @@ describe('quick check answers', () => {
     nb.threads[1].steps[0].afterHours = 0;
     nb.beats[1].status = 'dropped';
     const plan = quickQuestions(nb, absoluteHours({ day: 1, hour: 18 }));
-    expect(Object.keys(plan.questions)).toEqual(['due_1', 'moment_1', 'rhythm', 'new_turn']);
+    expect(Object.keys(plan.questions)).toEqual(['due_1', 'moment_1', 'detail_mentioned', 'rhythm', 'new_turn']);
     const out = applyQuick(nb, plan, { model: 'm', answers: { due_1: { type: 'noul', noul: 0.9 }, moment_1: { type: 'noul', noul: 0.69 }, rhythm: { type: 'choice', choice: 'nonsense', probabilities: {}, confidence: 1 }, new_turn: { type: 'noul', noul: 0.2 } } }, 99);
     expect(out.notebook.threads[1].steps[0]).toMatchObject({ status: 'shown', at: 99 });
     expect(out.notebook.beats[0].status).toBe('possible');
@@ -432,5 +432,73 @@ describe('suggesting a time skip', () => {
   test('an earlier hour offers the evening instead', () => {
     expect(skipOffer(quietBook(), at(19), { day: 1, hour: 10, label: '' }, 0)!.options.at(-1)).toEqual({ hours: 9, label: 'Skip to this evening' });
     expect(skipOffer(quietBook(), at(19), { day: 1, hour: null, label: '' }, 0)!.options).toHaveLength(1);
+  });
+});
+
+describe('arc shapes and breadcrumbs', () => {
+  const { seedPlan, PLANT_GAP } = require('../src/note');
+  const { waitsFor, holdTurn } = require('../src/notebook');
+  const { tidyNotebook } = require('../src/tidy');
+  const waits = waitsFor('medium', 'auto');
+  const base = () => stamp(validateNotebook(sampleNotebook()), { hours: 42, reply: 10 });
+  const note = (nb: any, reply: number, hours = 42) => buildNote({ notebook: nb, pace: 'auto', clock: { day: 1, hour: 18, label: '' }, now: { hours, reply, waits }, recent: 'Mira' });
+  test('a detail is planted without its meaning, then brought back much later with it', () => {
+    const nb = base();
+    const first = note(nb, 10);
+    expect(first).toContain('A small detail to mention in passing, without drawing attention to it: Oswin seals his letters with green wax.');
+    expect(first).not.toContain('ring box');
+    nb.seeds[0] = { ...nb.seeds[0], status: 'planted', plantedAt: 11 };
+    expect(seedPlan(nb, { hours: 42, reply: 12, waits }).ready).toEqual([]);
+    expect(note(nb, 12)).not.toContain('green wax');
+    // Fifteen replies later the ring thread's first step comes due, and the detail is tied to it.
+    const later = note(nb, 26);
+    expect(later).toContain('A shout from the manor');
+    expect(later).toContain('Bring back something mentioned earlier: "Oswin seals his letters with green wax." (The ring box in the next town is sealed with the same green wax, tying the sale to Oswin)');
+  });
+  test('planting is spaced out and waits out big moments', () => {
+    const nb: any = base(); nb.seeds.push({ id: 'bell', detail: 'The ferry bell is cracked.', payoff: 'It fails during the storm.', pays: 'storm', status: 'waiting' });
+    nb.seeds[0] = { ...nb.seeds[0], status: 'planted', plantedAt: 10 };
+    expect(seedPlan(nb, { hours: 42, reply: 10 + PLANT_GAP - 1, waits }).plant).toBeNull();
+    expect(seedPlan(nb, { hours: 42, reply: 10 + PLANT_GAP, waits }).plant.id).toBe('bell');
+    expect(seedPlan({ ...nb, rhythm: 'peak' }, { hours: 42, reply: 20, waits }).plant).toBeNull();
+  });
+  test('kishōtenketsu: gentle stage lines, and the turn stays secret until the turn', () => {
+    const nb: any = { ...base(), rhythm: 'rising', arc: { shape: 'kishotenketsu', stage: 'sho', turn: 'Mira is the ring owner’s sister.' } };
+    nb.seeds.push({ id: 'locket', detail: 'Mira wears a locket she never opens.', payoff: 'It holds a portrait of the ring’s owner.', pays: 'turn', status: 'planted', plantedAt: 11 });
+    const sho = note(nb, 30);
+    expect(sho).toContain('Arc: development. Deepen what is here');
+    expect(sho).toContain('Pace: the scene is deepening');
+    expect(sho).not.toContain('tension is building');
+    expect(sho).not.toContain('sister');
+    expect(sho).not.toContain('portrait');
+    const ten = note({ ...nb, arc: { ...nb.arc, stage: 'ten' } }, 30);
+    expect(ten).toContain('The turn: Mira is the ring owner’s sister.');
+    expect(ten).toContain('"Mira wears a locket she never opens." (It holds a portrait of the ring’s owner)');
+  });
+  test('the turn waits for its breadcrumbs', () => {
+    const before: any = { ...base(), arc: { shape: 'kishotenketsu', stage: 'sho', turn: 'x' }, seeds: [
+      { id: 'a', detail: 'A.', payoff: 'a', pays: 'turn', status: 'planted' }, { id: 'b', detail: 'B.', payoff: 'b', pays: 'turn', status: 'waiting' }] };
+    const early = { ...before, arc: { ...before.arc, stage: 'ten' } };
+    expect(holdTurn(before, early).arc.stage).toBe('sho');
+    const ready = { ...early, seeds: early.seeds.map((s: any) => ({ ...s, status: 'planted' })) };
+    expect(holdTurn(before, ready).arc.stage).toBe('ten');
+  });
+  test('shapes and stages are checked, and loose model words are tidied', () => {
+    const raw: any = sampleNotebook();
+    expect(() => validateNotebook({ ...raw, arc: { shape: 'kishotenketsu', stage: 'climax', turn: '' } })).toThrow('arc.stage must be one of: ki, sho, ten, ketsu');
+    raw.arc = { shape: 'Kishōtenketsu', stage: 'Development', turn: '' };
+    raw.seeds = [{ id: 'Green Wax', detail: 'Green wax.', payoff: 'Oswin.', pays: 'The stolen ring', status: 'mentioned' }];
+    const tidy = validateNotebook(tidyNotebook(raw));
+    expect(tidy.arc).toEqual({ shape: 'kishotenketsu', stage: 'sho', turn: '' });
+    expect(tidy.seeds[0]).toMatchObject({ id: 'green-wax', pays: 'stolen-ring', status: 'planted' });
+    // Older notebooks without an arc or seeds still load.
+    const { arc: _a, seeds: _s, ...old } = sampleNotebook() as any;
+    expect(validateNotebook(old)).toMatchObject({ arc: { shape: 'conflict', stage: 'setup' }, seeds: [] });
+  });
+  test('a long note drops extra lines, never its rules', () => {
+    const nb: any = base(); nb.story.question = 'Q '.repeat(1100);
+    const text = note(nb, 10);
+    expect(text.length).toBeLessThanOrEqual(2400 + 400);
+    expect(text).toContain("Never write the player character's actions");
   });
 });

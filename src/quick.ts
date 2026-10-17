@@ -1,6 +1,7 @@
 import type { DecisionAnswer, DecisionQuestion, DecisionResult } from 'lumiverse-spindle-types';
 import { describeClock, type StoryClock } from './clock';
 import { dueThreads, type Moment, type Notebook, type Rhythm } from './notebook';
+import { seedPlan } from './note';
 
 /**
  * The quick check: after each reply, a decision model answers a few
@@ -29,7 +30,7 @@ const RHYTHMS: Record<Rhythm, string> = {
 export interface QuickPlan {
   questions: Record<string, DecisionQuestion>;
   /** Question key → what a "yes" marks. */
-  marks: Record<string, { kind: 'step'; thread: string; step: string } | { kind: 'beat'; beat: string }>;
+  marks: Record<string, { kind: 'step'; thread: string; step: string } | { kind: 'beat'; beat: string } | { kind: 'seed'; seed: string; to: 'planted' | 'paid' }>;
 }
 
 export function quickQuestions(notebook: Notebook, now: number | Moment): QuickPlan {
@@ -45,6 +46,19 @@ export function quickQuestions(notebook: Notebook, now: number | Moment): QuickP
     questions[key] = { type: 'noul', instructions: `Does this moment happen in the latest reply? Moment: ${beat.text}`,
       criteria: { true: 'It happens in the latest reply.', false: 'It does not happen in the latest reply.' } };
     marks[key] = { kind: 'beat', beat: beat.id };
+  });
+  // Breadcrumbs: was the offered detail mentioned, and were ready ones brought back?
+  const seeds = seedPlan(notebook, now);
+  if (seeds.plant) {
+    questions.detail_mentioned = { type: 'noul', instructions: `Does the latest reply mention this detail, even briefly or in passing? Detail: ${seeds.plant.detail}`,
+      criteria: { true: 'The detail, or something plainly the same, appears in the latest reply.', false: 'It does not appear.' } };
+    marks.detail_mentioned = { kind: 'seed', seed: seeds.plant.id, to: 'planted' };
+  }
+  seeds.ready.slice(0, 3).forEach((seed, i) => {
+    const key = `callback_${i + 1}`;
+    questions[key] = { type: 'noul', instructions: `Does the latest reply bring back this earlier detail and give it its meaning? Detail: ${seed.detail} Meaning: ${seed.payoff}`,
+      criteria: { true: 'The detail comes back and its meaning lands, or clearly starts to.', false: 'It does not come back, or only in passing without its meaning.' } };
+    marks[key] = { kind: 'seed', seed: seed.id, to: 'paid' };
   });
   questions.rhythm = { type: 'choice', instructions: 'Which best describes the scene at the end of the latest reply?', criteria: RHYTHMS };
   questions.new_turn = { type: 'noul', instructions: 'Did the latest exchange bring in something the story notes do not cover yet: a new named person who matters, a new problem or goal, a big change of place or time, or a choice that changes where the story is heading?',
@@ -79,6 +93,10 @@ export function applyQuick(current: Notebook, plan: QuickPlan, result: DecisionR
     if (mark.kind === 'step') {
       const step = notebook.threads.find(t => t.id === mark.thread)?.steps.find(s => s.id === mark.step);
       if (step?.status === 'waiting') { step.status = 'shown'; step.at = hours; if (reply !== undefined) step.atReply = reply; marked++; }
+    } else if (mark.kind === 'seed') {
+      const seed = notebook.seeds.find(x => x.id === mark.seed);
+      if (seed && mark.to === 'planted' && seed.status === 'waiting') { seed.status = 'planted'; if (reply !== undefined) seed.plantedAt = reply; marked++; }
+      if (seed && mark.to === 'paid' && seed.status === 'planted') { seed.status = 'paid'; if (reply !== undefined) seed.paidAt = reply; marked++; }
     } else {
       const beat = notebook.beats.find(b => b.id === mark.beat);
       if (beat?.status === 'possible') { beat.status = 'happened'; marked++; }

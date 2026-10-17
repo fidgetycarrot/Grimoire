@@ -286,7 +286,8 @@ async function askJson(ask, messages, check, signal) {
 }
 
 // src/notebook.ts
-var LIMITS = Object.freeze({ people: 24, threads: 12, steps: 6, beats: 16, events: 40, truths: 12, text: 600, short: 160 });
+var STAGES = { conflict: ["setup", "rising", "climax", "resolution"], kishotenketsu: ["ki", "sho", "ten", "ketsu"] };
+var LIMITS = Object.freeze({ people: 24, threads: 12, steps: 6, beats: 16, seeds: 12, events: 40, truths: 12, text: 600, short: 160 });
 var ID = /^[a-z0-9][a-z0-9-]{0,40}$/;
 var count = (v) => typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 1e7 ? v : undefined;
 var moment = (now) => typeof now === "number" ? { hours: now } : now;
@@ -432,8 +433,27 @@ function validateNotebook(value) {
       status: choice(b.status, ["possible", "happened", "dropped"], `${path}.status`, "possible")
     };
   }), "beats");
+  const arcInput = record2(input.arc), shape = choice(arcInput.shape, ["conflict", "kishotenketsu"], "arc.shape", "conflict");
+  const stage = arcInput.stage === undefined ? STAGES[shape][0] : arcInput.stage;
+  if (!STAGES[shape].includes(stage))
+    fail(`arc.stage must be one of: ${STAGES[shape].join(", ")}.`);
+  const linkable = new Set([...threadIds, ...beats.map((b) => b.id), "turn"]);
+  const seeds = unique(list(input.seeds, "seeds", LIMITS.seeds).map((item, i) => {
+    const s = record2(item), path = `seeds[${i}]`, pays = typeof s.pays === "string" && linkable.has(s.pays) ? s.pays : "";
+    return {
+      id: id(s.id, `${path}.id`),
+      detail: text(s.detail, `${path}.detail`, LIMITS.short, false),
+      payoff: text(s.payoff, `${path}.payoff`),
+      pays,
+      status: choice(s.status, ["waiting", "planted", "paid", "dropped"], `${path}.status`, "waiting"),
+      ...count(s.plantedAt) !== undefined ? { plantedAt: count(s.plantedAt) } : {},
+      ...count(s.paidAt) !== undefined ? { paidAt: count(s.paidAt) } : {}
+    };
+  }), "seeds");
   return {
     version: 1,
+    arc: { shape, stage, turn: text(arcInput.turn, "arc.turn") },
+    seeds,
     story: {
       question: text(story.question, "story.question", LIMITS.text, false),
       stakes: text(story.stakes, "story.stakes"),
@@ -471,8 +491,15 @@ function mergeRevision(previous, revised, now) {
   for (const beat of previous.beats)
     if (beat.status === "happened" && revised.beats.find((b) => b.id === beat.id)?.status !== "happened")
       failMerge(`Beat "${beat.id}" already happened. Keep it marked as happened.`);
-  const fresh = withoutTimes(revised);
-  return stamp({ ...fresh, threads: fresh.threads.map((thread) => {
+  for (const seed of previous.seeds) {
+    const next = revised.seeds.find((s) => s.id === seed.id);
+    if (!next)
+      failMerge(`Keep seed "${seed.id}" (mark it dropped if it no longer fits).`);
+    if (seed.status !== "waiting" && next.status === "waiting")
+      failMerge(`Seed "${seed.id}" was already planted and can't go back to waiting.`);
+  }
+  const fresh = withoutTimes(holdTurn(previous, revised));
+  return stamp({ ...fresh, seeds: carrySeedTimes(previous, fresh.seeds), threads: fresh.threads.map((thread) => {
     const old = previous.threads.find((t) => t.id === thread.id);
     return { ...thread, ...old?.startAt !== undefined ? { startAt: old.startAt } : {}, ...old?.startReply !== undefined ? { startReply: old.startReply } : {}, steps: thread.steps.map((step) => {
       const before = old?.steps.find((s) => s.id === step.id);
@@ -482,7 +509,7 @@ function mergeRevision(previous, revised, now) {
 }
 function keepTimes(previous, edited, now) {
   const fresh = withoutTimes(edited);
-  return stamp({ ...fresh, threads: fresh.threads.map((thread) => {
+  return stamp({ ...fresh, seeds: carrySeedTimes(previous, fresh.seeds), threads: fresh.threads.map((thread) => {
     const old = previous.threads.find((t) => t.id === thread.id);
     return { ...thread, ...old?.startAt !== undefined ? { startAt: old.startAt } : {}, ...old?.startReply !== undefined ? { startReply: old.startReply } : {}, steps: thread.steps.map((step) => {
       const before = old?.steps.find((s) => s.id === step.id);
@@ -491,11 +518,20 @@ function keepTimes(previous, edited, now) {
   }) }, now);
 }
 function withoutTimes(notebook) {
-  return { ...notebook, threads: notebook.threads.map(({ startAt: _start, startReply: _reply, ...thread }) => ({ ...thread, steps: thread.steps.map(({ at: _at, atReply: _atReply, ...step }) => step) })) };
+  return {
+    ...notebook,
+    seeds: notebook.seeds.map(({ plantedAt: _p, paidAt: _q, ...seed }) => seed),
+    threads: notebook.threads.map(({ startAt: _start, startReply: _reply, ...thread }) => ({ ...thread, steps: thread.steps.map(({ at: _at, atReply: _atReply, ...step }) => step) }))
+  };
 }
 function stamp(notebook, now) {
   const m = moment(now), reply = m.reply;
-  return { ...notebook, threads: notebook.threads.map((thread) => ({
+  const seeds = reply === undefined ? notebook.seeds : notebook.seeds.map((seed) => ({
+    ...seed,
+    ...seed.status !== "waiting" && seed.plantedAt === undefined ? { plantedAt: reply } : {},
+    ...seed.status === "paid" && seed.paidAt === undefined ? { paidAt: reply } : {}
+  }));
+  return { ...notebook, seeds, threads: notebook.threads.map((thread) => ({
     ...thread,
     startAt: thread.startAt ?? m.hours,
     ...thread.startReply === undefined && reply !== undefined ? { startReply: reply } : {},
@@ -503,11 +539,26 @@ function stamp(notebook, now) {
   })) };
 }
 function fillReplies(notebook, reply) {
-  return { ...notebook, threads: notebook.threads.map((thread) => ({
+  return { ...notebook, seeds: notebook.seeds.map((seed) => seed.status !== "waiting" && seed.plantedAt === undefined ? { ...seed, plantedAt: reply } : seed), threads: notebook.threads.map((thread) => ({
     ...thread,
     startReply: thread.startReply ?? reply,
     steps: thread.steps.map((step) => step.status === "waiting" || step.atReply !== undefined ? step : { ...step, atReply: reply })
   })) };
+}
+function carrySeedTimes(previous, seeds) {
+  return seeds.map((seed) => {
+    const old = previous.seeds.find((s) => s.id === seed.id);
+    return { ...seed, ...old?.plantedAt !== undefined ? { plantedAt: old.plantedAt } : {}, ...old?.paidAt !== undefined ? { paidAt: old.paidAt } : {} };
+  });
+}
+function holdTurn(previous, revised) {
+  if (revised.arc.shape !== "kishotenketsu" || revised.arc.stage !== "ten" || previous.arc.shape === "kishotenketsu" && previous.arc.stage === "ten")
+    return revised;
+  const prepared = revised.seeds.filter((s) => s.pays === "turn" && s.status !== "dropped");
+  const planted = prepared.filter((s) => s.status === "planted" || s.status === "paid").length;
+  if (planted >= Math.min(2, prepared.length))
+    return revised;
+  return { ...revised, arc: { ...revised.arc, stage: previous.arc.shape === "kishotenketsu" ? previous.arc.stage : "sho" } };
 }
 function nextStep(thread, now) {
   if (thread.status !== "open")
@@ -581,14 +632,49 @@ var RHYTHM = {
   aftermath: "Pace: a big moment just happened. Leave room for talk and aftermath. Only urgent matters press in.",
   stalled: "Pace: things have been quiet for a while. Let an existing thread move, using one of the developments below."
 };
+var STAGE = {
+  setup: "Arc: setup. Show what is at stake and the first small signs of trouble.",
+  rising: "Arc: rising action. Complications build; each scene should change the situation a little.",
+  climax: "Arc: climax. The main conflict comes to a head; let it play out fully.",
+  resolution: "Arc: resolution. Let consequences settle and leave room for what it all meant.",
+  ki: "Arc: introduction. Let people, places, and routines show themselves. No trouble is needed.",
+  sho: "Arc: development. Deepen what is here: closeness, habits, small changes. Do not escalate or invent conflict.",
+  ten: "Arc: the turn. Something unexpected casts what came before in a new light. It does not have to be a threat.",
+  ketsu: "Arc: bringing it together. Let the turn and what came before settle into something new: an understanding, a choice, a changed bond."
+};
+var DEEPENING = "Pace: the scene is deepening. Let it grow through what people say and do; there is no need to escalate.";
+var PLANT_GAP = 4;
+function seedPlan(notebook, now) {
+  const m = typeof now === "number" ? { hours: now } : now, reply = m.reply, gap = m.waits?.steady ?? 15;
+  const planted = notebook.seeds.filter((s) => s.status === "planted");
+  const last = Math.max(-Infinity, ...notebook.seeds.map((s) => s.plantedAt ?? -Infinity));
+  const open = (s) => !s.pays || s.pays === "turn" || notebook.threads.some((t) => t.id === s.pays && t.status !== "closed") || notebook.beats.some((b) => b.id === s.pays && b.status === "possible");
+  const plant = notebook.rhythm === "peak" || reply !== undefined && reply - last < PLANT_GAP ? null : notebook.seeds.find((s) => s.status === "waiting" && open(s)) ?? null;
+  const atTurn = notebook.arc.shape === "kishotenketsu" && notebook.arc.stage === "ten";
+  const ready = planted.filter((s) => (s.pays === "turn" ? atTurn : reply !== undefined && s.plantedAt !== undefined && reply - s.plantedAt >= gap) && open(s));
+  return { plant, ready };
+}
 function buildNote(input) {
   const { notebook, pace, now } = input, lines = [];
   const present = presentPeople(notebook, input.recent, input.trackerPresent);
   const quietTime = pace === "quiet" || pace === "auto" && (notebook.rhythm === "aftermath" || notebook.rhythm === "peak");
   lines.push("Grimoire: private story guidance for the narrator. Never mention, quote, or explain it.");
   lines.push(`${input.clockMayLag ? "Story time at the last check-up" : "Story time"}: ${describeClock(input.clock)}.${input.clockMayLag ? " Time may have moved on since; the chat decides what time it is now." : ""}${input.skipHours ? ` About ${describeDuration(input.skipHours)} have passed since the last message: open with that gap and what changed during it.` : ""}`);
-  lines.push(pace === "auto" ? RHYTHM[notebook.rhythm] : PACE[pace]);
+  const gentle = notebook.arc.shape === "kishotenketsu" && notebook.rhythm === "rising";
+  lines.push(pace === "auto" ? gentle ? DEEPENING : RHYTHM[notebook.rhythm] : PACE[pace]);
+  if (STAGE[notebook.arc.stage])
+    lines.push(STAGE[notebook.arc.stage]);
   lines.push(`What the story is about: ${notebook.story.question}`);
+  const seeds = seedPlan(notebook, now), used = new Set;
+  const callback = (seed) => {
+    used.add(seed.id);
+    return `Bring back something mentioned earlier: "${seed.detail}" (${seed.payoff.replace(/[.!?]+$/, "")}).`;
+  };
+  if (notebook.arc.shape === "kishotenketsu" && notebook.arc.stage === "ten" && notebook.arc.turn) {
+    lines.push(`The turn: ${end(notebook.arc.turn)} Let it land through what happens, then give people room to react.`);
+    for (const seed of seeds.ready.filter((s) => s.pays === "turn").slice(0, 2))
+      lines.push(`- ${callback(seed)}`);
+  }
   const due = dueThreads(notebook, now);
   const urgent = due.filter((d) => d.thread.speed === "urgent").slice(0, 2);
   const slower = quietTime ? [] : due.filter((d) => d.thread.speed !== "urgent").slice(0, pace === "fast" ? 2 : 1);
@@ -597,7 +683,8 @@ function buildNote(input) {
     lines.push("Developments that are due (bring in only if they fit what is happening):");
     for (const { thread, step } of developments) {
       const when = thread.speed === "urgent" ? "this can interrupt" : pace === "fast" ? "bring this in soon" : "at a natural break, such as the end of this scene";
-      lines.push(`- ${thread.title}: ${step.sign || step.text} (${when}). Why it matters: ${thread.hint || thread.why}`);
+      const tie = seeds.ready.find((s) => s.pays === thread.id && !used.has(s.id));
+      lines.push(`- ${thread.title}: ${step.sign || step.text} (${when}). Why it matters: ${thread.hint || thread.why}${tie ? ` ${callback(tie)}` : ""}`);
     }
   }
   const shown = new Set(developments.map((d) => d.thread.id));
@@ -613,14 +700,27 @@ function buildNote(input) {
       lines.push(`- ${person.name}${person.role ? ` (${person.role})` : ""}: wants ${end(person.wants || "nothing stated yet")}${person.doing ? ` Currently: ${end(person.doing)}` : ""}${person.hint ? ` Play them as: ${end(person.hint)}` : ""}`);
   }
   const beat = notebook.beats.find((b) => b.status === "possible" && (!quietTime || b.intensity === "low") && (!b.thread || notebook.threads.find((t) => t.id === b.thread)?.status === "open"));
-  if (beat && (pace === "fast" || !developments.length || notebook.rhythm === "stalled"))
-    lines.push(`A possible next moment, only if it follows naturally: ${beat.text}${beat.conditions ? ` (only if ${beat.conditions})` : ""}. Purpose: ${beat.purpose}`);
+  if (beat && (pace === "fast" || !developments.length || notebook.rhythm === "stalled")) {
+    const tie = seeds.ready.find((s) => s.pays === beat.id && !used.has(s.id));
+    lines.push(`A possible next moment, only if it follows naturally: ${beat.text}${beat.conditions ? ` (only if ${beat.conditions})` : ""}. Purpose: ${beat.purpose}${tie ? ` ${callback(tie)}` : ""}`);
+  }
+  const loose = !developments.length && (notebook.rhythm === "calm" || notebook.rhythm === "stalled") ? seeds.ready.find((s) => !used.has(s.id) && s.pays !== "turn") : undefined;
+  if (loose) {
+    const line = callback(loose);
+    lines.push(`If it fits, now is a good time to ${line.charAt(0).toLowerCase()}${line.slice(1)}`);
+  }
+  if (seeds.plant)
+    lines.push(`A small detail to mention in passing, without drawing attention to it: ${end(seeds.plant.detail)}`);
   const newcomer = !quietTime && (notebook.rhythm === "calm" || notebook.rhythm === "stalled" || pace === "fast") ? notebook.people.find((p) => p.status === "active" && !p.met && !present.includes(p)) : undefined;
   if (newcomer && lines.length < 16)
     lines.push(`Someone who could appear if it fits: ${newcomer.name}${newcomer.role ? `, ${newcomer.role}` : ""}. Wants ${newcomer.wants || "something of their own"}.`);
-  lines.push("This guidance is conditional. The latest messages decide what actually happened; skip anything they make irrelevant. Never write the player character's actions, words, thoughts, or feelings. Keep secrets hidden and let them show only through small details.");
-  return lines.join(`
-`).slice(0, 2400);
+  const rules = "This guidance is conditional. The latest messages decide what actually happened; skip anything they make irrelevant. Never write the player character's actions, words, thoughts, or feelings. Keep secrets hidden and let them show only through small details.";
+  while (lines.length > 4 && lines.join(`
+`).length + rules.length + 1 > 2400)
+    lines.pop();
+  return `${lines.join(`
+`)}
+${rules}`;
 }
 function paceLine(pace, notebook) {
   return pace === "auto" ? RHYTHM[notebook.rhythm] : PACE[pace];
@@ -636,6 +736,8 @@ var TRACKER_METHODS = `- {"kind":"variable","name":"exact saved variable name"}
 `;
 var SHAPE = `{
  "story": {"question": "what the story is about and its central question", "stakes": "what can be won or lost", "direction": "roughly where it could end, as possibilities", "hiddenTruth": ["established background facts the player does not know yet"], "twist": "a twist, or empty"},
+ "arc": {"shape": "conflict|kishotenketsu", "stage": "setup|rising|climax|resolution for conflict; ki|sho|ten|ketsu for kishotenketsu", "turn": "kishotenketsu only: what the turn is, or empty"},
+ "seeds": [{"id": "green-wax", "detail": "an ordinary-looking detail the narrator can mention in passing", "payoff": "what it turns out to mean later", "pays": "the thread id, beat id, or turn it pays into", "status": "waiting|planted|paid|dropped"}],
  "people": [{"id": "cole", "name": "Cole", "aliases": [], "role": "short role", "wants": "what they want", "doing": "what they are doing about it right now, on or off screen", "hint": "a narrator-safe note on how to play them, with no secrets", "met": false, "status": "active"}],
  "threads": [{"id": "stolen-ring", "title": "The stolen ring", "speed": "urgent|steady|slow", "why": "why it matters, including hidden causes", "hint": "why it matters, in narrator-safe words with no secrets", "people": ["cole"], "status": "open", "closedReason": "", "ifFollowed": "what following it leads to", "ifIgnored": "what happens if it is left alone", "steps": [{"id": "owner-notices", "text": "what happens", "sign": "how the player could notice it", "afterHours": 24, "status": "waiting"}]}],
  "beats": [{"id": "ring-recognized", "text": "a moment the story could reach", "purpose": "what it sets up or pays off", "conditions": "what must be true first", "thread": "stolen-ring", "intensity": "low|high", "status": "possible"}],
@@ -653,7 +755,9 @@ var CRAFT = [
   "5. Threads are open problems or opportunities, one problem each: an unrelated subplot is its own thread. Each has a speed (urgent: minutes to hours; steady: a day to several days; slow: a week or more) and two to five steps toward its consequence. Most steps are signs the player could notice; only the last is the consequence itself. afterHours is story time after the previous step (or the thread's start) before the step becomes due.",
   "5b. The story is open-ended: plan its first arc (the story question and two to four threads); later check-ups open new arcs as these resolve. Pacing is the shape of the arc, not just the next scene. Stagger the threads so they come to a head at different times, with room between them. Only the scene's immediate problem should come to a head soon; the others begin with small signs and build. Mix speeds: usually no more than one urgent thread, and at least one slow one. Keep story time realistic: Grimoire also moves a thread on after a number of replies, so never squeeze story time to keep things moving. If the card fixes an event at a certain time (a show tonight, a deadline), use it, but let only the threads that truly depend on it peak there.",
   "6. Beats are possible moments, not a script. Each says what it sets up or pays off and what must be true first. Most should be low intensity; plan no more than two high-intensity moments at a time, so big moments stay big.",
-  "6b. Prefer causes people chose over coincidence. If two threads connect, it should be because someone wanted something, not luck. One coincidence to start a story is fine; more feel contrived.",
+  "6a. Arc shape. Choose the shape that fits this arc: conflict when the story runs on danger, rivalry, mystery, or a problem to beat (setup, rising, climax, resolution); kishotenketsu when it runs on people, closeness, comfort, desire, discovery, or everyday life (ki: introduce people, places, routines; sho: develop and deepen them without escalating; ten: a turn, something unexpected that casts what came before in a new light, which need not be a threat; ketsu: bring the turn and what came before together into a new understanding). In a kishotenketsu arc, threads are developments rather than problems: if one is left alone, life simply carries on; its steps are small changes that lead toward the turn. A small conflict can still live inside a kishotenketsu arc, and the next arc may take the other shape. Put the turn in arc.turn; it is the natural place for a twist.",
+  "6b. Seeds are breadcrumbs: four to eight ordinary-looking details (an object, a habit, a name, a stray remark, a sound) the narrator can mention in passing now, each paid off later in a thread step, a beat, or the turn. The detail must look unremarkable and give nothing away on its own; the payoff says what it turns out to mean. A kishotenketsu turn needs at least two seeds that prepare it, so it feels earned rather than random. Use details the card and chat already contain when you can.",
+  "6c. Prefer causes people chose over coincidence. If two threads connect, it should be because someone wanted something, not luck. One coincidence to start a story is fine; more feel contrived.",
   "7. The player character belongs to the player. Never plan their decisions, words, or feelings; plan the world around them.",
   '8. Keep secrets out of "hint" fields: those are shown to the narrator. Secrets go in "hiddenTruth" and "why".',
   "9. Ordinary details may stay ordinary. A few well-tied threads beat many loose ones: about two to four open threads."
@@ -668,7 +772,7 @@ Return {"record": "..."}: the story so far, rewritten to include this part. Keep
   ];
 }
 function creationMessages(material, preferences) {
-  const twist = preferences.twist ? 'A twist is allowed. If it fits, hide one in "hiddenTruth" and "twist", and plant clues as thread steps. It is optional, not the point.' : 'Do not plan a twist. Leave "twist" empty.';
+  const twist = preferences.twist ? 'A twist is allowed. If it fits, hide one in "hiddenTruth" and "twist" (or arc.turn for kishotenketsu), and prepare it with seeds. It is optional, not the point.' : 'Do not plan a twist. Leave "twist" empty; a kishotenketsu turn should then be a gentle change of view rather than a reveal.';
   return [
     { role: "system", content: `${SAFETY}
 You write a private story notebook for an ongoing roleplay chat. It gives the narrator a story of its own: where it is going, why, and how fast. The player must not see it.
@@ -693,6 +797,8 @@ Rules for the update:
 - Keep every person and thread. Mark people "gone" and close threads with a closedReason instead of removing them. Something that happened cannot un-happen.
 - People invented in the chat: add them only if they matter (they act, recur, or tie into a thread). Mark people met once the player has met them.
 - Revise future beats and plans when the player's choices change what makes sense. Keep the pacing rules below: if waiting steps are packed too tightly (several threads peaking on the same night, steady steps hours apart), spread them out by raising afterHours on waiting steps. Change how the story gets somewhere, not why, unless the player has made the old why impossible. Do not force the player back onto an old plan.
+- Seeds: mark a seed "planted" once the chat has mentioned its detail, and "paid" once it came back with its meaning. Never move a seed back to waiting. When the narrator mentions a striking detail in passing that isn't a seed, consider making it one and planning where it pays off; that is how the story stays cohesive.
+- Arc stage: move it on when the story has: ki to sho once people and place are established; sho to ten only after development has had room and the turn's seeds are planted; ten to ketsu once the turn has landed; for conflict, setup to rising to climax to resolution the same way.
 - When most threads have closed or the story question has been answered, open the next arc: a new story question if needed, and new threads that grow from what has happened and from what people now want. The story goes on as long as the player plays.
 - Add threads the player started. Tie useful invented details to threads or people. Some presets add panels to each reply (scene notes, character thoughts, "seeds"): what they say happened in the scene happened, but their guesses and seeds are the narrator's inventions. Fit them to the notebook's truth where they can; never let them overwrite it. Keep the notebook compact: merge old events, drop beats that no longer fit (mark them dropped).
 - Clock: ${input.clockOwner.day === "tracker" && input.clockOwner.hour === "tracker" ? "the tracker owns the time; copy its current day and hour." : `set the story time as of the last message. The tracker owns: ${[input.clockOwner.day === "tracker" ? "the day" : "", input.clockOwner.hour === "tracker" ? "the hour" : ""].filter(Boolean).join(" and ") || "nothing"}; you set the rest.`} Time only moves forward. Do not count the same time twice.
@@ -862,6 +968,34 @@ function tidyNotebook(value, previous) {
         next.status = "happened";
     }
   beats = cap(beats, LIMITS.beats, (b) => b.status === "happened" ? 4 : b.status === "possible" ? 2 : 0);
+  const linkable = new Map([...threads.map((t) => [t.id, t.id]), ...threads.map((t) => [slug(t.title), t.id]), ...beats.map((b) => [b.id, b.id]), ["turn", "turn"]]);
+  let seeds = ids(array(input.seeds).map((raw) => {
+    const s = record3(raw), detail = plain(s.detail, LIMITS.short) || plain(s.text, LIMITS.short);
+    return {
+      id: slug(s.id) || slug(detail).slice(0, 30),
+      detail,
+      payoff: plain(s.payoff),
+      pays: linkable.get(slug(s.pays)) ?? "",
+      status: pick(s.status, ["waiting", "planted", "paid", "dropped"], { mentioned: "planted", shown: "planted", used: "paid", "paid-off": "paid", resolved: "paid", done: "paid", cancelled: "dropped", skipped: "dropped" }, "waiting")
+    };
+  }).filter((s) => s.detail), "seed");
+  if (previous)
+    for (const old of previous.seeds) {
+      const next = seeds.find((s) => s.id === old.id);
+      if (!next)
+        seeds.push(structuredClone(old));
+      else if (old.status !== "waiting" && next.status === "waiting")
+        next.status = old.status;
+    }
+  const keptSeeds = new Set(previous?.seeds.map((s) => s.id));
+  seeds = cap(seeds, LIMITS.seeds, (s) => (keptSeeds.has(s.id) ? 4 : 0) + (s.status === "planted" ? 2 : s.status === "waiting" ? 1 : 0));
+  const a = record3(input.arc), shapeWord = typeof a.shape === "string" ? a.shape.toLowerCase().replace(/[^a-z]/g, "") : "";
+  const shape = shapeWord.startsWith("kish") ? "kishotenketsu" : shapeWord === "conflict" ? "conflict" : previous?.arc.shape ?? "conflict";
+  const stageWord = typeof a.stage === "string" ? a.stage.toLowerCase().normalize("NFKD").replace(/[^a-z]/g, "") : "";
+  const STAGE_WORDS = { introduction: "ki", development: "sho", shou: "sho", turn: "ten", twist: "ten", conclusion: "ketsu", reconciliation: "ketsu", together: "ketsu", risingaction: "rising", build: "rising", resolve: "resolution", aftermath: "resolution" };
+  const named = STAGES[shape].includes(stageWord) ? stageWord : STAGE_WORDS[stageWord];
+  const stage = named && STAGES[shape].includes(named) ? named : previous && previous.arc.shape === shape ? previous.arc.stage : STAGES[shape][0];
+  const arc = { shape, stage, turn: plain(a.turn) };
   let events = array(input.events).map((e) => plain(typeof e === "string" ? e : record3(e).text)).filter(Boolean);
   if (events.length > LIMITS.events) {
     const fold = events.length - LIMITS.events + 1;
@@ -880,9 +1014,11 @@ function tidyNotebook(value, previous) {
       hiddenTruth: array(story.hiddenTruth).map((x) => plain(x)).filter(Boolean).slice(0, LIMITS.truths),
       twist: plain(story.twist)
     },
+    arc,
     people,
     threads,
     beats,
+    seeds,
     events,
     clock,
     rhythm: pick(input.rhythm, ["calm", "rising", "peak", "aftermath", "stalled"], RHYTHM2, "calm"),
@@ -919,6 +1055,24 @@ function quickQuestions(notebook, now) {
     };
     marks[key] = { kind: "beat", beat: beat.id };
   });
+  const seeds = seedPlan(notebook, now);
+  if (seeds.plant) {
+    questions.detail_mentioned = {
+      type: "noul",
+      instructions: `Does the latest reply mention this detail, even briefly or in passing? Detail: ${seeds.plant.detail}`,
+      criteria: { true: "The detail, or something plainly the same, appears in the latest reply.", false: "It does not appear." }
+    };
+    marks.detail_mentioned = { kind: "seed", seed: seeds.plant.id, to: "planted" };
+  }
+  seeds.ready.slice(0, 3).forEach((seed, i) => {
+    const key = `callback_${i + 1}`;
+    questions[key] = {
+      type: "noul",
+      instructions: `Does the latest reply bring back this earlier detail and give it its meaning? Detail: ${seed.detail} Meaning: ${seed.payoff}`,
+      criteria: { true: "The detail comes back and its meaning lands, or clearly starts to.", false: "It does not come back, or only in passing without its meaning." }
+    };
+    marks[key] = { kind: "seed", seed: seed.id, to: "paid" };
+  });
   questions.rhythm = { type: "choice", instructions: "Which best describes the scene at the end of the latest reply?", criteria: RHYTHMS };
   questions.new_turn = {
     type: "noul",
@@ -952,6 +1106,20 @@ function applyQuick(current, plan, result, now) {
         step.at = hours;
         if (reply !== undefined)
           step.atReply = reply;
+        marked++;
+      }
+    } else if (mark.kind === "seed") {
+      const seed = notebook.seeds.find((x) => x.id === mark.seed);
+      if (seed && mark.to === "planted" && seed.status === "waiting") {
+        seed.status = "planted";
+        if (reply !== undefined)
+          seed.plantedAt = reply;
+        marked++;
+      }
+      if (seed && mark.to === "paid" && seed.status === "planted") {
+        seed.status = "paid";
+        if (reply !== undefined)
+          seed.paidAt = reply;
         marked++;
       }
     } else {
@@ -1269,7 +1437,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.3.1";
+var VERSION = "0.4.0";
 var MAX_VERSIONS = 16;
 var DEFAULT_SETTINGS = { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto", quick: { enabled: false, connectionId: "", model: "" }, wait: "medium" };
 var DEFAULT_PREFERENCES = { tone: "balanced", twist: true };

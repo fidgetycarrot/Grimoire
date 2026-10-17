@@ -174,6 +174,10 @@ export function setup(ctx: SpindleFrontendContext) {
     if (notebook.story.stakes) about.append(el('p', 'gm-meta', `At stake: ${notebook.story.stakes}`));
     if (notebook.story.direction) about.append(el('p', 'gm-meta', `Could end: ${notebook.story.direction}`));
     if (notebook.story.hiddenTruth.length || notebook.story.twist) { const s = section('What is really going on'), ul = el('ul'); for (const t of notebook.story.hiddenTruth) ul.append(el('li', '', t)); if (notebook.story.twist) ul.append(el('li', '', `Twist: ${notebook.story.twist}`)); s.append(ul); }
+    const STAGE_WORDS: Record<string, string> = { setup: 'Setup', rising: 'Rising action', climax: 'Climax', resolution: 'Resolution', ki: 'Introduction', sho: 'Development', ten: 'The turn', ketsu: 'Bringing it together' };
+    const arc = section('Shape of this part');
+    arc.append(el('p', '', `${notebook.arc.shape === 'kishotenketsu' ? 'Kishōtenketsu' : 'Conflict'}: ${STAGE_WORDS[notebook.arc.stage] ?? notebook.arc.stage}`));
+    if (notebook.arc.turn) arc.append(el('p', 'gm-meta', `The turn: ${notebook.arc.turn}`));
     const people = section('People');
     for (const p of notebook.people) { const e = el('div', 'gm-entry'); const name = el('p'); name.append(el('strong', '', p.name), ...(p.role ? [document.createTextNode(`, ${p.role}`)] : [])); if (!p.met) name.append(el('span', 'gm-chip', 'not met')); if (p.status === 'gone') name.append(el('span', 'gm-chip', 'gone')); e.append(name, el('p', 'gm-small', `Wants ${p.wants}`), ...(p.doing ? [el('p', 'gm-meta', `Doing: ${p.doing}`)] : [])); people.append(e); }
     const threads = section('Threads');
@@ -188,6 +192,11 @@ export function setup(ctx: SpindleFrontendContext) {
     const beats = section('Possible moments'), ul = el('ul');
     for (const b of notebook.beats) { const li = el('li', 'gm-small', b.text); if (b.status !== 'possible') { const c = el('span', 'gm-chip', b.status); if (b.status === 'happened') c.dataset.tone = 'done'; li.append(c); } ul.append(li); }
     beats.append(ul);
+    if (notebook.seeds.length) {
+      const s = section('Breadcrumbs'), list = el('ul');
+      for (const seed of notebook.seeds) { const li = el('li', 'gm-small', seed.detail); if (seed.status !== 'waiting') { const c = el('span', 'gm-chip', seed.status); if (seed.status === 'paid') c.dataset.tone = 'done'; li.append(c); } li.append(el('div', 'gm-meta', `Later: ${seed.payoff}`)); list.append(li); }
+      s.append(list);
+    }
     if (notebook.events.length) { const s = section('What has happened'), list = el('ul'); for (const ev of notebook.events) list.append(el('li', 'gm-small', ev)); s.append(list); }
     return book;
   }
