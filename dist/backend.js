@@ -5,6 +5,7 @@ var PARTS = [
   [/\b(?:dawn|daybreak|first light)\b/i, 5],
   [/\bsunrise\b/i, 6],
   [/\b(?:early morning)\b/i, 7],
+  [/\blate morning\b/i, 11],
   [/\bmorning\b/i, 9],
   [/\b(?:midday|noon)\b/i, 12],
   [/\b(?:late afternoon)\b/i, 17],
@@ -493,7 +494,7 @@ function nextStep(thread, now) {
   if (index < 0)
     return null;
   const before = thread.steps.slice(0, index).reverse().find((step) => step.at !== undefined);
-  const base = before?.at ?? thread.startAt ?? now;
+  const base = Math.min(before?.at ?? thread.startAt ?? now, now);
   const step = thread.steps[index];
   return { step, due: now >= base + step.afterHours };
 }
@@ -838,12 +839,9 @@ function tidyNotebook(value, previous) {
     const fold = events.length - LIMITS.events + 1;
     events = [plain(`Earlier: ${events.slice(0, fold).join("; ")}`), ...events.slice(fold)];
   }
-  const c = record3(input.clock), day = Math.round(Number(c.day)), hour = Number(c.hour);
-  const clock = {
-    day: Number.isFinite(day) && day >= 0 && day <= 1e7 ? day : previous?.clock.day ?? 1,
-    hour: c.hour !== null && c.hour !== undefined && c.hour !== "" && Number.isFinite(hour) && hour >= 0 && hour < 24 ? hour : null,
-    label: plain(c.label, LIMITS.short)
-  };
+  const c = record3(input.clock), day = Math.round(Number(c.day)), hour = Number(c.hour), label = plain(c.label, LIMITS.short);
+  const given = c.hour !== null && c.hour !== undefined && c.hour !== "" && Number.isFinite(hour) && hour >= 0 && hour < 24 ? hour : null;
+  const clock = { day: Number.isFinite(day) && day >= 0 && day <= 1e7 ? day : previous?.clock.day ?? 1, hour: given ?? readTime(label)?.hour ?? null, label };
   const question = plain(story.question) || plain(story.direction) || plain(story.stakes) || previous?.story.question || "";
   return {
     version: 1,
@@ -1188,7 +1186,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.2.2";
+var VERSION = "0.2.3";
 var MAX_VERSIONS = 16;
 var DEFAULT_SETTINGS = { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto", quick: { enabled: false, connectionId: "", model: "" } };
 var DEFAULT_PREFERENCES = { length: "medium", tone: "balanced", twist: true };
@@ -1828,7 +1826,7 @@ class NotebookController {
     }
     const findTracker = !state.recipe.fields.length && !state.trackerTried && since >= 1;
     const urgent = !(settings.quick.enabled && this.decisionsReady()) && since >= 2 && full.reason !== "Checking on an urgent development" && dueThreads(live.version.notebook, live.now).some((d) => d.thread.speed === "urgent");
-    const reason = state.needsCheck ? state.needsCheck : unmatched ? "The chat changed before the notebook was written" : extra ? extra : moved ? "The scene moved" : jumped ? "Time moved on" : findTracker ? "Looking for your preset\u2019s tracker" : urgent ? "Checking on an urgent development" : since >= settings.every ? `${since} replies since the last update` : "";
+    const reason = state.needsCheck ? state.needsCheck.startsWith("The chat changed") ? "Caught up after the chat changed" : state.needsCheck : unmatched ? "The chat changed before the notebook was written" : extra ? extra : moved ? "The scene moved" : jumped ? "Time moved on" : findTracker ? "Looking for your preset\u2019s tracker" : urgent ? "Checking on an urgent development" : since >= settings.every ? `${since} replies since the last update` : "";
     if (findTracker)
       state.trackerTried = true;
     await this.save(state);

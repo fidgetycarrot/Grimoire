@@ -498,7 +498,7 @@ export class NotebookController {
     // An urgent development was offered: see whether it happened before offering it again, once per stretch.
     // The quick check answers this itself, so it is only needed without one.
     const urgent = !(settings.quick.enabled && this.decisionsReady()) && since >= 2 && full.reason !== 'Checking on an urgent development' && dueThreads(live.version.notebook, live.now).some(d => d.thread.speed === 'urgent');
-    const reason = state.needsCheck ? state.needsCheck : unmatched ? 'The chat changed before the notebook was written' : extra ? extra : moved ? 'The scene moved' : jumped ? 'Time moved on'
+    const reason = state.needsCheck ? (state.needsCheck.startsWith('The chat changed') ? 'Caught up after the chat changed' : state.needsCheck) : unmatched ? 'The chat changed before the notebook was written' : extra ? extra : moved ? 'The scene moved' : jumped ? 'Time moved on'
       : findTracker ? 'Looking for your preset’s tracker' : urgent ? 'Checking on an urgent development' : since >= settings.every ? `${since} replies since the last update` : '';
     if (findTracker) state.trackerTried = true;
     await this.save(state);

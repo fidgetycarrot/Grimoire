@@ -53,13 +53,13 @@ function nextStep(thread, now) {
   if (index < 0)
     return null;
   const before = thread.steps.slice(0, index).reverse().find((step) => step.at !== undefined);
-  const base = before?.at ?? thread.startAt ?? now;
+  const base = Math.min(before?.at ?? thread.startAt ?? now, now);
   const step = thread.steps[index];
   return { step, due: now >= base + step.afterHours };
 }
 
 // src/types.ts
-var VERSION = "0.2.2";
+var VERSION = "0.2.3";
 
 // src/frontend.ts
 var ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8 3v18"/><path d="M12 8h3M12 12h3"/></svg>';

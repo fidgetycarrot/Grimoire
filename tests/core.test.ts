@@ -342,3 +342,20 @@ describe('finding a tracker without a model', () => {
     expect(guessRecipe([]).fields).toEqual([]);
   });
 });
+
+describe('clock guesses', () => {
+  const { tidyNotebook } = require('../src/tidy');
+  test('a thread never counts as starting in the future', () => {
+    // Written while the hour was unknown (noon assumed); the tracker then said 11:26.
+    const nb = stamp(validateNotebook(sampleNotebook()), absoluteHours({ day: 1, hour: null }));
+    nb.threads[1].steps[0].afterHours = 0;
+    expect(nextStep(nb.threads[1], absoluteHours({ day: 1, hour: 11.43 }))!.due).toBe(true);
+    expect(nextStep(nb.threads[0], absoluteHours({ day: 1, hour: 11.43 }))!.due).toBe(false);
+  });
+  test('words like late morning give an hour when the model leaves it out', () => {
+    const raw: any = sampleNotebook(); raw.clock = { day: 1, hour: null, label: 'Day 1, late morning on the show floor' };
+    expect(validateNotebook(tidyNotebook(raw)).clock.hour).toBe(11);
+    raw.clock = { day: 1, hour: null, label: 'Sometime' };
+    expect(validateNotebook(tidyNotebook(raw)).clock.hour).toBeNull();
+  });
+});

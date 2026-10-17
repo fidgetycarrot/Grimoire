@@ -180,7 +180,9 @@ export function nextStep(thread: Thread, now: number): { step: Step; due: boolea
   const index = thread.steps.findIndex(step => step.status === 'waiting');
   if (index < 0) return null;
   const before = thread.steps.slice(0, index).reverse().find(step => step.at !== undefined);
-  const base = before?.at ?? thread.startAt ?? now;
+  // Nothing starts in the future. A clock that turned out earlier than first guessed
+  // (the notebook assumed noon, then the tracker said 11:20) counts from now.
+  const base = Math.min(before?.at ?? thread.startAt ?? now, now);
   const step = thread.steps[index];
   return { step, due: now >= base + step.afterHours };
 }

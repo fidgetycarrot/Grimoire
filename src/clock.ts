@@ -9,7 +9,7 @@ export interface DayReading { day: number; kind: 'count' | 'date' }
 
 const PARTS: Array<[RegExp, number]> = [
   [/\bmidnight\b/i, 0], [/\b(?:dawn|daybreak|first light)\b/i, 5], [/\bsunrise\b/i, 6], [/\b(?:early morning)\b/i, 7],
-  [/\bmorning\b/i, 9], [/\b(?:midday|noon)\b/i, 12], [/\b(?:late afternoon)\b/i, 17], [/\bafternoon\b/i, 15],
+  [/\blate morning\b/i, 11], [/\bmorning\b/i, 9], [/\b(?:midday|noon)\b/i, 12], [/\b(?:late afternoon)\b/i, 17], [/\bafternoon\b/i, 15],
   [/\b(?:dusk|sunset|twilight)\b/i, 18], [/\bevening\b/i, 19], [/\b(?:late night)\b/i, 1], [/\bnight\b/i, 22],
 ];
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];

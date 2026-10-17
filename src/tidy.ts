@@ -1,3 +1,4 @@
+import { readTime } from './clock';
 import { LIMITS, type Notebook } from './notebook';
 
 /**
@@ -135,9 +136,10 @@ export function tidyNotebook(value: unknown, previous?: Notebook): unknown {
   let events = array(input.events).map(e => plain(typeof e === 'string' ? e : record(e).text)).filter(Boolean);
   if (events.length > LIMITS.events) { const fold = events.length - LIMITS.events + 1; events = [plain(`Earlier: ${events.slice(0, fold).join('; ')}`), ...events.slice(fold)]; }
 
-  const c = record(input.clock), day = Math.round(Number(c.day)), hour = Number(c.hour);
-  const clock = { day: Number.isFinite(day) && day >= 0 && day <= 10_000_000 ? day : previous?.clock.day ?? 1,
-    hour: c.hour !== null && c.hour !== undefined && c.hour !== '' && Number.isFinite(hour) && hour >= 0 && hour < 24 ? hour : null, label: plain(c.label, LIMITS.short) };
+  const c = record(input.clock), day = Math.round(Number(c.day)), hour = Number(c.hour), label = plain(c.label, LIMITS.short);
+  const given = c.hour !== null && c.hour !== undefined && c.hour !== '' && Number.isFinite(hour) && hour >= 0 && hour < 24 ? hour : null;
+  // No hour but words like "late morning": take the hour those words mean, rather than leaving it to a noon guess.
+  const clock = { day: Number.isFinite(day) && day >= 0 && day <= 10_000_000 ? day : previous?.clock.day ?? 1, hour: given ?? readTime(label)?.hour ?? null, label };
 
   const question = plain(story.question) || plain(story.direction) || plain(story.stakes) || previous?.story.question || '';
   return {
