@@ -6,7 +6,7 @@ import type { FieldCheck, Recipe } from './tracker';
 import type { Glance, SkipOffer } from './skip';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.4.1';
+export const VERSION = '0.5.0';
 export const MAX_VERSIONS = 16;
 
 /** One saved state of the notebook and the chat history it describes. */
@@ -27,6 +27,10 @@ export interface ChatState {
   quick: { at: number; ok: boolean; error: string } | null;
   /** The reply count when the player last waved off a time-skip suggestion. */
   skipDismissedAt: number;
+  /** Threads the quick check found no longer fit for now; left out of the note until a check-up decides. */
+  held: string[];
+  /** The reply count when the story changed direction; the next check-up reworks the notebook. Null when none is due. */
+  resync: number | null;
   job: Job | null; updatedAt: number;
 }
 /** The quick check after each reply. An empty connection means the default decision connection; an empty model means the connection's model. */
@@ -51,6 +55,8 @@ export interface ChatView {
   skipOffer: SkipOffer | null;
   /** Shapes and counts only, for the spoiler-free glance. */
   glance: Glance | null;
+  /** The story changed direction and Grimoire is reworking its plans. */
+  reworking: boolean;
 }
 export interface Snapshot {
   version: string; permissions: string[]; connections: Array<{ id: string; name: string; model: string }>;

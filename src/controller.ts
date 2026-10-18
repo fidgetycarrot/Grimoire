@@ -81,6 +81,7 @@ export class NotebookController {
         version: 1, chatId, enabled: saved.enabled === true, pace: PACES.includes(saved.pace as Pace) ? saved.pace as Pace : 'auto', preferences: validPreferences(saved.preferences),
         versions, recipe: validateRecipe(saved.recipe).recipe, checks: Array.isArray(saved.checks) ? saved.checks as ChatState['checks'] : [],
         skipHours: Number(saved.skipHours) > 0 ? Number(saved.skipHours) : 0, skipTurn: Number(saved.skipTurn) > 0 ? Number(saved.skipTurn) : 0, needsCheck: typeof saved.needsCheck === 'string' ? saved.needsCheck : '', trackerTried: saved.trackerTried === true, skipDismissedAt: Number(saved.skipDismissedAt) > 0 ? Number(saved.skipDismissedAt) : 0,
+        held: Array.isArray(saved.held) ? saved.held.filter((x): x is string => typeof x === 'string').slice(0, 12) : [], resync: Number.isInteger(saved.resync) ? Number(saved.resync) : null,
         quick: saved.quick && typeof saved.quick === 'object' ? { at: Number(record(saved.quick).at) || 0, ok: record(saved.quick).ok === true, error: String(record(saved.quick).error ?? '').slice(0, 200) } : null,
         // A job cannot survive a restart; its request may or may not have finished.
         job: job && job.status === 'running' && !this.running.has(chatId) ? { ...job, status: 'failed', label: 'Stopped when Lumiverse restarted', error: 'Run it again when ready.' } : job,
@@ -96,7 +97,7 @@ export class NotebookController {
     await this.api.userStorage.setJson(this.path(state.chatId), state, { userId: this.userId });
   }
   private blank(chatId: string): ChatState {
-    return { version: 1, chatId, enabled: false, pace: 'auto', preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: '' }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: '', trackerTried: false, quick: null, skipDismissedAt: 0, job: null, updatedAt: 0 };
+    return { version: 1, chatId, enabled: false, pace: 'auto', preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: '' }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: '', trackerTried: false, quick: null, skipDismissedAt: 0, held: [], resync: null, job: null, updatedAt: 0 };
   }
   private async chatInfo(chatId: string): Promise<{ name: string; supported: boolean; reason: string; characterId: string }> {
     const chat = await this.api.chats.get(chatId, this.userId);
@@ -169,8 +170,8 @@ export class NotebookController {
         hasNotebook: !!notebook, summary: live ? `Last update: ${this.fullVersion(live).reason}` : '', clock: live?.clock ?? null, clockText: live ? describeClock(live.clock) : '', sources: live?.sources ?? null,
         checks: live ? state.checks : [], needsCheck: state.needsCheck || (live && !live.matched ? 'The chat changed before the notebook was written.' : ''),
         job: state.job, updatedAt: state.updatedAt, repliesSinceCheck: live ? this.repliesSince(live) : 0, skipHours: state.skipHours, notebook, behind: !!live && live.index !== state.versions.length - 1, earlierParts, quick: state.quick, dueIds: live ? dueThreads(live.version.notebook, live.moment).map(d => d.thread.id) : [],
-        glance: live ? glance(live.version.notebook, live.moment) : null,
-        skipOffer: live && state.enabled && state.job?.status !== 'running' && !state.skipHours ? skipOffer(live.version.notebook, live.moment, live.clock, state.skipDismissedAt) : null,
+        glance: live ? glance(live.version.notebook, live.moment) : null, reworking: !!live && this.reworking(state, live),
+        skipOffer: live && state.enabled && state.job?.status !== 'running' && !state.skipHours && !this.reworking(state, live) ? skipOffer(live.version.notebook, live.moment, live.clock, state.skipDismissedAt) : null,
       };
     });
   }
@@ -343,7 +344,7 @@ export class NotebookController {
     const input = {
       notebook: { ...base.notebook, clock: live.clock }, pace: state.pace, chat, trackerText: live.text, trackerValues: live.values, trackerChecks: live.state.checks, recipe: state.recipe,
       clockOwner: { day: live.sources.day, hour: live.sources.hour }, due: dueThreads(base.notebook, live.moment).map(d => ({ thread: d.thread.id, step: d.step.id })),
-      skipHours: state.skipHours, reason, preferences: state.preferences, replies: learning ? this.trackerSamples(live.turns).slice(0, 2).map(r => r.slice(0, 20_000)) : [],
+      skipHours: state.skipHours, reason, preferences: state.preferences, resync: state.resync !== null, held: state.held, replies: learning ? this.trackerSamples(live.turns).slice(0, 2).map(r => r.slice(0, 20_000)) : [],
     };
     this.track((async () => {
       try {
@@ -374,7 +375,7 @@ export class NotebookController {
           // Keep the base version and anything before it; drop versions from a history that no longer matches.
           const kept = current.versions.filter((v, i) => i === 0 || covers(v.covered, read));
           current.versions = prune([...kept, version].filter((v, i, all) => all.indexOf(v) === i));
-          current.needsCheck = '';
+          current.needsCheck = ''; current.held = []; current.resync = null;
           current.job = { ...job, status: 'complete', label: 'Notebook updated' };
           await this.save(current);
         });
@@ -452,7 +453,7 @@ export class NotebookController {
       if (!live) return '';
       const recent = live.turns.slice(-2).map(t => t.content).join('\n');
       const clockMayLag = (live.sources.day !== 'tracker' || live.sources.hour !== 'tracker') && this.repliesSince(live) > 0;
-      return buildNote({ notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag });
+      return buildNote({ notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag });
     });
   }
   async macro(name: 'note' | 'clock' | 'pace', chatId: string | undefined): Promise<string> {
@@ -524,6 +525,9 @@ export class NotebookController {
     if (reason && settings.connectionId || reason && this.ask) await this.startCheckup(chatId, reason).catch(() => null);
   }
 
+  /** Hold mode lasts until the rework lands, or a few replies at most if it can't. */
+  private reworking(state: ChatState, live: Live) { return state.resync !== null && (live.moment.reply ?? 0) - state.resync <= 6; }
+
   // ----- The quick check ----------------------------------------------------------
   private decisionsReady(): boolean {
     const host = (this.api as { host?: { capabilities?: Record<string, number> } }).host;
@@ -565,6 +569,9 @@ export class NotebookController {
             now = (await this.live(state, messages))!;
           }
           if (outcome.needsCheckup) extra = 'Something new happened in the story';
+          if (outcome.held.length) state.held = [...new Set([...state.held, ...outcome.held])];
+          // The story changed direction: hold old plans back and rework the notebook now.
+          if (outcome.shifted) { state.resync = now.moment.reply ?? 0; extra = 'The story changed direction'; }
         }
         // A check-up can't start while one runs; the next reply looks again.
         if (this.running.has(chatId)) { await this.save(state); return; }

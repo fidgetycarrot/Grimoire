@@ -247,6 +247,7 @@ export function setup(ctx: SpindleFrontendContext) {
     if (job) body.append(job);
     if (view.needsCheck && view.enabled && view.job?.status !== 'running') body.append(el('p', 'gm-notice', `${view.needsCheck} An update will run after the next reply, or choose Check now.`));
     else if (view.behind && view.enabled) body.append(el('p', 'gm-hint', 'You went back in the chat, so Grimoire is using its notebook from before that point. Nothing from the removed replies counts.'));
+    if (view.reworking && view.enabled) body.append(el('p', 'gm-hint', 'The story changed direction. Grimoire is reworking its plans to fit, and holds older plans back meanwhile. Nothing it already set up is forgotten.'));
     if (view.skipOffer && view.enabled) body.append(renderSkipOffer(view));
     body.append(renderClock(view), renderPace(view), renderActions(view), renderTracker(view), renderGlance(view), renderSpoilers(view));
     const remove = button(confirmDelete ? 'Tap again to delete this notebook' : 'Delete this notebook', async () => {

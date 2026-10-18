@@ -82,7 +82,7 @@ export function seedPlan(notebook: Notebook, now: number | Moment): { plant: See
   return { plant, ready };
 }
 
-export interface NoteInput { notebook: Notebook; pace: Pace; clock: StoryClock; now: number | Moment; recent: string; trackerPresent?: string; skipHours?: number; /** True when the time comes from the last check-up, not from a tracker reading of the latest reply. */ clockMayLag?: boolean }
+export interface NoteInput { notebook: Notebook; pace: Pace; clock: StoryClock; now: number | Moment; /** Threads that no longer fit for now. */ held?: string[]; /** The story just changed direction; old plans are being reworked. */ reworking?: boolean; recent: string; trackerPresent?: string; skipHours?: number; /** True when the time comes from the last check-up, not from a tracker reading of the latest reply. */ clockMayLag?: boolean }
 /**
  * The short private note added before a reply. Built by code from the
  * notebook; no model call. It carries reasons and narrator-safe hints, never
@@ -98,7 +98,11 @@ export function buildNote(input: NoteInput): string {
   lines.push(pace === 'auto' ? (gentle ? DEEPENING : RHYTHM[notebook.rhythm]) : PACE[pace]);
   if (STAGE[notebook.arc.stage]) lines.push(STAGE[notebook.arc.stage]);
   lines.push(`What the story is about: ${notebook.story.question}`);
-  const seeds = seedPlan(notebook, now), used = new Set<string>();
+  const held = new Set(input.held ?? []), reworking = !!input.reworking;
+  const seedsAll = seedPlan(notebook, now), used = new Set<string>();
+  // While plans are reworked, no breadcrumbs: they may belong to storylines that no longer fit.
+  const seeds = reworking ? { plant: null, ready: [] } : { plant: seedsAll.plant && !held.has(seedsAll.plant.pays) ? seedsAll.plant : null, ready: seedsAll.ready.filter(s => !held.has(s.pays)) };
+  if (reworking) lines.push('The story has just changed direction. Follow the player\'s lead; older plans are being reworked, so do not steer back toward them. People left behind can still be thought of, but nothing needs to happen yet.');
   const callback = (seed: Seed) => { used.add(seed.id); return `Bring back something mentioned earlier: "${seed.detail}" (${seed.payoff.replace(/[.!?]+$/, '')}).`; };
   // The turn itself, only once the arc has reached it.
   if (notebook.arc.shape === 'kishotenketsu' && notebook.arc.stage === 'ten' && notebook.arc.turn) {
@@ -108,7 +112,7 @@ export function buildNote(input: NoteInput): string {
 
   // What is due, filtered by the pace: urgent things always press in; slower
   // ones wait for a break in quiet times and arrive one at a time otherwise.
-  const due = dueThreads(notebook, now);
+  const due = reworking ? [] : dueThreads(notebook, now).filter(d => !held.has(d.thread.id));
   const urgent = due.filter(d => d.thread.speed === 'urgent').slice(0, 2);
   const slower = quietTime ? [] : due.filter(d => d.thread.speed !== 'urgent').slice(0, pace === 'fast' ? 2 : 1);
   const developments = [...urgent, ...slower];
@@ -122,7 +126,7 @@ export function buildNote(input: NoteInput): string {
   }
   // Other open threads involving people in the scene, so they act with purpose.
   const shown = new Set(developments.map(d => d.thread.id));
-  const nearby = notebook.threads.filter(t => t.status === 'open' && !shown.has(t.id) && t.people.some(p => present.some(person => person.id === p))).slice(0, 3 - developments.length);
+  const nearby = reworking ? [] : notebook.threads.filter(t => t.status === 'open' && !shown.has(t.id) && !held.has(t.id) && t.people.some(p => present.some(person => person.id === p))).slice(0, 3 - developments.length);
   if (nearby.length) {
     lines.push('Open threads near this scene:');
     for (const thread of nearby) lines.push(`- ${thread.title}: ${thread.hint || thread.why}`);
@@ -132,7 +136,7 @@ export function buildNote(input: NoteInput): string {
     for (const person of present.slice(0, 4)) lines.push(`- ${person.name}${person.role ? ` (${person.role})` : ''}: wants ${end(person.wants || 'nothing stated yet')}${person.doing ? ` Currently: ${end(person.doing)}` : ''}${person.hint ? ` Play them as: ${end(person.hint)}` : ''}`);
   }
   // A possible beat, matched to the pace. Quiet keeps only gentle ones.
-  const beat = notebook.beats.find(b => b.status === 'possible' && (!quietTime || b.intensity === 'low') && (!b.thread || notebook.threads.find(t => t.id === b.thread)?.status === 'open'));
+  const beat = reworking ? undefined : notebook.beats.find(b => b.status === 'possible' && !held.has(b.thread) && (!quietTime || b.intensity === 'low') && (!b.thread || notebook.threads.find(t => t.id === b.thread)?.status === 'open'));
   if (beat && (pace === 'fast' || !developments.length || notebook.rhythm === 'stalled')) {
     const tie = seeds.ready.find(s => s.pays === beat.id && !used.has(s.id));
     lines.push(`A possible next moment, only if it follows naturally: ${beat.text}${beat.conditions ? ` (only if ${beat.conditions})` : ''}. Purpose: ${beat.purpose}${tie ? ` ${callback(tie)}` : ''}`);
@@ -143,7 +147,7 @@ export function buildNote(input: NoteInput): string {
   // One new detail to plant, as part of the scene. What it means stays hidden until it pays off.
   if (seeds.plant) lines.push(`A small detail to mention in passing, without drawing attention to it: ${end(seeds.plant.detail)}`);
   // Someone not met yet, so the world is not just the main cast.
-  const newcomer = !quietTime && (notebook.rhythm === 'calm' || notebook.rhythm === 'stalled' || pace === 'fast') ? notebook.people.find(p => p.status === 'active' && !p.met && !present.includes(p)) : undefined;
+  const newcomer = !reworking && !quietTime && (notebook.rhythm === 'calm' || notebook.rhythm === 'stalled' || pace === 'fast') ? notebook.people.find(p => p.status === 'active' && !p.met && !present.includes(p)) : undefined;
   if (newcomer && lines.length < 16) lines.push(`Someone who could appear if it fits: ${newcomer.name}${newcomer.role ? `, ${newcomer.role}` : ''}. Wants ${newcomer.wants || 'something of their own'}.`);
   const rules = 'This guidance is conditional. The latest messages decide what actually happened; skip anything they make irrelevant. Never write the player character\'s actions, words, thoughts, or feelings. Keep secrets hidden and let them show only through small details.';
   // Too long: drop whole lines from the end of the guidance, never the rules.

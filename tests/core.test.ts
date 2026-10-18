@@ -304,7 +304,7 @@ describe('quick check answers', () => {
     nb.threads[1].steps[0].afterHours = 0;
     nb.beats[1].status = 'dropped';
     const plan = quickQuestions(nb, absoluteHours({ day: 1, hour: 18 }));
-    expect(Object.keys(plan.questions)).toEqual(['due_1', 'moment_1', 'detail_mentioned', 'rhythm', 'new_turn']);
+    expect(Object.keys(plan.questions)).toEqual(['due_1', 'moment_1', 'detail_mentioned', 'fits_1', 'story_shift', 'rhythm', 'new_turn']);
     const out = applyQuick(nb, plan, { model: 'm', answers: { due_1: { type: 'noul', noul: 0.9 }, moment_1: { type: 'noul', noul: 0.69 }, rhythm: { type: 'choice', choice: 'nonsense', probabilities: {}, confidence: 1 }, new_turn: { type: 'noul', noul: 0.2 } } }, 99);
     expect(out.notebook.threads[1].steps[0]).toMatchObject({ status: 'shown', at: 99 });
     expect(out.notebook.beats[0].status).toBe('possible');
@@ -513,5 +513,25 @@ describe('at a glance', () => {
     expect(g).toEqual({ shape: 'conflict', stage: 'setup', threads: { open: 1, urgent: 0, steady: 1, slow: 0, closed: 0 }, seeds: { waiting: 1, planted: 0, paid: 0 },
       moments: { possible: 2, big: 1, happened: 0 }, people: { total: 3, met: 2 }, nextInReplies: 12, dueNow: 0 });
     expect(JSON.stringify(g)).not.toMatch(/ring|Oswin|Mira|wax/i);
+  });
+});
+
+describe('when the story changes direction', () => {
+  const { quickQuestions, applyQuick } = require('../src/quick');
+  const { waitsFor } = require('../src/notebook');
+  test('only a clear no holds a thread, and a shift is its own answer', () => {
+    const nb = stamp(validateNotebook(sampleNotebook()), { hours: 42, reply: 10 });
+    nb.threads[1].steps[0].afterHours = 0;
+    const plan = quickQuestions(nb, { hours: 42, reply: 11, waits: waitsFor('medium', 'auto') });
+    const run = (fits: number, shift: number) => applyQuick(nb, plan, { model: 'm', answers: { fits_1: { type: 'noul', noul: fits }, story_shift: { type: 'noul', noul: shift } } }, 42);
+    expect(run(0.5, 0.2)).toMatchObject({ held: [], shifted: false, needsCheckup: false });
+    expect(run(0.2, 0.2)).toMatchObject({ held: ['storm'], shifted: false, needsCheckup: true });
+    expect(run(0.9, 0.8)).toMatchObject({ held: [], shifted: true });
+  });
+  test('the note leaves held threads out', () => {
+    const nb = stamp(validateNotebook(sampleNotebook()), 42); nb.threads[1].steps[0].afterHours = 0;
+    const input = { notebook: nb, pace: 'auto' as const, clock: { day: 1, hour: 18, label: '' }, now: 42, recent: 'Mira' };
+    expect(buildNote(input)).toContain('Shutters bang');
+    expect(buildNote({ ...input, held: ['storm'] })).not.toContain('Shutters bang');
   });
 });

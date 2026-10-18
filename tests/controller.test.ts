@@ -374,7 +374,7 @@ describe('presets that show their tracker only after the first replies', () => {
 describe('the quick check', () => {
   const noul = (p: number) => ({ type: 'noul', noul: p });
   const answers = (over: Record<string, unknown> = {}) => (input: any) => ({ model: 'jev', answers: {
-    ...Object.fromEntries(Object.keys(input.questions).map(k => [k, input.questions[k].type === 'noul' ? noul(0.1) : { type: 'choice', choice: 'rising', probabilities: { rising: 0.9 }, confidence: 0.9 }])), ...over } });
+    ...Object.fromEntries(Object.keys(input.questions).map(k => [k, input.questions[k].type === 'noul' ? noul(k.startsWith('fits_') ? 0.9 : 0.1) : { type: 'choice', choice: 'rising', probabilities: { rising: 0.9 }, confidence: 0.9 }])), ...over } });
   // The storm thread's first step is due at once, so the note offers it.
   const urgentNotebook = () => { const n: any = sampleNotebook(); n.threads[1].steps[0].afterHours = 0; return { notebook: n, tracker: recipe }; };
   async function quickReady(decide: (input: any) => unknown, extra: Partial<Parameters<typeof host>[0]> = {}) {
@@ -392,7 +392,7 @@ describe('the quick check', () => {
     h.add('user', 'I look at the sky.'); h.add('assistant', `<div style="color:red">Shutters bang all along the street.</div>${tracker('Day 1, 18:10', 'The ferry')}`);
     await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
     const sent = h.decisionCalls[0];
-    expect(Object.keys(sent.questions)).toEqual(['due_1', 'moment_1', 'moment_2', 'detail_mentioned', 'rhythm', 'new_turn']);
+    expect(Object.keys(sent.questions)).toEqual(['due_1', 'moment_1', 'moment_2', 'detail_mentioned', 'fits_1', 'story_shift', 'rhythm', 'new_turn']);
     expect(sent.questions.due_1.instructions).toContain('Shutters bang');
     expect(sent.state.latestReply).toContain('Shutters bang all along the street.');
     expect(sent.state.latestReply).not.toContain('style');
@@ -420,6 +420,41 @@ describe('the quick check', () => {
     // Planted: it isn't offered again, and its meaning stays hidden for now.
     const note = await c.noteFor('chat-1');
     expect(note).not.toContain('green wax');
+  });
+  test('a change of direction holds old plans back and reworks the notebook without forgetting it', async () => {
+    const { h, m, c } = await quickReady(answers({ story_shift: noul(0.92) }));
+    const release = m.pause();
+    h.add('user', 'I hot-wire a car and leave town.'); h.add('assistant', `The highway opens up ahead.${tracker('Day 1, 18:30', 'The coast road')}`);
+    await c.afterReply('chat-1', 'normal');
+    for (let i = 0; i < 20 && !m.calls.some(x => x.task === 'grimoire-checkup-v1'); i++) await new Promise(r => setTimeout(r, 1));
+    // While the rework runs, the narrator follows the player and old plans wait.
+    expect((await c.view('chat-1'))!.reworking).toBe(true);
+    const note = await c.noteFor('chat-1');
+    expect(note).toContain('The story has just changed direction');
+    expect(note).not.toContain('Shutters bang');
+    expect(note).not.toContain('green wax');
+    const checkup = m.calls.find(x => x.task === 'grimoire-checkup-v1')!;
+    expect(checkup.input).toMatchObject({ reason: 'The story changed direction', resync: true });
+    expect(checkup.messages[0].content).toContain('Go through every open thread and decide how it applies now');
+    expect(checkup.messages[0].content).toContain('Keep every breadcrumb');
+    release(); await c.waitForJobs();
+    const after = (await c.view('chat-1'))!;
+    expect(after.reworking).toBe(false);
+    expect(after.notebook!.seeds).toHaveLength(1);
+    expect(await c.noteFor('chat-1')).not.toContain('The story has just changed direction');
+  });
+  test('a development that clearly no longer fits is held out of the note until a check-up decides', async () => {
+    const { h, m, c } = await quickReady(answers({ fits_1: noul(0.05) }));
+    const release = m.pause();
+    h.add('user', 'I leave the ferry behind.'); h.add('assistant', `The road bends inland.${tracker('Day 1, 18:10', 'The road')}`);
+    await c.afterReply('chat-1', 'normal');
+    for (let i = 0; i < 20 && !m.calls.some(x => x.task === 'grimoire-checkup-v1'); i++) await new Promise(r => setTimeout(r, 1));
+    expect(await c.noteFor('chat-1')).not.toContain('Shutters bang');
+    const checkup = m.calls.find(x => x.task === 'grimoire-checkup-v1')!;
+    expect(checkup.input.held).toEqual(['storm']);
+    expect(checkup.input.resync).toBe(false);
+    release(); await c.waitForJobs();
+    expect(await c.noteFor('chat-1')).toContain('Shutters bang');
   });
   test('something new in the story starts a full check-up right away', async () => {
     const { h, m, c } = await quickReady(answers({ new_turn: noul(0.88) }));

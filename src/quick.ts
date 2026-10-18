@@ -17,7 +17,7 @@ import { seedPlan } from './note';
  * The answers are probabilities. Only confident ones change anything, and they
  * only ever move the story forward: nothing is un-marked here.
  */
-export const QUICK = { yes: 0.7, rhythm: 0.6, maxBeats: 6 } as const;
+export const QUICK = { yes: 0.7, no: 0.3, rhythm: 0.6, maxBeats: 6, maxFits: 6, soon: 5 } as const;
 
 const RHYTHMS: Record<Rhythm, string> = {
   calm: 'Calm: ordinary time, nothing pressing in the scene.',
@@ -30,7 +30,7 @@ const RHYTHMS: Record<Rhythm, string> = {
 export interface QuickPlan {
   questions: Record<string, DecisionQuestion>;
   /** Question key → what a "yes" marks. */
-  marks: Record<string, { kind: 'step'; thread: string; step: string } | { kind: 'beat'; beat: string } | { kind: 'seed'; seed: string; to: 'planted' | 'paid' }>;
+  marks: Record<string, { kind: 'step'; thread: string; step: string } | { kind: 'beat'; beat: string } | { kind: 'seed'; seed: string; to: 'planted' | 'paid' } | { kind: 'fits'; thread: string }>;
 }
 
 export function quickQuestions(notebook: Notebook, now: number | Moment): QuickPlan {
@@ -60,6 +60,17 @@ export function quickQuestions(notebook: Notebook, now: number | Moment): QuickP
       criteria: { true: 'The detail comes back and its meaning lands, or clearly starts to.', false: 'It does not come back, or only in passing without its meaning.' } };
     marks[key] = { kind: 'seed', seed: seed.id, to: 'paid' };
   });
+  // Do the developments that are due, or nearly due, still fit where the player is now? A clear no holds them.
+  const m: Moment = typeof now === 'number' ? { hours: now } : now;
+  const soon = dueThreads(notebook, m.reply === undefined ? m : { ...m, reply: m.reply + QUICK.soon });
+  soon.slice(0, QUICK.maxFits).forEach(({ thread }, i) => {
+    const key = `fits_${i + 1}`;
+    questions[key] = { type: 'noul', instructions: `After the latest exchange, could this storyline still plausibly reach the player soon, where they are now? Storyline: ${thread.title}. ${thread.hint || ''}`.trim(),
+      criteria: { true: 'Yes, it can still reach them (it could follow them, call them, or wait nearby).', false: 'No, the player has left it behind and it no longer fits for now.' } };
+    marks[key] = { kind: 'fits', thread: thread.id };
+  });
+  questions.story_shift = { type: 'noul', instructions: 'Did the latest exchange take the story somewhere the story notes no longer fit: the player left the setting for good, walked away from the main situation, or changed what they are after?',
+    criteria: { true: 'Yes, the story has changed direction and the notes need reworking.', false: 'No, the story is still on the same ground, even if something new happened.' } };
   questions.rhythm = { type: 'choice', instructions: 'Which best describes the scene at the end of the latest reply?', criteria: RHYTHMS };
   questions.new_turn = { type: 'noul', instructions: 'Did the latest exchange bring in something the story notes do not cover yet: a new named person who matters, a new problem or goal, a big change of place or time, or a choice that changes where the story is heading?',
     criteria: { true: 'Yes, something important is new.', false: 'No, it continues what the notes already cover.' } };
@@ -70,6 +81,7 @@ export function quickQuestions(notebook: Notebook, now: number | Moment): QuickP
 export function quickState(notebook: Notebook, clock: StoryClock, playerMessage: string, latestReply: string) {
   return {
     storyTime: describeClock(clock),
+    storyQuestion: notebook.story.question,
     people: notebook.people.filter(p => p.status === 'active').map(p => p.name),
     openThreads: notebook.threads.filter(t => t.status === 'open').map(t => t.title),
     playerMessage, latestReply,
@@ -78,7 +90,7 @@ export function quickState(notebook: Notebook, clock: StoryClock, playerMessage:
 
 const yes = (answer: DecisionAnswer | undefined) => answer?.type === 'noul' && answer.noul >= QUICK.yes;
 
-export interface QuickOutcome { notebook: Notebook; changed: boolean; marked: number; needsCheckup: boolean }
+export interface QuickOutcome { notebook: Notebook; changed: boolean; marked: number; needsCheckup: boolean; /** The story changed direction: rework the notebook. */ shifted: boolean; /** Threads that clearly no longer fit for now. */ held: string[] }
 /**
  * Apply answers onto the notebook as it is now (it may have changed while the
  * question was out). Only waiting steps and possible beats can be marked.
@@ -89,7 +101,7 @@ export function applyQuick(current: Notebook, plan: QuickPlan, result: DecisionR
   const notebook = structuredClone(current);
   let marked = 0;
   for (const [key, mark] of Object.entries(plan.marks)) {
-    if (!yes(answers[key])) continue;
+    if (mark.kind === 'fits' || !yes(answers[key])) continue;
     if (mark.kind === 'step') {
       const step = notebook.threads.find(t => t.id === mark.thread)?.steps.find(s => s.id === mark.step);
       if (step?.status === 'waiting') { step.status = 'shown'; step.at = hours; if (reply !== undefined) step.atReply = reply; marked++; }
@@ -105,7 +117,8 @@ export function applyQuick(current: Notebook, plan: QuickPlan, result: DecisionR
   const rhythm = answers.rhythm;
   let changed = marked > 0;
   if (rhythm?.type === 'choice' && rhythm.confidence >= QUICK.rhythm && rhythm.choice in RHYTHMS && rhythm.choice !== notebook.rhythm) { notebook.rhythm = rhythm.choice as Rhythm; changed = true; }
-  return { notebook, changed, marked, needsCheckup: yes(answers.new_turn) };
+  const held = Object.entries(plan.marks).flatMap(([key, mark]) => mark.kind === 'fits' && answers[key]?.type === 'noul' && (answers[key] as { noul: number }).noul <= QUICK.no ? [mark.thread] : []);
+  return { notebook, changed, marked, needsCheckup: yes(answers.new_turn) || held.length > 0, shifted: yes(answers.story_shift), held };
 }
 
 /** Fixed wording only: provider errors can echo what was sent. */
