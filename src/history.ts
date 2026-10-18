@@ -47,8 +47,14 @@ const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"'
  * go but their text stays, and attributes that carry facts (a header's
  * location="…" or time="…") are kept as plain words. Then it is shortened.
  */
+/**
+ * Presets sometimes write odd space characters between words (braille blanks,
+ * no-break or zero-width spaces). They look like spaces but don't match as
+ * spaces, so anything that reads replies sees ordinary spaces instead.
+ */
+export const spaces = (text: string) => text.replace(/[\u2800\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]/g, ' ').replace(/[\u200b\u2060\ufeff]/g, '');
 export function readable(text: string, max: number): string {
-  let s = text.replace(/<(style|script)\b[\s\S]*?<\/\1\s*>/gi, ' ').replace(/<!--[\s\S]*?-->/g, ' ');
+  let s = spaces(text).replace(/<(style|script)\b[\s\S]*?<\/\1\s*>/gi, ' ').replace(/<!--[\s\S]*?-->/g, ' ');
   s = s.replace(/<([a-z][\w:-]*)((?:\s+[\w:-]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?)*)\s*\/?>/gi, (_, tag: string, attrs: string) => {
     const facts = [...attrs.matchAll(/([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g)]
       .filter(m => KEEP_ATTRIBUTE.test(m[1]) && (m[2] ?? m[3] ?? m[4] ?? '').trim()).map(m => `${m[1]}: ${(m[2] ?? m[3] ?? m[4]).trim()}`);

@@ -594,3 +594,18 @@ describe('the quick check hears echoes', () => {
     expect(out.notebook.seeds[0]).toMatchObject({ status: 'paid', paidAt: 20, quick: true });
   });
 });
+
+describe('odd space characters', () => {
+  const { readable } = require('../src/history');
+  const { guessRecipe } = require('../src/tracker');
+  test('braille blanks between words read as spaces, for trackers and for models', () => {
+    const b = (s: string) => s.replace(/ /g, '⠀');
+    const reply = (t: string) => `${b('John cranes his fake bushy beard.')}\n\n${b(`Time: ${t}`)}\n${b('Location: Hall H')}`;
+    const recipe = guessRecipe([reply('7:15 PM'), reply('7:05 PM')]);
+    expect(recipe.fields.map((f: any) => f.name)).toEqual(['time', 'location']);
+    const checks = checkRecipe(recipe, [reply('7:15 PM')], {});
+    expect(readTracker(recipe, checks, [reply('7:15 PM')], {})).toEqual({ time: '7:15 PM', location: 'Hall H' });
+    expect(readable(reply('7:15 PM'), 500)).toContain('John cranes his fake bushy beard.');
+    expect(readable('a​b c', 50)).toBe('ab c');
+  });
+});

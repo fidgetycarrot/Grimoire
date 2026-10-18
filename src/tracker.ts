@@ -1,4 +1,5 @@
 import { readDay, readTime } from './clock';
+import { spaces } from './history';
 
 /**
  * Reading a preset's tracker without knowing the preset.
@@ -83,8 +84,8 @@ function jsonPath(value: unknown, path: string): unknown {
   return current;
 }
 /** Read one field from one reply. Returns undefined when it is not there. */
-export function readField(field: RecipeField, reply: string, variables: Record<string, string>): string | undefined {
-  const from = field.source;
+export function readField(field: RecipeField, raw: string, variables: Record<string, string>): string | undefined {
+  const from = field.source, reply = spaces(raw);
   if (from.kind === 'variable') { const v = variables[from.name]; return typeof v === 'string' && v.trim() ? plain(v) : undefined; }
   for (const part of areas(reply, from.region)) {
     if (from.kind === 'line') {
@@ -144,7 +145,8 @@ export function readTracker(recipe: Recipe, checks: FieldCheck[], replies: strin
   return values;
 }
 /** The tracker's raw block from the newest reply, for check-ups to read as plain text. */
-export function trackerText(recipe: Recipe, reply: string): string {
+export function trackerText(recipe: Recipe, raw: string): string {
+  const reply = spaces(raw);
   const pieces = new Set<string>();
   for (const field of recipe.fields) {
     const from = field.source;
@@ -181,7 +183,7 @@ function wrapping(text: string, at: number): string | null {
   return best?.tag ?? null;
 }
 export function guessRecipe(replies: string[]): Recipe {
-  const sample = replies.slice(0, 2).filter(r => r.trim());
+  const sample = replies.slice(0, 2).map(spaces).filter(r => r.trim());
   if (!sample.length) return { fields: [], note: '' };
   const fields: RecipeField[] = [];
   for (const want of GUESS) {

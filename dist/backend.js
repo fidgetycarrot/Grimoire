@@ -130,8 +130,9 @@ var RECENT = { turns: 40, chars: 60000, perTurn: 8000 };
 var EARLIER = { part: 30000, maxPart: 60000, maxParts: 12, perTurn: 3000 };
 var KEEP_ATTRIBUTE = /^(?!style$|class$|id$|color$|face$|size$|href$|src$|width$|height$|align$|data-|aria-|role$|on)[a-z][\w-]*$/i;
 var ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", "#39": "'" };
+var spaces = (text) => text.replace(/[\u2800\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]/g, " ").replace(/[\u200b\u2060\ufeff]/g, "");
 function readable(text, max) {
-  let s = text.replace(/<(style|script)\b[\s\S]*?<\/\1\s*>/gi, " ").replace(/<!--[\s\S]*?-->/g, " ");
+  let s = spaces(text).replace(/<(style|script)\b[\s\S]*?<\/\1\s*>/gi, " ").replace(/<!--[\s\S]*?-->/g, " ");
   s = s.replace(/<([a-z][\w:-]*)((?:\s+[\w:-]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?)*)\s*\/?>/gi, (_, tag, attrs) => {
     const facts = [...attrs.matchAll(/([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g)].filter((m) => KEEP_ATTRIBUTE.test(m[1]) && (m[2] ?? m[3] ?? m[4] ?? "").trim()).map((m) => `${m[1]}: ${(m[2] ?? m[3] ?? m[4]).trim()}`);
     return facts.length ? ` [${tag} ${facts.join("; ")}] ` : " ";
@@ -626,8 +627,8 @@ function mentioned(person, text) {
   return [person.name, ...person.aliases].filter(words).some((name) => new RegExp(`(?<![\\p{L}\\p{N}])${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`, "iu").test(text));
 }
 function presentPeople(notebook, recent, trackerPresent) {
-  const where = `${recent}
-${trackerPresent ?? ""}`;
+  const where = spaces(`${recent}
+${trackerPresent ?? ""}`);
   return notebook.people.filter((person) => person.status === "active" && mentioned(person, where));
 }
 var PACE = {
@@ -1367,8 +1368,8 @@ function jsonPath(value, path) {
   }
   return current;
 }
-function readField(field, reply, variables) {
-  const from = field.source;
+function readField(field, raw, variables) {
+  const from = field.source, reply = spaces(raw);
   if (from.kind === "variable") {
     const v = variables[from.name];
     return typeof v === "string" && v.trim() ? plain2(v) : undefined;
@@ -1442,7 +1443,8 @@ function readTracker(recipe, checks, replies, variables) {
   }
   return values;
 }
-function trackerText(recipe, reply) {
+function trackerText(recipe, raw) {
+  const reply = spaces(raw);
   const pieces = new Set;
   for (const field of recipe.fields) {
     const from = field.source;
@@ -1483,7 +1485,7 @@ function wrapping(text, at) {
   return best?.tag ?? null;
 }
 function guessRecipe(replies) {
-  const sample = replies.slice(0, 2).filter((r) => r.trim());
+  const sample = replies.slice(0, 2).map(spaces).filter((r) => r.trim());
   if (!sample.length)
     return { fields: [], note: "" };
   const fields = [];
@@ -1518,7 +1520,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.6.1";
+var VERSION = "0.6.2";
 var MAX_VERSIONS = 16;
 var DEFAULT_SETTINGS = { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto", quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true };
 var DEFAULT_PREFERENCES = { tone: "balanced", twist: true };

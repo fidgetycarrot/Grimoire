@@ -1,4 +1,5 @@
 import { describeClock, describeDuration, readDay, readTime, type StoryClock } from './clock';
+import { spaces } from './history';
 import { dueThreads, type Moment, type Notebook, type Pace, type Person, type Seed } from './notebook';
 import type { FieldType } from './tracker';
 
@@ -33,7 +34,7 @@ function mentioned(person: Person, text: string): boolean {
 }
 /** People in the scene: named by the tracker or in the last couple of messages. */
 export function presentPeople(notebook: Notebook, recent: string, trackerPresent?: string): Person[] {
-  const where = `${recent}\n${trackerPresent ?? ''}`;
+  const where = spaces(`${recent}\n${trackerPresent ?? ''}`);
   return notebook.people.filter(person => person.status === 'active' && mentioned(person, where));
 }
 
