@@ -10,7 +10,9 @@ It works with any card: downloaded, homemade, or made with Set Points. It never 
 
 Grimoire is for roleplayers who like to play the scene in front of them, without having to think about the whole story. You react to what happens; Grimoire remembers that the piece of paper you picked up matters later, that someone across town wants something, and when it's time for things to move. You never have to manage it. When you do want a say, you can give it one, and that's always optional.
 
-New features should keep that promise: they work without your attention, and anything that asks for your input is something you choose to use.
+Grimoire tries to make a roleplay feel like a good story, with real pacing, threads that pay off, and a world that makes sense. But it is still a roleplaying tool, not a book or a movie. Fun comes first. Pacing and coherence are there to make the fun land, not to hold it back: if a scene goes somewhere sooner than a novel would, that's fine, and Grimoire's job is to keep the world making sense around it.
+
+New features should keep both promises: they make play more fun, not more correct, and they work without your attention. Anything that asks for your input is something you choose to use.
 
 ## What it does
 
