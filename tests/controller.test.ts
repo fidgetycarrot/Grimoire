@@ -417,6 +417,11 @@ describe('the quick check', () => {
     expect(view.notebook!.threads[1].steps[0].status).toBe('shown');
     expect(view.notebook!.rhythm).toBe('rising');
     expect(await c.noteFor('chat-1')).not.toContain('Shutters bang');
+    // The answers are saved as numbers only, keyed by question.
+    const log = view.quickLog.at(-1)!;
+    expect(log).toMatchObject({ reply: 2, ok: true, marked: 1, checkup: false, shifted: false });
+    expect(log.answers).toMatchObject({ due_1: 0.93, new_turn: 0.1, fits_1: 0.9, rhythm: { choice: 'rising', confidence: 0.9 } });
+    expect(JSON.stringify(log)).not.toContain('Shutters');
     // A quick check is not a check-up: the reply count keeps counting, and no check-up ran.
     expect(view.repliesSinceCheck).toBe(1);
     expect(view.summary).toBe('Last update: Notebook written');

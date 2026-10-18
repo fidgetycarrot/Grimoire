@@ -11,7 +11,7 @@ import { applyQuick, quickError, quickQuestions, quickState } from './quick';
 import { glance, skipOffer } from './skip';
 import type { DecisionResult } from 'lumiverse-spindle-types';
 import { checkRecipe, guessRecipe, readTracker, trackerText, validateRecipe, type FieldType, type Recipe } from './tracker';
-import { DEFAULT_PREFERENCES, DEFAULT_SETTINGS, MAX_VERSIONS, TALK_LIMITS, VERSION, type ChatState, type PlayerNote, type TalkLine, type ChatView, type Job, type Settings, type Snapshot, type StoryListing, type Version } from './types';
+import { DEFAULT_PREFERENCES, DEFAULT_SETTINGS, MAX_VERSIONS, QUICK_LOG, TALK_LIMITS, type QuickRecord, VERSION, type ChatState, type PlayerNote, type TalkLine, type ChatView, type Job, type Settings, type Snapshot, type StoryListing, type Version } from './types';
 
 const record = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
 const PACES: Pace[] = ['auto', 'quiet', 'fast'];
@@ -26,6 +26,27 @@ function talkLines(value: unknown): TalkLine[] {
       ...(Array.isArray(x.changes) ? { changes: x.changes.filter((c): c is string => typeof c === 'string').slice(0, 20) } : {}),
       ...(Number(x.versionAt) > 0 ? { versionAt: Number(x.versionAt) } : {}), ...(typeof x.noteId === 'string' ? { noteId: x.noteId } : {}) }];
   });
+}
+function quickLog(value: unknown): QuickRecord[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(-QUICK_LOG).flatMap((v): QuickRecord[] => {
+    const x = record(v), answers: QuickRecord['answers'] = {};
+    for (const [key, a] of Object.entries(record(x.answers)).slice(0, 40)) {
+      if (!/^[a-z_0-9]{1,30}$/.test(key)) continue;
+      if (typeof a === 'number' && Number.isFinite(a)) answers[key] = a;
+      else { const c = record(a); if (typeof c.choice === 'string' && Number.isFinite(Number(c.confidence))) answers[key] = { choice: c.choice.slice(0, 20), confidence: Number(c.confidence) }; }
+    }
+    return Number.isInteger(x.reply) ? [{ reply: Number(x.reply), at: Number(x.at) || 0, ok: x.ok === true, answers, marked: Number(x.marked) || 0, checkup: x.checkup === true, shifted: x.shifted === true, held: Number(x.held) || 0 }] : [];
+  });
+}
+/** Numbers only: what the decision model answered, never the questions' story text. */
+export function quickRecord(reply: number, result: DecisionResult | null, outcome: { marked: number; needsCheckup: boolean; shifted: boolean; held: string[] } | null): QuickRecord {
+  const answers: QuickRecord['answers'] = {};
+  for (const [key, a] of Object.entries((result?.answers ?? {}) as Record<string, { type: string; noul?: number; choice?: string; confidence?: number }>)) {
+    if (a?.type === 'noul' && typeof a.noul === 'number') answers[key] = Math.round(a.noul * 100) / 100;
+    else if (a?.type === 'choice' && typeof a.choice === 'string') answers[key] = { choice: a.choice, confidence: Math.round((a.confidence ?? 0) * 100) / 100 };
+  }
+  return { reply, at: Date.now(), ok: !!result, answers, marked: outcome?.marked ?? 0, checkup: !!outcome && (outcome.needsCheckup || outcome.shifted), shifted: !!outcome?.shifted, held: outcome?.held.length ?? 0 };
 }
 function playerNotes(value: unknown): PlayerNote[] {
   if (!Array.isArray(value)) return [];
@@ -100,7 +121,7 @@ export class NotebookController {
         versions, recipe: validateRecipe(saved.recipe).recipe, checks: Array.isArray(saved.checks) ? saved.checks as ChatState['checks'] : [],
         skipHours: Number(saved.skipHours) > 0 ? Number(saved.skipHours) : 0, skipTurn: Number(saved.skipTurn) > 0 ? Number(saved.skipTurn) : 0, needsCheck: typeof saved.needsCheck === 'string' ? saved.needsCheck : '', trackerTried: saved.trackerTried === true, skipDismissedAt: Number(saved.skipDismissedAt) > 0 ? Number(saved.skipDismissedAt) : 0,
         held: Array.isArray(saved.held) ? saved.held.filter((x): x is string => typeof x === 'string').slice(0, 12) : [], resync: Number.isInteger(saved.resync) ? Number(saved.resync) : null,
-        talk: talkLines(saved.talk), notes: playerNotes(saved.notes),
+        talk: talkLines(saved.talk), notes: playerNotes(saved.notes), quickLog: quickLog(saved.quickLog),
         quick: saved.quick && typeof saved.quick === 'object' ? { at: Number(record(saved.quick).at) || 0, ok: record(saved.quick).ok === true, error: String(record(saved.quick).error ?? '').slice(0, 200) } : null,
         // A job cannot survive a restart; its request may or may not have finished.
         job: job && job.status === 'running' && !this.running.has(chatId) ? { ...job, status: 'failed', label: 'Stopped when Lumiverse restarted', error: 'Run it again when ready.' } : job,
@@ -116,7 +137,7 @@ export class NotebookController {
     await this.api.userStorage.setJson(this.path(state.chatId), state, { userId: this.userId });
   }
   private blank(chatId: string): ChatState {
-    return { version: 1, chatId, enabled: false, pace: 'auto', preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: '' }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: '', trackerTried: false, quick: null, skipDismissedAt: 0, held: [], resync: null, talk: [], notes: [], job: null, updatedAt: 0 };
+    return { version: 1, chatId, enabled: false, pace: 'auto', preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: '' }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: '', trackerTried: false, quick: null, skipDismissedAt: 0, held: [], resync: null, talk: [], notes: [], quickLog: [], job: null, updatedAt: 0 };
   }
   private async chatInfo(chatId: string): Promise<{ name: string; supported: boolean; reason: string; characterId: string }> {
     const chat = await this.api.chats.get(chatId, this.userId);
@@ -193,7 +214,7 @@ export class NotebookController {
         checks: live ? state.checks : [], needsCheck: state.needsCheck || (live && !live.matched ? 'The chat changed before the notebook was written.' : ''),
         job: state.job, updatedAt: state.updatedAt, repliesSinceCheck: live ? this.repliesSince(live) : 0, skipHours: state.skipHours, notebook, behind: !!live && live.index !== state.versions.length - 1, earlierParts, quick: state.quick, dueIds: live ? dueThreads(live.version.notebook, live.moment).map(d => d.thread.id) : [],
         glance: live ? glance(live.version.notebook, live.moment) : null, reworking: !!live && this.reworking(state, live),
-        talk: state.talk, notes: state.notes, canUndo: this.undoable(state) !== null,
+        talk: state.talk, notes: state.notes, quickLog: state.quickLog, canUndo: this.undoable(state) !== null,
         skipOffer: live && state.enabled && state.job?.status !== 'running' && !state.skipHours && !this.reworking(state, live) ? skipOffer(live.version.notebook, live.moment, live.clock, state.skipDismissedAt) : null,
       };
     });
@@ -716,10 +737,10 @@ export class NotebookController {
         let now = await this.live(state, messages);
         if (!now) return;
         state.quick = { at: Date.now(), ok: !!result, error };
-        let extra = '';
+        let extra = '', outcome: ReturnType<typeof applyQuick> | null = null;
         // The reply it judged must still be in the chat. A swipe or edit meanwhile means the answers are about a reply that is gone.
         if (result && covers(live.prints, now.prints)) {
-          const outcome = applyQuick(now.version.notebook, plan, result, now.moment);
+          outcome = applyQuick(now.version.notebook, plan, result, now.moment);
           if (outcome.changed) {
             state.versions.push({ notebook: outcome.notebook, covered: live.prints, at: Date.now(), reason: 'Quick check', quick: true, ...(now.values.location ? { location: now.values.location } : {}) });
             state.versions = prune(state.versions);
@@ -730,6 +751,7 @@ export class NotebookController {
           // The story changed direction: hold old plans back and rework the notebook now.
           if (outcome.shifted) { state.resync = now.moment.reply ?? 0; extra = 'The story changed direction'; }
         }
+        state.quickLog = [...state.quickLog, quickRecord(live.moment.reply ?? 0, result, outcome)].slice(-QUICK_LOG);
         // A check-up can't start while one runs; the next reply looks again.
         if (this.running.has(chatId)) { await this.save(state); return; }
         await this.decide(state, now, settings, extra);

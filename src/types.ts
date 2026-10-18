@@ -6,7 +6,7 @@ import type { FieldCheck, Recipe } from './tracker';
 import type { Glance, SkipOffer } from './skip';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.7.0';
+export const VERSION = '0.7.1';
 export const MAX_VERSIONS = 16;
 
 /** One saved state of the notebook and the chat history it describes. */
@@ -31,6 +31,8 @@ export interface ChatState {
   held: string[];
   /** The reply count when the story changed direction; the next check-up reworks the notebook. Null when none is due. */
   resync: number | null;
+  /** The quick check's recent answers as plain numbers, for checking how it judges. No story text. */
+  quickLog: QuickRecord[];
   /** Talking to Grimoire: the recent conversation, newest last. */
   talk: TalkLine[];
   /** Standing wishes the player pinned. They steer every check-up and the narrator note. */
@@ -52,6 +54,16 @@ export interface TalkLine {
   noteId?: string;
   undone?: true;
 }
+/**
+ * One quick check: the probability for each yes-or-no question, keyed by
+ * question (like due_1 or new_turn), and the scene choice with its confidence.
+ */
+export interface QuickRecord {
+  reply: number; at: number; ok: boolean;
+  answers: Record<string, number | { choice: string; confidence: number }>;
+  marked: number; checkup: boolean; shifted: boolean; held: number;
+}
+export const QUICK_LOG = 40;
 export interface PlayerNote { id: string; text: string; at: number }
 export const TALK_LIMITS = { message: 1000, lines: 40, notes: 8, note: 200 } as const;
 /** The quick check after each reply. An empty connection means the default decision connection; an empty model means the connection's model. */
@@ -78,7 +90,7 @@ export interface ChatView {
   glance: Glance | null;
   /** The story changed direction and Grimoire is reworking its plans. */
   reworking: boolean;
-  talk: TalkLine[]; notes: PlayerNote[];
+  talk: TalkLine[]; notes: PlayerNote[]; quickLog: QuickRecord[];
   /** The newest answer changed the notebook and nothing came after it, so it can be undone. */
   canUndo: boolean;
 }

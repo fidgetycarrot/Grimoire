@@ -1646,8 +1646,9 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.7.0";
+var VERSION = "0.7.1";
 var MAX_VERSIONS = 16;
+var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, lines: 40, notes: 8, note: 200 };
 var DEFAULT_SETTINGS = { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto", quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true };
 var DEFAULT_PREFERENCES = { tone: "balanced", twist: true };
@@ -1675,6 +1676,35 @@ function talkLines(value) {
       ...typeof x.noteId === "string" ? { noteId: x.noteId } : {}
     }];
   });
+}
+function quickLog(value) {
+  if (!Array.isArray(value))
+    return [];
+  return value.slice(-QUICK_LOG).flatMap((v) => {
+    const x = record5(v), answers = {};
+    for (const [key, a] of Object.entries(record5(x.answers)).slice(0, 40)) {
+      if (!/^[a-z_0-9]{1,30}$/.test(key))
+        continue;
+      if (typeof a === "number" && Number.isFinite(a))
+        answers[key] = a;
+      else {
+        const c = record5(a);
+        if (typeof c.choice === "string" && Number.isFinite(Number(c.confidence)))
+          answers[key] = { choice: c.choice.slice(0, 20), confidence: Number(c.confidence) };
+      }
+    }
+    return Number.isInteger(x.reply) ? [{ reply: Number(x.reply), at: Number(x.at) || 0, ok: x.ok === true, answers, marked: Number(x.marked) || 0, checkup: x.checkup === true, shifted: x.shifted === true, held: Number(x.held) || 0 }] : [];
+  });
+}
+function quickRecord(reply, result, outcome) {
+  const answers = {};
+  for (const [key, a] of Object.entries(result?.answers ?? {})) {
+    if (a?.type === "noul" && typeof a.noul === "number")
+      answers[key] = Math.round(a.noul * 100) / 100;
+    else if (a?.type === "choice" && typeof a.choice === "string")
+      answers[key] = { choice: a.choice, confidence: Math.round((a.confidence ?? 0) * 100) / 100 };
+  }
+  return { reply, at: Date.now(), ok: !!result, answers, marked: outcome?.marked ?? 0, checkup: !!outcome && (outcome.needsCheckup || outcome.shifted), shifted: !!outcome?.shifted, held: outcome?.held.length ?? 0 };
 }
 function playerNotes(value) {
   if (!Array.isArray(value))
@@ -1778,6 +1808,7 @@ class NotebookController {
         resync: Number.isInteger(saved.resync) ? Number(saved.resync) : null,
         talk: talkLines(saved.talk),
         notes: playerNotes(saved.notes),
+        quickLog: quickLog(saved.quickLog),
         quick: saved.quick && typeof saved.quick === "object" ? { at: Number(record5(saved.quick).at) || 0, ok: record5(saved.quick).ok === true, error: String(record5(saved.quick).error ?? "").slice(0, 200) } : null,
         job: job && job.status === "running" && !this.running.has(chatId) ? { ...job, status: "failed", label: "Stopped when Lumiverse restarted", error: "Run it again when ready." } : job,
         updatedAt: Number(saved.updatedAt) || 0
@@ -1792,7 +1823,7 @@ class NotebookController {
     await this.api.userStorage.setJson(this.path(state.chatId), state, { userId: this.userId });
   }
   blank(chatId) {
-    return { version: 1, chatId, enabled: false, pace: "auto", preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: "" }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: "", trackerTried: false, quick: null, skipDismissedAt: 0, held: [], resync: null, talk: [], notes: [], job: null, updatedAt: 0 };
+    return { version: 1, chatId, enabled: false, pace: "auto", preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: "" }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: "", trackerTried: false, quick: null, skipDismissedAt: 0, held: [], resync: null, talk: [], notes: [], quickLog: [], job: null, updatedAt: 0 };
   }
   async chatInfo(chatId) {
     const chat = await this.api.chats.get(chatId, this.userId);
@@ -1894,6 +1925,7 @@ class NotebookController {
         reworking: !!live && this.reworking(state, live),
         talk: state.talk,
         notes: state.notes,
+        quickLog: state.quickLog,
         canUndo: this.undoable(state) !== null,
         skipOffer: live && state.enabled && state.job?.status !== "running" && !state.skipHours && !this.reworking(state, live) ? skipOffer(live.version.notebook, live.moment, live.clock, state.skipDismissedAt) : null
       };
@@ -2555,9 +2587,9 @@ class NotebookController {
         if (!now)
           return;
         state.quick = { at: Date.now(), ok: !!result, error };
-        let extra = "";
+        let extra = "", outcome = null;
         if (result && covers(live.prints, now.prints)) {
-          const outcome = applyQuick(now.version.notebook, plan, result, now.moment);
+          outcome = applyQuick(now.version.notebook, plan, result, now.moment);
           if (outcome.changed) {
             state.versions.push({ notebook: outcome.notebook, covered: live.prints, at: Date.now(), reason: "Quick check", quick: true, ...now.values.location ? { location: now.values.location } : {} });
             state.versions = prune(state.versions);
@@ -2572,6 +2604,7 @@ class NotebookController {
             extra = "The story changed direction";
           }
         }
+        state.quickLog = [...state.quickLog, quickRecord(live.moment.reply ?? 0, result, outcome)].slice(-QUICK_LOG);
         if (this.running.has(chatId)) {
           await this.save(state);
           return;

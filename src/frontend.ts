@@ -212,6 +212,32 @@ export function setup(ctx: SpindleFrontendContext) {
     if (busy && view.job?.kind !== 'talk') card.append(el('p', 'gm-hint', 'Grimoire is updating the notebook. You can send once it’s done.'));
     return card;
   }
+  const QUICK_WORDS: Array<[RegExp, string]> = [[/^due_/, 'Planned development shown'], [/^moment_/, 'Possible moment happened'], [/^detail_mentioned$/, 'Breadcrumb mentioned'], [/^echo_heard$/, 'Echo heard'], [/^callback_/, 'Breadcrumb paid off'], [/^fits_/, 'Storyline still fits'], [/^story_shift$/, 'Change of direction'], [/^new_turn$/, 'Something new']];
+  const RHYTHM_WORDS: Record<string, string> = { calm: 'calm', rising: 'building', peak: 'big moment', aftermath: 'aftermath', stalled: 'stalled' };
+  function renderQuickLog(view: ChatView) {
+    const d = details('Quick check answers · no spoilers');
+    const records = [...(view.quickLog ?? [])].reverse().slice(0, 12);
+    if (!records.length) { d.body.append(el('p', 'gm-small', 'No quick checks yet.')); return d.root; }
+    const pct = (n: number) => `${Math.round(n * 100)}%`;
+    for (const r of records) {
+      const item = el('div', 'gm-entry');
+      const outcome = [r.marked ? `marked ${r.marked}` : '', r.shifted ? 'change of direction' : r.checkup ? 'asked for a check-up' : '', r.held ? `held back ${r.held}` : ''].filter(Boolean).join(' · ');
+      item.append(el('p', 'gm-small', `Reply ${r.reply} · ${ago(r.at)}${r.ok ? '' : ' · didn’t run'}${outcome ? ` · ${outcome}` : ''}`));
+      const parts: string[] = [];
+      const scene = r.answers.rhythm;
+      if (scene && typeof scene === 'object') parts.push(`Scene: ${RHYTHM_WORDS[scene.choice] ?? scene.choice} (${pct(scene.confidence)})`);
+      for (const [key, value] of Object.entries(r.answers)) {
+        if (typeof value !== 'number') continue;
+        const label = QUICK_WORDS.find(([re]) => re.test(key))?.[1] ?? key;
+        const n = /_(\d+)$/.exec(key)?.[1];
+        parts.push(`${label}${n && key !== 'new_turn' ? ` ${n}` : ''}: ${pct(value)}`);
+      }
+      if (parts.length) item.append(el('p', 'gm-meta', parts.join(' · ')));
+      d.body.append(item);
+    }
+    d.body.append(el('p', 'gm-hint', `How sure the decision model was about each question. Yes counts at ${pct(0.7)} or more. Only numbers: no names, no plans.`));
+    return d.root;
+  }
   function renderTracker(view: ChatView) {
     const d = details('What Grimoire reads from your preset');
     if (!view.checks.length) { d.body.append(el('p', 'gm-small', 'No tracker was found in this chat, so Grimoire keeps the story time itself. If your preset adds a status block later, a check-up can learn to read it.')); return d.root; }
@@ -305,7 +331,9 @@ export function setup(ctx: SpindleFrontendContext) {
     else if (view.behind && view.enabled) body.append(el('p', 'gm-hint', 'You went back in the chat, so Grimoire is using its notebook from before that point. Nothing from the removed replies counts.'));
     if (view.reworking && view.enabled) body.append(el('p', 'gm-hint', 'The story changed direction. Grimoire is reworking its plans to fit, and holds older plans back meanwhile. Nothing it already set up is forgotten.'));
     if (view.skipOffer && view.enabled) body.append(renderSkipOffer(view));
-    body.append(renderClock(view), renderPace(view), renderActions(view), renderTalk(view), renderTracker(view), renderGlance(view), renderSpoilers(view));
+    body.append(renderClock(view), renderPace(view), renderActions(view), renderTalk(view), renderTracker(view), renderGlance(view));
+    if (snapshot?.settings.quick.enabled || view.quickLog?.length) body.append(renderQuickLog(view));
+    body.append(renderSpoilers(view));
     const remove = button(confirmDelete ? 'Tap again to delete this notebook' : 'Delete this notebook', async () => {
       if (!confirmDelete) { confirmDelete = true; render(); setTimeout(() => { confirmDelete = false; render(); }, 5000); return; }
       confirmDelete = false; await act('remove', { chatId: view.chatId }); notify('Notebook deleted for this chat.');

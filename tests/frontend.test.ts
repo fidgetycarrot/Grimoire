@@ -24,7 +24,7 @@ function harness(chat: Partial<NonNullable<Snapshot['chat']>> | null = {}, setti
     decisions: { available: true, reason: '', connections: [{ id: 'dec', name: 'Jev', provider: 'typesafe', model: '~typesafe/jev-latest', isDefault: true }] },
     chat: chat === null ? null : { chatId: 'chat-1', name: 'Low Water', supported: true, reason: '', enabled: true, pace: 'auto', preferences: { tone: 'balanced', twist: true }, hasNotebook: true,
       summary: 'Notebook updated after the tavern.', clock: { day: 2, hour: 21, label: '' }, clockText: 'Day 2, 21:00', sources: { day: 'notebook', hour: 'notebook', exact: false }, checks: [],
-      needsCheck: '', job: null, updatedAt: Date.now(), repliesSinceCheck: 2, skipHours: 0, notebook: stamp(validateNotebook(sampleNotebook()), 40), behind: false, earlierParts: 0, quick: null, dueIds: [], skipOffer: null, glance: null, reworking: false, talk: [], notes: [], canUndo: false, ...chat },
+      needsCheck: '', job: null, updatedAt: Date.now(), repliesSinceCheck: 2, skipHours: 0, notebook: stamp(validateNotebook(sampleNotebook()), 40), behind: false, earlierParts: 0, quick: null, dueIds: [], skipOffer: null, glance: null, reworking: false, talk: [], notes: [], quickLog: [], canUndo: false, ...chat },
   };
   const requests: Array<{ action: string; input: any }> = [];
   let receive: (m: unknown) => void = () => {};
@@ -47,6 +47,14 @@ function harness(chat: Partial<NonNullable<Snapshot['chat']>> | null = {}, setti
 }
 
 describe('the panel', () => {
+  test('quick check answers show as numbers with plain labels', async () => {
+    const h = harness({ quickLog: [{ reply: 7, at: Date.now(), ok: true, answers: { due_1: 0.91, new_turn: 0.82, story_shift: 0.03, rhythm: { choice: 'peak', confidence: 0.7 } }, marked: 1, checkup: true, shifted: false, held: 0 }] }, { quick: { enabled: true, connectionId: '', model: '' } }); await tick();
+    const text = h.root.textContent!;
+    expect(text).toContain('Quick check answers · no spoilers');
+    expect(text).toContain('Reply 7');
+    expect(text).toContain('marked 1 · asked for a check-up');
+    expect(text).toContain('Scene: big moment (70%) · Planned development shown 1: 91% · Something new: 82% · Change of direction: 3%');
+  });
   test('talking to Grimoire: send with keep, see changes, remove a note, undo', async () => {
     const h = harness({ notes: [{ id: 'n1', text: 'Keep the romance a slow burn.', at: 1 }], canUndo: true,
       talk: [{ from: 'you', text: 'Slow down.', at: 1 }, { from: 'grimoire', text: 'Got it.', at: 2, changes: ['Slowed 1 storyline'], versionAt: 2 }] }); await tick();
