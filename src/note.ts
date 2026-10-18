@@ -61,6 +61,7 @@ const STAGE: Record<string, string> = {
   ten: 'Arc: the turn. Something unexpected casts what came before in a new light. It does not have to be a threat.',
   ketsu: 'Arc: bringing it together. Let the turn and what came before settle into something new: an understanding, a choice, a changed bond.',
 };
+const GUIDED = 'The player gave guidance for this reply. It comes first: follow it, and where anything below disagrees, the guidance wins. No new developments this time.';
 const DEEPENING = 'Pace: the scene is deepening. Let it grow through what people say and do; there is no need to escalate.';
 /** Replies between planting one detail and the next, so breadcrumbs stay subtle. */
 export const PLANT_GAP = 4;
@@ -86,7 +87,7 @@ export function seedPlan(notebook: Notebook, now: number | Moment): { plant: See
   return { plant, ready, echo };
 }
 
-export interface NoteInput { notebook: Notebook; pace: Pace; clock: StoryClock; now: number | Moment; /** Threads that no longer fit for now. */ held?: string[]; /** The story just changed direction; old plans are being reworked. */ reworking?: boolean; recent: string; trackerPresent?: string; skipHours?: number; /** True when the time comes from the last check-up, not from a tracker reading of the latest reply. */ clockMayLag?: boolean }
+export interface NoteInput { notebook: Notebook; pace: Pace; clock: StoryClock; now: number | Moment; /** Threads that no longer fit for now. */ held?: string[]; /** The story just changed direction; old plans are being reworked. */ reworking?: boolean; recent: string; trackerPresent?: string; skipHours?: number; /** True when the time comes from the last check-up, not from a tracker reading of the latest reply. */ clockMayLag?: boolean; /** The player swiped with guidance: the note steps back so it never argues with them. */ guided?: boolean }
 /**
  * The short private note added before a reply. Built by code from the
  * notebook; no model call. It carries reasons and narrator-safe hints, never
@@ -99,24 +100,30 @@ export function buildNote(input: NoteInput): string {
   lines.push('Grimoire: private story guidance for the narrator. Never mention, quote, or explain it.');
   lines.push(`${input.clockMayLag ? 'Story time at the last check-up' : 'Story time'}: ${describeClock(input.clock)}.${input.clockMayLag ? ' Time may have moved on since; the chat decides what time it is now.' : ''}${input.skipHours ? ` About ${describeDuration(input.skipHours)} have passed since the last message: open with that gap and what changed during it.` : ''}`);
   const gentle = notebook.arc.shape === 'kishotenketsu' && notebook.rhythm === 'rising';
-  lines.push(pace === 'auto' ? (gentle ? DEEPENING : RHYTHM[notebook.rhythm]) : PACE[pace]);
-  if (STAGE[notebook.arc.stage]) lines.push(STAGE[notebook.arc.stage]);
+  const guided = !!input.guided;
+  // Guidance on a swipe is the player's say on this very reply. Pace, stage and plans could
+  // pull against it, so they are left out; who people are and what the story is about stay.
+  if (guided) lines.push(GUIDED);
+  else {
+    lines.push(pace === 'auto' ? (gentle ? DEEPENING : RHYTHM[notebook.rhythm]) : PACE[pace]);
+    if (STAGE[notebook.arc.stage]) lines.push(STAGE[notebook.arc.stage]);
+  }
   lines.push(`What the story is about: ${notebook.story.question}`);
-  const held = new Set(input.held ?? []), reworking = !!input.reworking;
+  const held = new Set(input.held ?? []), reworking = !!input.reworking, quiet = reworking || guided;
   const seedsAll = seedPlan(notebook, now), used = new Set<string>();
   // While plans are reworked, no breadcrumbs: they may belong to storylines that no longer fit.
-  const seeds = reworking ? { plant: null, ready: [] as Seed[], echo: null } : { plant: seedsAll.plant && !held.has(seedsAll.plant.pays) ? seedsAll.plant : null, ready: seedsAll.ready.filter(s => !held.has(s.pays)), echo: seedsAll.echo };
+  const seeds = quiet ? { plant: null, ready: [] as Seed[], echo: null } : { plant: seedsAll.plant && !held.has(seedsAll.plant.pays) ? seedsAll.plant : null, ready: seedsAll.ready.filter(s => !held.has(s.pays)), echo: seedsAll.echo };
   if (reworking) lines.push('The story has just changed direction. Follow the player\'s lead; older plans are being reworked, so do not steer back toward them. People left behind can still be thought of, but nothing needs to happen yet.');
   const callback = (seed: Seed) => { used.add(seed.id); return `Bring back something mentioned earlier: "${seed.detail}" (${seed.payoff.replace(/[.!?]+$/, '')}).`; };
   // The turn itself, only once the arc has reached it.
-  if (notebook.arc.shape === 'kishotenketsu' && notebook.arc.stage === 'ten' && notebook.arc.turn) {
+  if (!guided && notebook.arc.shape === 'kishotenketsu' && notebook.arc.stage === 'ten' && notebook.arc.turn) {
     lines.push(`The turn: ${end(notebook.arc.turn)} Let it land through what happens, then give people room to react.`);
     for (const seed of seeds.ready.filter(s => s.pays === 'turn').slice(0, 2)) lines.push(`- ${callback(seed)}`);
   }
 
   // What is due, filtered by the pace: urgent things always press in; slower
   // ones wait for a break in quiet times and arrive one at a time otherwise.
-  const due = reworking ? [] : dueThreads(notebook, now).filter(d => !held.has(d.thread.id));
+  const due = quiet ? [] : dueThreads(notebook, now).filter(d => !held.has(d.thread.id));
   const urgent = due.filter(d => d.thread.speed === 'urgent').slice(0, 2);
   const slower = quietTime ? [] : due.filter(d => d.thread.speed !== 'urgent').slice(0, pace === 'fast' ? 2 : 1);
   const developments = [...urgent, ...slower];
@@ -130,7 +137,7 @@ export function buildNote(input: NoteInput): string {
   }
   // Other open threads involving people in the scene, so they act with purpose.
   const shown = new Set(developments.map(d => d.thread.id));
-  const nearby = reworking ? [] : notebook.threads.filter(t => t.status === 'open' && !shown.has(t.id) && !held.has(t.id) && t.people.some(p => present.some(person => person.id === p))).slice(0, 3 - developments.length);
+  const nearby = quiet ? [] : notebook.threads.filter(t => t.status === 'open' && !shown.has(t.id) && !held.has(t.id) && t.people.some(p => present.some(person => person.id === p))).slice(0, 3 - developments.length);
   if (nearby.length) {
     lines.push('Open threads near this scene:');
     for (const thread of nearby) lines.push(`- ${thread.title}: ${thread.hint || thread.why}`);
@@ -140,7 +147,7 @@ export function buildNote(input: NoteInput): string {
     for (const person of present.slice(0, 4)) lines.push(`- ${person.name}${person.role ? ` (${person.role})` : ''}: wants ${end(person.wants || 'nothing stated yet')}${person.doing ? ` Currently: ${end(person.doing)}` : ''}${person.hint ? ` Play them as: ${end(person.hint)}` : ''}`);
   }
   // A possible beat, matched to the pace. Quiet keeps only gentle ones.
-  const beat = reworking ? undefined : notebook.beats.find(b => b.status === 'possible' && !held.has(b.thread) && (!quietTime || b.intensity === 'low') && (!b.thread || notebook.threads.find(t => t.id === b.thread)?.status === 'open'));
+  const beat = quiet ? undefined : notebook.beats.find(b => b.status === 'possible' && !held.has(b.thread) && (!quietTime || b.intensity === 'low') && (!b.thread || notebook.threads.find(t => t.id === b.thread)?.status === 'open'));
   if (beat && (pace === 'fast' || !developments.length || notebook.rhythm === 'stalled')) {
     const tie = seeds.ready.find(s => s.pays === beat.id && !used.has(s.id));
     lines.push(`A possible next moment, only if it follows naturally: ${beat.text}${beat.conditions ? ` (only if ${beat.conditions})` : ''}. Purpose: ${beat.purpose}${tie ? ` ${callback(tie)}` : ''}`);
@@ -152,7 +159,7 @@ export function buildNote(input: NoteInput): string {
   if (seeds.plant) lines.push(`A small detail to mention in passing, without drawing attention to it: ${end(seeds.plant.detail)}`);
   if (seeds.echo) lines.push(`Something that happened elsewhere can reach the player in passing, as news, a rumor, an overheard remark, or a message, only if it fits: ${end(seeds.echo.detail)}`);
   // Someone not met yet, so the world is not just the main cast.
-  const newcomer = !reworking && !quietTime && (notebook.rhythm === 'calm' || notebook.rhythm === 'stalled' || pace === 'fast') ? notebook.people.find(p => p.status === 'active' && !p.met && !present.includes(p)) : undefined;
+  const newcomer = !quiet && !quietTime && (notebook.rhythm === 'calm' || notebook.rhythm === 'stalled' || pace === 'fast') ? notebook.people.find(p => p.status === 'active' && !p.met && !present.includes(p)) : undefined;
   if (newcomer && lines.length < 16) lines.push(`Someone who could appear if it fits: ${newcomer.name}${newcomer.role ? `, ${newcomer.role}` : ''}. Wants ${newcomer.wants || 'something of their own'}.`);
   const rules = 'This guidance is conditional. The latest messages decide what actually happened; skip anything they make irrelevant. Never write the player character\'s actions, words, thoughts, or feelings. Keep secrets hidden and let them show only through small details.';
   // Too long: drop whole lines from the end of the guidance, never the rules.

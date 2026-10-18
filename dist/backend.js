@@ -653,6 +653,7 @@ var STAGE = {
   ten: "Arc: the turn. Something unexpected casts what came before in a new light. It does not have to be a threat.",
   ketsu: "Arc: bringing it together. Let the turn and what came before settle into something new: an understanding, a choice, a changed bond."
 };
+var GUIDED = "The player gave guidance for this reply. It comes first: follow it, and where anything below disagrees, the guidance wins. No new developments this time.";
 var DEEPENING = "Pace: the scene is deepening. Let it grow through what people say and do; there is no need to escalate.";
 var PLANT_GAP = 4;
 function seedPlan(notebook, now) {
@@ -674,25 +675,30 @@ function buildNote(input) {
   lines.push("Grimoire: private story guidance for the narrator. Never mention, quote, or explain it.");
   lines.push(`${input.clockMayLag ? "Story time at the last check-up" : "Story time"}: ${describeClock(input.clock)}.${input.clockMayLag ? " Time may have moved on since; the chat decides what time it is now." : ""}${input.skipHours ? ` About ${describeDuration(input.skipHours)} have passed since the last message: open with that gap and what changed during it.` : ""}`);
   const gentle = notebook.arc.shape === "kishotenketsu" && notebook.rhythm === "rising";
-  lines.push(pace === "auto" ? gentle ? DEEPENING : RHYTHM[notebook.rhythm] : PACE[pace]);
-  if (STAGE[notebook.arc.stage])
-    lines.push(STAGE[notebook.arc.stage]);
+  const guided = !!input.guided;
+  if (guided)
+    lines.push(GUIDED);
+  else {
+    lines.push(pace === "auto" ? gentle ? DEEPENING : RHYTHM[notebook.rhythm] : PACE[pace]);
+    if (STAGE[notebook.arc.stage])
+      lines.push(STAGE[notebook.arc.stage]);
+  }
   lines.push(`What the story is about: ${notebook.story.question}`);
-  const held = new Set(input.held ?? []), reworking = !!input.reworking;
+  const held = new Set(input.held ?? []), reworking = !!input.reworking, quiet = reworking || guided;
   const seedsAll = seedPlan(notebook, now), used = new Set;
-  const seeds = reworking ? { plant: null, ready: [], echo: null } : { plant: seedsAll.plant && !held.has(seedsAll.plant.pays) ? seedsAll.plant : null, ready: seedsAll.ready.filter((s) => !held.has(s.pays)), echo: seedsAll.echo };
+  const seeds = quiet ? { plant: null, ready: [], echo: null } : { plant: seedsAll.plant && !held.has(seedsAll.plant.pays) ? seedsAll.plant : null, ready: seedsAll.ready.filter((s) => !held.has(s.pays)), echo: seedsAll.echo };
   if (reworking)
     lines.push("The story has just changed direction. Follow the player's lead; older plans are being reworked, so do not steer back toward them. People left behind can still be thought of, but nothing needs to happen yet.");
   const callback = (seed) => {
     used.add(seed.id);
     return `Bring back something mentioned earlier: "${seed.detail}" (${seed.payoff.replace(/[.!?]+$/, "")}).`;
   };
-  if (notebook.arc.shape === "kishotenketsu" && notebook.arc.stage === "ten" && notebook.arc.turn) {
+  if (!guided && notebook.arc.shape === "kishotenketsu" && notebook.arc.stage === "ten" && notebook.arc.turn) {
     lines.push(`The turn: ${end(notebook.arc.turn)} Let it land through what happens, then give people room to react.`);
     for (const seed of seeds.ready.filter((s) => s.pays === "turn").slice(0, 2))
       lines.push(`- ${callback(seed)}`);
   }
-  const due = reworking ? [] : dueThreads(notebook, now).filter((d) => !held.has(d.thread.id));
+  const due = quiet ? [] : dueThreads(notebook, now).filter((d) => !held.has(d.thread.id));
   const urgent = due.filter((d) => d.thread.speed === "urgent").slice(0, 2);
   const slower = quietTime ? [] : due.filter((d) => d.thread.speed !== "urgent").slice(0, pace === "fast" ? 2 : 1);
   const developments = [...urgent, ...slower];
@@ -705,7 +711,7 @@ function buildNote(input) {
     }
   }
   const shown = new Set(developments.map((d) => d.thread.id));
-  const nearby = reworking ? [] : notebook.threads.filter((t) => t.status === "open" && !shown.has(t.id) && !held.has(t.id) && t.people.some((p) => present.some((person) => person.id === p))).slice(0, 3 - developments.length);
+  const nearby = quiet ? [] : notebook.threads.filter((t) => t.status === "open" && !shown.has(t.id) && !held.has(t.id) && t.people.some((p) => present.some((person) => person.id === p))).slice(0, 3 - developments.length);
   if (nearby.length) {
     lines.push("Open threads near this scene:");
     for (const thread of nearby)
@@ -716,7 +722,7 @@ function buildNote(input) {
     for (const person of present.slice(0, 4))
       lines.push(`- ${person.name}${person.role ? ` (${person.role})` : ""}: wants ${end(person.wants || "nothing stated yet")}${person.doing ? ` Currently: ${end(person.doing)}` : ""}${person.hint ? ` Play them as: ${end(person.hint)}` : ""}`);
   }
-  const beat = reworking ? undefined : notebook.beats.find((b) => b.status === "possible" && !held.has(b.thread) && (!quietTime || b.intensity === "low") && (!b.thread || notebook.threads.find((t) => t.id === b.thread)?.status === "open"));
+  const beat = quiet ? undefined : notebook.beats.find((b) => b.status === "possible" && !held.has(b.thread) && (!quietTime || b.intensity === "low") && (!b.thread || notebook.threads.find((t) => t.id === b.thread)?.status === "open"));
   if (beat && (pace === "fast" || !developments.length || notebook.rhythm === "stalled")) {
     const tie = seeds.ready.find((s) => s.pays === beat.id && !used.has(s.id));
     lines.push(`A possible next moment, only if it follows naturally: ${beat.text}${beat.conditions ? ` (only if ${beat.conditions})` : ""}. Purpose: ${beat.purpose}${tie ? ` ${callback(tie)}` : ""}`);
@@ -730,7 +736,7 @@ function buildNote(input) {
     lines.push(`A small detail to mention in passing, without drawing attention to it: ${end(seeds.plant.detail)}`);
   if (seeds.echo)
     lines.push(`Something that happened elsewhere can reach the player in passing, as news, a rumor, an overheard remark, or a message, only if it fits: ${end(seeds.echo.detail)}`);
-  const newcomer = !reworking && !quietTime && (notebook.rhythm === "calm" || notebook.rhythm === "stalled" || pace === "fast") ? notebook.people.find((p) => p.status === "active" && !p.met && !present.includes(p)) : undefined;
+  const newcomer = !quiet && !quietTime && (notebook.rhythm === "calm" || notebook.rhythm === "stalled" || pace === "fast") ? notebook.people.find((p) => p.status === "active" && !p.met && !present.includes(p)) : undefined;
   if (newcomer && lines.length < 16)
     lines.push(`Someone who could appear if it fits: ${newcomer.name}${newcomer.role ? `, ${newcomer.role}` : ""}. Wants ${newcomer.wants || "something of their own"}.`);
   const rules = "This guidance is conditional. The latest messages decide what actually happened; skip anything they make irrelevant. Never write the player character's actions, words, thoughts, or feelings. Keep secrets hidden and let them show only through small details.";
@@ -1520,7 +1526,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.6.2";
+var VERSION = "0.6.3";
 var MAX_VERSIONS = 16;
 var DEFAULT_SETTINGS = { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto", quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true };
 var DEFAULT_PREFERENCES = { tone: "balanced", twist: true };
@@ -2125,7 +2131,7 @@ class NotebookController {
     await this.api.userStorage.setJson("settings.json", settings, { userId: this.userId });
     return settings;
   }
-  async noteFor(chatId, exclude) {
+  async noteFor(chatId, exclude, guided = false) {
     return this.serial(chatId, async () => {
       const state = await this.load(chatId);
       if (!state?.enabled || !state.versions.length)
@@ -2136,7 +2142,7 @@ class NotebookController {
       const recent = live.turns.slice(-2).map((t) => t.content).join(`
 `);
       const clockMayLag = (live.sources.day !== "tracker" || live.sources.hour !== "tracker") && this.repliesSince(live) > 0;
-      return buildNote({ notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag });
+      return buildNote({ notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag, guided });
     });
   }
   async macro(name, chatId) {
@@ -2167,8 +2173,9 @@ class NotebookController {
           exclude = last.id;
       } catch {}
     }
+    const guided = context.generationType !== "normal" && typeof context.regenFeedback === "string" && context.regenFeedback.trim().length > 0;
     try {
-      note = await this.noteFor(context.chatId, exclude);
+      note = await this.noteFor(context.chatId, exclude, guided);
     } catch {
       return messages;
     }

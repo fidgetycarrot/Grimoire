@@ -597,6 +597,23 @@ describe('edits, swipes, and forks', () => {
     expect(note).not.toContain('Updated.');
     const result = await c.intercept([{ role: 'user', content: 'x' }], { chatId: 'chat-1', generationType: 'regenerate', excludeMessageId: 'm4' }) as any;
     expect(result.messages[1].content).toContain('Story time: Day 1, 18:20');
+    expect(result.messages[1].content).not.toContain('guidance for this reply');
+  });
+  test('a swipe with guidance gets a note that steps back instead of arguing', async () => {
+    const { c } = await withUpdate();
+    const plain = await c.intercept([{ role: 'user', content: 'x' }], { chatId: 'chat-1', generationType: 'swipe', excludeMessageId: 'm4' }) as any;
+    const guided = await c.intercept([{ role: 'user', content: 'x' }], { chatId: 'chat-1', generationType: 'swipe', excludeMessageId: 'm4', regenFeedback: 'Too fast. Slow down.' }) as any;
+    const text = guided.messages[1].content as string;
+    expect(text).toContain('The player gave guidance for this reply');
+    expect(text).toContain('Story time: Day 1, 18:20');
+    expect(text).not.toContain('Pace:');
+    expect(text).not.toContain('Developments that are due');
+    expect(text).not.toContain('A possible next moment');
+    expect(text).toContain('Never write the player character');
+    expect(plain.messages[1].content).toContain('Pace:');
+    // Blank guidance is no guidance.
+    const blank = await c.intercept([{ role: 'user', content: 'x' }], { chatId: 'chat-1', generationType: 'swipe', excludeMessageId: 'm4', regenFeedback: '  ' }) as any;
+    expect(blank.messages[1].content).not.toContain('guidance for this reply');
   });
   test('deleting or editing a reply falls back to the notebook from before it, without paying for a check-up', async () => {
     const { h, m, c } = await withUpdate();

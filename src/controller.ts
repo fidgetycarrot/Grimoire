@@ -467,7 +467,7 @@ export class NotebookController {
   async saveSettings(value: unknown) { const settings = validSettings(value); await this.api.userStorage.setJson('settings.json', settings, { userId: this.userId }); return settings; }
 
   // ----- The prompt -------------------------------------------------------------
-  async noteFor(chatId: string, exclude?: string): Promise<string> {
+  async noteFor(chatId: string, exclude?: string, guided = false): Promise<string> {
     return this.serial(chatId, async () => {
       const state = await this.load(chatId);
       if (!state?.enabled || !state.versions.length) return '';
@@ -475,7 +475,7 @@ export class NotebookController {
       if (!live) return '';
       const recent = live.turns.slice(-2).map(t => t.content).join('\n');
       const clockMayLag = (live.sources.day !== 'tracker' || live.sources.hour !== 'tracker') && this.repliesSince(live) > 0;
-      return buildNote({ notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag });
+      return buildNote({ notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag, guided });
     });
   }
   async macro(name: 'note' | 'clock' | 'pace', chatId: string | undefined): Promise<string> {
@@ -489,13 +489,15 @@ export class NotebookController {
       return name === 'clock' ? describeClock(live.clock) : paceLine(state.pace, live.version.notebook);
     });
   }
-  async intercept(messages: LlmMessageDTO[], context: Pick<InterceptorContextDTO, 'chatId' | 'generationType' | 'excludeMessageId'>): Promise<LlmMessageDTO[] | InterceptorResultDTO> {
+  async intercept(messages: LlmMessageDTO[], context: Pick<InterceptorContextDTO, 'chatId' | 'generationType' | 'excludeMessageId'> & { regenFeedback?: string }): Promise<LlmMessageDTO[] | InterceptorResultDTO> {
     if (!['normal', 'regenerate', 'swipe'].includes(context.generationType) || !context.chatId) return messages;
     if ((await this.settings()).placement !== 'auto') return messages;
     let note = '', exclude = context.excludeMessageId;
     // Some hosts leave out which reply is being replaced. Then the newest reply is the one being redone.
     if (!exclude && context.generationType !== 'normal') { try { const last = conversation(await this.api.chat.getMessages(context.chatId)).at(-1); if (last?.role === 'assistant') exclude = last.id; } catch { /* use the whole chat */ } }
-    try { note = await this.noteFor(context.chatId, exclude); } catch { return messages; }
+    // A swipe with guidance: the player has said what this reply should be, so the note must not pull another way.
+    const guided = context.generationType !== 'normal' && typeof context.regenFeedback === 'string' && context.regenFeedback.trim().length > 0;
+    try { note = await this.noteFor(context.chatId, exclude, guided); } catch { return messages; }
     if (!note) return messages;
     // Keep a trailing assistant prefill last, so the note never breaks it.
     const at = messages.at(-1)?.role === 'assistant' ? messages.length - 1 : messages.length;
