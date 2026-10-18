@@ -70,16 +70,19 @@ export const PLANT_GAP = 4;
  * have passed since it was planted (the same wait a steady thread gets), so a
  * callback lands well after the mention. A turn's details are ready at the turn.
  */
-export function seedPlan(notebook: Notebook, now: number | Moment): { plant: Seed | null; ready: Seed[] } {
+export function seedPlan(notebook: Notebook, now: number | Moment): { plant: Seed | null; ready: Seed[]; echo: Seed | null } {
   const m = typeof now === 'number' ? { hours: now } as Moment : now, reply = m.reply, gap = m.waits?.steady ?? 15;
   const planted = notebook.seeds.filter(s => s.status === 'planted');
-  const last = Math.max(-Infinity, ...notebook.seeds.map(s => s.plantedAt ?? -Infinity));
+  // Planting and echoes share one rhythm: one background detail at a time, spaced out.
+  const last = Math.max(-Infinity, ...notebook.seeds.map(s => s.plantedAt ?? -Infinity), ...notebook.seeds.filter(s => s.status === 'paid' && s.echoAt !== undefined).map(s => s.paidAt ?? -Infinity));
   const open = (s: Seed) => !s.pays || s.pays === 'turn' || notebook.threads.some(t => t.id === s.pays && t.status !== 'closed') || notebook.beats.some(b => b.id === s.pays && b.status === 'possible');
-  const plant = notebook.rhythm === 'peak' || (reply !== undefined && reply - last < PLANT_GAP) ? null
-    : notebook.seeds.find(s => s.status === 'waiting' && open(s)) ?? null;
+  const spaced = notebook.rhythm !== 'peak' && (reply === undefined || reply - last >= PLANT_GAP);
+  // An echo is something that played out offscreen; it reaches the player in passing a while after it happened.
+  const echo = spaced && reply !== undefined ? notebook.seeds.find(s => s.status === 'echo' && s.echoAt !== undefined && reply - s.echoAt >= PLANT_GAP + 1) ?? null : null;
+  const plant = !spaced || echo ? null : notebook.seeds.find(s => s.status === 'waiting' && open(s)) ?? null;
   const atTurn = notebook.arc.shape === 'kishotenketsu' && notebook.arc.stage === 'ten';
   const ready = planted.filter(s => (s.pays === 'turn' ? atTurn : reply !== undefined && s.plantedAt !== undefined && reply - s.plantedAt >= gap) && open(s));
-  return { plant, ready };
+  return { plant, ready, echo };
 }
 
 export interface NoteInput { notebook: Notebook; pace: Pace; clock: StoryClock; now: number | Moment; /** Threads that no longer fit for now. */ held?: string[]; /** The story just changed direction; old plans are being reworked. */ reworking?: boolean; recent: string; trackerPresent?: string; skipHours?: number; /** True when the time comes from the last check-up, not from a tracker reading of the latest reply. */ clockMayLag?: boolean }
@@ -101,7 +104,7 @@ export function buildNote(input: NoteInput): string {
   const held = new Set(input.held ?? []), reworking = !!input.reworking;
   const seedsAll = seedPlan(notebook, now), used = new Set<string>();
   // While plans are reworked, no breadcrumbs: they may belong to storylines that no longer fit.
-  const seeds = reworking ? { plant: null, ready: [] } : { plant: seedsAll.plant && !held.has(seedsAll.plant.pays) ? seedsAll.plant : null, ready: seedsAll.ready.filter(s => !held.has(s.pays)) };
+  const seeds = reworking ? { plant: null, ready: [] as Seed[], echo: null } : { plant: seedsAll.plant && !held.has(seedsAll.plant.pays) ? seedsAll.plant : null, ready: seedsAll.ready.filter(s => !held.has(s.pays)), echo: seedsAll.echo };
   if (reworking) lines.push('The story has just changed direction. Follow the player\'s lead; older plans are being reworked, so do not steer back toward them. People left behind can still be thought of, but nothing needs to happen yet.');
   const callback = (seed: Seed) => { used.add(seed.id); return `Bring back something mentioned earlier: "${seed.detail}" (${seed.payoff.replace(/[.!?]+$/, '')}).`; };
   // The turn itself, only once the arc has reached it.
@@ -146,6 +149,7 @@ export function buildNote(input: NoteInput): string {
   if (loose) { const line = callback(loose); lines.push(`If it fits, now is a good time to ${line.charAt(0).toLowerCase()}${line.slice(1)}`); }
   // One new detail to plant, as part of the scene. What it means stays hidden until it pays off.
   if (seeds.plant) lines.push(`A small detail to mention in passing, without drawing attention to it: ${end(seeds.plant.detail)}`);
+  if (seeds.echo) lines.push(`Something that happened elsewhere can reach the player in passing, as news, a rumor, an overheard remark, or a message, only if it fits: ${end(seeds.echo.detail)}`);
   // Someone not met yet, so the world is not just the main cast.
   const newcomer = !reworking && !quietTime && (notebook.rhythm === 'calm' || notebook.rhythm === 'stalled' || pace === 'fast') ? notebook.people.find(p => p.status === 'active' && !p.met && !present.includes(p)) : undefined;
   if (newcomer && lines.length < 16) lines.push(`Someone who could appear if it fits: ${newcomer.name}${newcomer.role ? `, ${newcomer.role}` : ''}. Wants ${newcomer.wants || 'something of their own'}.`);

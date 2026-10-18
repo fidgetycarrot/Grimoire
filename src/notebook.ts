@@ -10,14 +10,14 @@ export type Speed = 'urgent' | 'steady' | 'slow';
 export type StepStatus = 'waiting' | 'shown' | 'offscreen' | 'skipped';
 export type Rhythm = 'calm' | 'rising' | 'peak' | 'aftermath' | 'stalled';
 export type Pace = 'auto' | 'quiet' | 'fast';
-export interface Step { id: string; text: string; sign: string; afterHours: number; status: StepStatus; at?: number; /** Code-owned: how many replies the chat had when it happened. */ atReply?: number }
+export interface Step { id: string; text: string; sign: string; afterHours: number; status: StepStatus; at?: number; /** Code-owned: how many replies the chat had when it happened. */ atReply?: number; /** Marked by a quick check; the next check-up confirms or corrects it. */ quick?: true }
 export interface Thread {
   id: string; title: string; speed: Speed; why: string; hint: string; people: string[];
   status: 'open' | 'paused' | 'closed'; closedReason: string; ifFollowed: string; ifIgnored: string;
   steps: Step[]; startAt?: number; /** Code-owned: how many replies the chat had when the thread began. */ startReply?: number;
 }
 export interface Person { id: string; name: string; aliases: string[]; role: string; wants: string; doing: string; hint: string; met: boolean; status: 'active' | 'gone' }
-export interface Beat { id: string; text: string; purpose: string; conditions: string; thread: string; intensity: 'low' | 'high'; status: 'possible' | 'happened' | 'dropped' }
+export interface Beat { id: string; text: string; purpose: string; conditions: string; thread: string; intensity: 'low' | 'high'; status: 'possible' | 'happened' | 'dropped'; quick?: true }
 export interface Story { question: string; stakes: string; direction: string; hiddenTruth: string[]; twist: string }
 /**
  * The shape of the current arc. Conflict: setup, rising action, climax,
@@ -35,8 +35,10 @@ export interface Arc { shape: Shape; stage: string; /** Kishōtenketsu: what the
  */
 export interface Seed {
   id: string; detail: string; payoff: string; /** A thread id, a beat id, "turn", or empty. */ pays: string;
-  status: 'waiting' | 'planted' | 'paid' | 'dropped';
-  /** Code-owned reply counts. */ plantedAt?: number; paidAt?: number;
+  /** echo: its story played out offscreen, and the player may hear of it in passing (the detail says how). */
+  status: 'waiting' | 'planted' | 'paid' | 'echo' | 'dropped';
+  /** Code-owned reply counts. */ plantedAt?: number; paidAt?: number; echoAt?: number;
+  quick?: true;
 }
 export interface Notebook {
   version: 1; story: Story; arc: Arc; people: Person[]; threads: Thread[]; beats: Beat[]; seeds: Seed[];
@@ -142,7 +144,7 @@ export function validateNotebook(value: unknown): Notebook {
       const s = record(raw), at = s.at, after = s.afterHours, p = `${path}.steps[${j}]`;
       if (typeof after !== 'number' || !Number.isFinite(after) || after < 0 || after > 24 * 365) fail(`${p}.afterHours must be a number of story hours.`);
       return { id: id(s.id, `${p}.id`), text: text(s.text, `${p}.text`, LIMITS.text, false), sign: text(s.sign, `${p}.sign`), afterHours: after as number,
-        status: choice(s.status, ['waiting', 'shown', 'offscreen', 'skipped'] as const, `${p}.status`, 'waiting'), ...(typeof at === 'number' && Number.isFinite(at) ? { at } : {}), ...(count(s.atReply) !== undefined ? { atReply: count(s.atReply) } : {}) };
+        status: choice(s.status, ['waiting', 'shown', 'offscreen', 'skipped'] as const, `${p}.status`, 'waiting'), ...(typeof at === 'number' && Number.isFinite(at) ? { at } : {}), ...(count(s.atReply) !== undefined ? { atReply: count(s.atReply) } : {}), ...(s.quick === true ? { quick: true as const } : {}) };
     }), `${path}.steps`);
     const peopleIds = list(t.people, `${path}.people`, 8).map((x, j) => id(x, `${path}.people[${j}]`)).filter(x => personIds.has(x));
     return {
@@ -158,7 +160,7 @@ export function validateNotebook(value: unknown): Notebook {
   const beats = unique(list(input.beats, 'beats', LIMITS.beats).map((item, i): Beat => {
     const b = record(item), path = `beats[${i}]`, thread = typeof b.thread === 'string' && threadIds.has(b.thread) ? b.thread : '';
     return { id: id(b.id, `${path}.id`), text: text(b.text, `${path}.text`, LIMITS.text, false), purpose: text(b.purpose, `${path}.purpose`), conditions: text(b.conditions, `${path}.conditions`),
-      thread, intensity: choice(b.intensity, ['low', 'high'] as const, `${path}.intensity`, 'low'), status: choice(b.status, ['possible', 'happened', 'dropped'] as const, `${path}.status`, 'possible') };
+      thread, intensity: choice(b.intensity, ['low', 'high'] as const, `${path}.intensity`, 'low'), status: choice(b.status, ['possible', 'happened', 'dropped'] as const, `${path}.status`, 'possible'), ...(b.quick === true ? { quick: true as const } : {}) };
   }), 'beats');
   const arcInput = record(input.arc), shape = choice(arcInput.shape, ['conflict', 'kishotenketsu'] as const, 'arc.shape', 'conflict');
   const stage = arcInput.stage === undefined ? STAGES[shape][0] : arcInput.stage;
@@ -167,8 +169,8 @@ export function validateNotebook(value: unknown): Notebook {
   const seeds = unique(list(input.seeds, 'seeds', LIMITS.seeds).map((item, i): Seed => {
     const s = record(item), path = `seeds[${i}]`, pays = typeof s.pays === 'string' && linkable.has(s.pays) ? s.pays : '';
     return { id: id(s.id, `${path}.id`), detail: text(s.detail, `${path}.detail`, LIMITS.short, false), payoff: text(s.payoff, `${path}.payoff`), pays,
-      status: choice(s.status, ['waiting', 'planted', 'paid', 'dropped'] as const, `${path}.status`, 'waiting'),
-      ...(count(s.plantedAt) !== undefined ? { plantedAt: count(s.plantedAt) } : {}), ...(count(s.paidAt) !== undefined ? { paidAt: count(s.paidAt) } : {}) };
+      status: choice(s.status, ['waiting', 'planted', 'paid', 'echo', 'dropped'] as const, `${path}.status`, 'waiting'),
+      ...(count(s.plantedAt) !== undefined ? { plantedAt: count(s.plantedAt) } : {}), ...(count(s.paidAt) !== undefined ? { paidAt: count(s.paidAt) } : {}), ...(count(s.echoAt) !== undefined ? { echoAt: count(s.echoAt) } : {}), ...(s.quick === true ? { quick: true as const } : {}) };
   }), 'seeds');
   return {
     version: 1,
@@ -199,20 +201,21 @@ export function mergeRevision(previous: Notebook, revised: Notebook, now: number
     for (const step of thread.steps) {
       const after = next!.steps.find(s => s.id === step.id);
       if (!after) failMerge(`Keep step "${step.id}" of "${thread.title}".`);
-      if ((step.status === 'shown' || step.status === 'offscreen') && after!.status === 'waiting') failMerge(`Step "${step.id}" of "${thread.title}" already happened and can't go back to waiting.`);
+      if ((step.status === 'shown' || step.status === 'offscreen') && after!.status === 'waiting' && !step.quick) failMerge(`Step "${step.id}" of "${thread.title}" already happened and can't go back to waiting.`);
     }
   }
-  for (const beat of previous.beats) if (beat.status === 'happened' && revised.beats.find(b => b.id === beat.id)?.status !== 'happened') failMerge(`Beat "${beat.id}" already happened. Keep it marked as happened.`);
+  for (const beat of previous.beats) if (beat.status === 'happened' && !beat.quick && revised.beats.find(b => b.id === beat.id)?.status !== 'happened') failMerge(`Beat "${beat.id}" already happened. Keep it marked as happened.`);
   for (const seed of previous.seeds) {
     const next = revised.seeds.find(s => s.id === seed.id);
     if (!next) failMerge(`Keep seed "${seed.id}" (mark it dropped if it no longer fits).`);
-    if (seed.status !== 'waiting' && next!.status === 'waiting') failMerge(`Seed "${seed.id}" was already planted and can't go back to waiting.`);
+    if (seed.status !== 'waiting' && next!.status === 'waiting' && !seed.quick) failMerge(`Seed "${seed.id}" was already planted and can't go back to waiting.`);
   }
   const fresh = withoutTimes(holdTurn(previous, revised));
   return stamp({ ...fresh, seeds: carrySeedTimes(previous, fresh.seeds), threads: fresh.threads.map(thread => {
     const old = previous.threads.find(t => t.id === thread.id);
     return { ...thread, ...(old?.startAt !== undefined ? { startAt: old.startAt } : {}), ...(old?.startReply !== undefined ? { startReply: old.startReply } : {}), steps: thread.steps.map(step => {
       const before = old?.steps.find(s => s.id === step.id);
+      if (step.status === 'waiting') return step;
       return { ...step, ...(before?.at !== undefined ? { at: before.at } : {}), ...(before?.atReply !== undefined ? { atReply: before.atReply } : {}) };
     }) };
   }) }, now);
@@ -230,27 +233,34 @@ export function keepTimes(previous: Notebook, edited: Notebook, now: number | Mo
 }
 /** Drop any times a model wrote. Only code records when things began or happened. */
 export function withoutTimes(notebook: Notebook): Notebook {
-  return { ...notebook, seeds: notebook.seeds.map(({ plantedAt: _p, paidAt: _q, ...seed }) => seed),
-    threads: notebook.threads.map(({ startAt: _start, startReply: _reply, ...thread }) => ({ ...thread, steps: thread.steps.map(({ at: _at, atReply: _atReply, ...step }) => step) })) };
+  // Quick-check flags go too: a check-up or an edit has the final say.
+  return { ...notebook, seeds: notebook.seeds.map(({ plantedAt: _p, paidAt: _q, echoAt: _e, quick: _k, ...seed }) => seed), beats: notebook.beats.map(({ quick: _k, ...beat }) => beat),
+    threads: notebook.threads.map(({ startAt: _start, startReply: _reply, ...thread }) => ({ ...thread, steps: thread.steps.map(({ at: _at, atReply: _atReply, quick: _k, ...step }) => step) })) };
 }
 /** Fill in code-owned times: when a thread began, when a step happened. */
 export function stamp(notebook: Notebook, now: number | Moment): Notebook {
   const m = moment(now), reply = m.reply;
   const seeds = reply === undefined ? notebook.seeds : notebook.seeds.map(seed => ({ ...seed,
-    ...(seed.status !== 'waiting' && seed.plantedAt === undefined ? { plantedAt: reply } : {}), ...(seed.status === 'paid' && seed.paidAt === undefined ? { paidAt: reply } : {}) }));
+    ...((seed.status === 'planted' || seed.status === 'paid') && seed.plantedAt === undefined ? { plantedAt: reply } : {}), ...(seed.status === 'paid' && seed.paidAt === undefined ? { paidAt: reply } : {}),
+    ...(seed.status === 'echo' && seed.echoAt === undefined ? { echoAt: reply } : {}) }));
   return { ...notebook, seeds, threads: notebook.threads.map(thread => ({ ...thread, startAt: thread.startAt ?? m.hours,
     ...(thread.startReply === undefined && reply !== undefined ? { startReply: reply } : {}),
     steps: thread.steps.map(step => step.status === 'waiting' ? step : { ...step, at: step.at ?? m.hours, ...(step.atReply === undefined && reply !== undefined ? { atReply: reply } : {}) }) })) };
 }
 /** Older notebooks have no reply counts: count from the reply the version was made at. */
 export function fillReplies(notebook: Notebook, reply: number): Notebook {
-  return { ...notebook, seeds: notebook.seeds.map(seed => seed.status !== 'waiting' && seed.plantedAt === undefined ? { ...seed, plantedAt: reply } : seed), threads: notebook.threads.map(thread => ({ ...thread, startReply: thread.startReply ?? reply,
+  return { ...notebook, seeds: notebook.seeds.map(seed => (seed.status === 'planted' || seed.status === 'paid') && seed.plantedAt === undefined ? { ...seed, plantedAt: reply } : seed.status === 'echo' && seed.echoAt === undefined ? { ...seed, echoAt: reply } : seed), threads: notebook.threads.map(thread => ({ ...thread, startReply: thread.startReply ?? reply,
     steps: thread.steps.map(step => step.status === 'waiting' || step.atReply !== undefined ? step : { ...step, atReply: reply }) })) };
 }
 
 /** Seeds keep the reply counts code recorded for them. */
 function carrySeedTimes(previous: Notebook, seeds: Seed[]): Seed[] {
-  return seeds.map(seed => { const old = previous.seeds.find(s => s.id === seed.id); return { ...seed, ...(old?.plantedAt !== undefined ? { plantedAt: old.plantedAt } : {}), ...(old?.paidAt !== undefined ? { paidAt: old.paidAt } : {}) }; });
+  return seeds.map(seed => {
+    const old = previous.seeds.find(s => s.id === seed.id);
+    // A corrected quick mark drops the time it recorded.
+    if (old?.quick && seed.status === 'waiting') return seed;
+    return { ...seed, ...(old?.plantedAt !== undefined && seed.status !== 'waiting' ? { plantedAt: old.plantedAt } : {}), ...(old?.paidAt !== undefined && seed.status === 'paid' ? { paidAt: old.paidAt } : {}), ...(old?.echoAt !== undefined && seed.status !== 'waiting' ? { echoAt: old.echoAt } : {}) };
+  });
 }
 /**
  * The turn waits for its breadcrumbs: a kishōtenketsu arc can't move to its

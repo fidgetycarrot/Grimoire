@@ -210,7 +210,7 @@ export function setup(ctx: SpindleFrontendContext) {
       ['Story shape', `${g.shape === 'kishotenketsu' ? 'Kishōtenketsu' : 'Conflict'}, ${STAGE_WORDS[g.stage] ?? g.stage}`],
       ['Story threads', `${plural(g.threads.open, 'open thread')}${speeds ? ` (${speeds})` : ''}${g.threads.closed ? `, ${g.threads.closed} finished` : ''}`],
       ['Next development', g.dueNow ? `${plural(g.dueNow, 'development')} ready now` : g.nextInReplies === null ? 'Nothing planned yet' : `within about ${plural(g.nextInReplies, 'reply', 'replies')}, sooner if story time moves`],
-      ['Breadcrumbs', `${g.seeds.planted} planted, ${g.seeds.waiting} waiting, ${g.seeds.paid} paid off`],
+      ['Breadcrumbs', `${g.seeds.planted} planted, ${g.seeds.waiting} waiting, ${g.seeds.paid} paid off${g.seeds.echo ? `, ${g.seeds.echo} still out in the world` : ''}`],
       ['Planned moments', `${g.moments.possible} possible (${g.moments.big} big)${g.moments.happened ? `, ${g.moments.happened} happened` : ''}`],
       ['People', `${g.people.total}, ${g.people.met} met so far`],
     ];

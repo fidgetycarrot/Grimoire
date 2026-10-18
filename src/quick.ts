@@ -54,6 +54,11 @@ export function quickQuestions(notebook: Notebook, now: number | Moment): QuickP
       criteria: { true: 'The detail, or something plainly the same, appears in the latest reply.', false: 'It does not appear.' } };
     marks.detail_mentioned = { kind: 'seed', seed: seeds.plant.id, to: 'planted' };
   }
+  if (seeds.echo) {
+    questions.echo_heard = { type: 'noul', instructions: `Does the latest reply let the player hear of this, even in passing (news, a rumor, a remark, a message)? ${seeds.echo.detail}`,
+      criteria: { true: 'It reaches the player in the latest reply.', false: 'It does not come up.' } };
+    marks.echo_heard = { kind: 'seed', seed: seeds.echo.id, to: 'paid' };
+  }
   seeds.ready.slice(0, 3).forEach((seed, i) => {
     const key = `callback_${i + 1}`;
     questions[key] = { type: 'noul', instructions: `Does the latest reply bring back this earlier detail and give it its meaning? Detail: ${seed.detail} Meaning: ${seed.payoff}`,
@@ -104,14 +109,14 @@ export function applyQuick(current: Notebook, plan: QuickPlan, result: DecisionR
     if (mark.kind === 'fits' || !yes(answers[key])) continue;
     if (mark.kind === 'step') {
       const step = notebook.threads.find(t => t.id === mark.thread)?.steps.find(s => s.id === mark.step);
-      if (step?.status === 'waiting') { step.status = 'shown'; step.at = hours; if (reply !== undefined) step.atReply = reply; marked++; }
+      if (step?.status === 'waiting') { step.status = 'shown'; step.at = hours; if (reply !== undefined) step.atReply = reply; step.quick = true; marked++; }
     } else if (mark.kind === 'seed') {
       const seed = notebook.seeds.find(x => x.id === mark.seed);
-      if (seed && mark.to === 'planted' && seed.status === 'waiting') { seed.status = 'planted'; if (reply !== undefined) seed.plantedAt = reply; marked++; }
-      if (seed && mark.to === 'paid' && seed.status === 'planted') { seed.status = 'paid'; if (reply !== undefined) seed.paidAt = reply; marked++; }
+      if (seed && mark.to === 'planted' && seed.status === 'waiting') { seed.status = 'planted'; if (reply !== undefined) seed.plantedAt = reply; seed.quick = true; marked++; }
+      if (seed && mark.to === 'paid' && (seed.status === 'planted' || seed.status === 'echo')) { seed.status = 'paid'; if (reply !== undefined) seed.paidAt = reply; seed.quick = true; marked++; }
     } else {
       const beat = notebook.beats.find(b => b.id === mark.beat);
-      if (beat?.status === 'possible') { beat.status = 'happened'; marked++; }
+      if (beat?.status === 'possible') { beat.status = 'happened'; beat.quick = true; marked++; }
     }
   }
   const rhythm = answers.rhythm;

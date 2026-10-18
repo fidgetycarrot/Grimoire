@@ -106,7 +106,7 @@ export function tidyNotebook(value: unknown, previous?: Notebook): unknown {
       // Put back steps the revision left out, where they were.
       old.steps.forEach((step, i) => { if (!next.steps.some(s => s.id === step.id)) next.steps.splice(Math.min(i, next.steps.length), 0, structuredClone(step)); });
       // What happened stays happened.
-      next.steps = next.steps.map(s => { const before = old.steps.find(o => o.id === s.id); return before && before.status !== 'waiting' && s.status === 'waiting' ? { ...s, status: before.status } : s; });
+      next.steps = next.steps.map(s => { const before = old.steps.find(o => o.id === s.id); return before && before.status !== 'waiting' && !before.quick && s.status === 'waiting' ? { ...s, status: before.status } : s; });
     }
   }
   const knownThreads = new Set(previous?.threads.map(t => t.id));
@@ -126,7 +126,8 @@ export function tidyNotebook(value: unknown, previous?: Notebook): unknown {
       status: pick(b.status, ['possible', 'happened', 'dropped'] as const, BEAT, 'possible') };
   }).filter(b => b.text), 'beat');
   if (previous) for (const old of previous.beats) {
-    if (old.status !== 'happened') continue;
+    // A quick check's mark is provisional: the check-up may correct it.
+    if (old.status !== 'happened' || old.quick) continue;
     const next = beats.find(b => b.id === old.id);
     if (!next) beats.push(structuredClone(old)); else next.status = 'happened';
   }
@@ -137,12 +138,12 @@ export function tidyNotebook(value: unknown, previous?: Notebook): unknown {
   let seeds = ids(array(input.seeds).map(raw => {
     const s = record(raw), detail = plain(s.detail, LIMITS.short) || plain(s.text, LIMITS.short);
     return { id: slug(s.id) || slug(detail).slice(0, 30), detail, payoff: plain(s.payoff), pays: linkable.get(slug(s.pays)) ?? '',
-      status: pick(s.status, ['waiting', 'planted', 'paid', 'dropped'] as const, { mentioned: 'planted', shown: 'planted', used: 'paid', 'paid-off': 'paid', resolved: 'paid', done: 'paid', cancelled: 'dropped', skipped: 'dropped' }, 'waiting') };
+      status: pick(s.status, ['waiting', 'planted', 'paid', 'echo', 'dropped'] as const, { mentioned: 'planted', shown: 'planted', used: 'paid', 'paid-off': 'paid', resolved: 'paid', done: 'paid', offscreen: 'echo', background: 'echo', rumor: 'echo', news: 'echo', cancelled: 'dropped', skipped: 'dropped' }, 'waiting') };
   }).filter(s => s.detail), 'seed');
   if (previous) for (const old of previous.seeds) {
     const next = seeds.find(s => s.id === old.id);
     if (!next) seeds.push(structuredClone(old));
-    else if (old.status !== 'waiting' && next.status === 'waiting') next.status = old.status;
+    else if (old.status !== 'waiting' && !old.quick && next.status === 'waiting') next.status = old.status;
   }
   const keptSeeds = new Set(previous?.seeds.map(s => s.id));
   seeds = cap(seeds, LIMITS.seeds, s => (keptSeeds.has(s.id) ? 4 : 0) + (s.status === 'planted' ? 2 : s.status === 'waiting' ? 1 : 0));

@@ -510,7 +510,7 @@ describe('at a glance', () => {
     const nb: any = stamp(validateNotebook(sampleNotebook()), { hours: 42, reply: 10 });
     nb.threads[1].status = 'paused';
     const g = glance(nb, { hours: 42, reply: 13, waits: waitsFor('medium', 'auto') });
-    expect(g).toEqual({ shape: 'conflict', stage: 'setup', threads: { open: 1, urgent: 0, steady: 1, slow: 0, closed: 0 }, seeds: { waiting: 1, planted: 0, paid: 0 },
+    expect(g).toEqual({ shape: 'conflict', stage: 'setup', threads: { open: 1, urgent: 0, steady: 1, slow: 0, closed: 0 }, seeds: { waiting: 1, planted: 0, paid: 0, echo: 0 },
       moments: { possible: 2, big: 1, happened: 0 }, people: { total: 3, met: 2 }, nextInReplies: 12, dueNow: 0 });
     expect(JSON.stringify(g)).not.toMatch(/ring|Oswin|Mira|wax/i);
   });
@@ -533,5 +533,64 @@ describe('when the story changes direction', () => {
     const input = { notebook: nb, pace: 'auto' as const, clock: { day: 1, hour: 18, label: '' }, now: 42, recent: 'Mira' };
     expect(buildNote(input)).toContain('Shutters bang');
     expect(buildNote({ ...input, held: ['storm'] })).not.toContain('Shutters bang');
+  });
+});
+
+describe('quick marks are provisional', () => {
+  test('a check-up can correct what a quick check marked, but not what a check-up confirmed', () => {
+    const base = stamp(validateNotebook(sampleNotebook()), { hours: 42, reply: 10 });
+    const quick: any = structuredClone(base);
+    quick.threads[0].steps[0] = { ...quick.threads[0].steps[0], status: 'shown', at: 43, atReply: 11, quick: true };
+    quick.beats[0] = { ...quick.beats[0], status: 'happened', quick: true };
+    quick.seeds[0] = { ...quick.seeds[0], status: 'planted', plantedAt: 11, quick: true };
+    // The check-up disagrees on all three.
+    const corrected = mergeRevision(quick, validateNotebook(withoutTimes(base)), { hours: 44, reply: 12 });
+    expect(corrected.threads[0].steps[0].status).toBe('waiting');
+    expect(corrected.threads[0].steps[0].at).toBeUndefined();
+    expect(corrected.beats[0].status).toBe('possible');
+    expect(corrected.seeds[0]).toMatchObject({ status: 'waiting' });
+    expect(corrected.seeds[0].plantedAt).toBeUndefined();
+    // The check-up agrees: kept, with its time, and no longer provisional.
+    const confirmed = mergeRevision(quick, validateNotebook(withoutTimes(structuredClone(quick))), { hours: 44, reply: 12 });
+    expect(confirmed.threads[0].steps[0]).toMatchObject({ status: 'shown', at: 43, atReply: 11 });
+    expect(confirmed.threads[0].steps[0].quick).toBeUndefined();
+    expect(confirmed.seeds[0]).toMatchObject({ status: 'planted', plantedAt: 11 });
+    // Once confirmed, it can't go back.
+    expect(() => mergeRevision(confirmed, validateNotebook(withoutTimes(base)), { hours: 45, reply: 13 })).toThrow("can't go back");
+  });
+});
+
+describe('echoes', () => {
+  const { seedPlan, PLANT_GAP } = require('../src/note');
+  const { tidyNotebook } = require('../src/tidy');
+  const { waitsFor } = require('../src/notebook');
+  const waits = waitsFor('medium', 'auto');
+  test('a story left behind plays out offscreen and reaches the player in passing, later', () => {
+    const nb: any = stamp(validateNotebook(sampleNotebook()), { hours: 42, reply: 10 });
+    nb.seeds[0] = { ...nb.seeds[0], status: 'echo', detail: 'A radio bulletin mentions a ring sold in the next town.', echoAt: 20 };
+    expect(seedPlan(nb, { hours: 42, reply: 20 + PLANT_GAP, waits }).echo).toBeNull();
+    expect(seedPlan(nb, { hours: 42, reply: 21 + PLANT_GAP, waits }).echo.id).toBe('green-wax');
+    const text = buildNote({ notebook: nb, pace: 'auto', clock: { day: 1, hour: 18, label: '' }, now: { hours: 42, reply: 30, waits }, recent: '' });
+    expect(text).toContain('Something that happened elsewhere can reach the player in passing');
+    expect(text).toContain('A radio bulletin mentions a ring sold in the next town.');
+    expect(seedPlan({ ...nb, rhythm: 'peak' }, { hours: 42, reply: 30, waits }).echo).toBeNull();
+  });
+  test('models saying offscreen or rumor mean an echo', () => {
+    const raw: any = sampleNotebook(); raw.seeds[0].status = 'offscreen';
+    expect(validateNotebook(tidyNotebook(raw)).seeds[0].status).toBe('echo');
+  });
+});
+
+describe('the quick check hears echoes', () => {
+  const { quickQuestions, applyQuick } = require('../src/quick');
+  const { waitsFor } = require('../src/notebook');
+  test('an echo that reached the player is marked paid, provisionally', () => {
+    const nb: any = stamp(validateNotebook(sampleNotebook()), { hours: 42, reply: 10 });
+    nb.seeds[0] = { ...nb.seeds[0], status: 'echo', echoAt: 10 };
+    const moment = { hours: 42, reply: 20, waits: waitsFor('medium', 'auto') };
+    const plan = quickQuestions(nb, moment);
+    expect(plan.questions.echo_heard.instructions).toContain('hear of this');
+    const out = applyQuick(nb, plan, { model: 'm', answers: { echo_heard: { type: 'noul', noul: 0.85 } } }, moment);
+    expect(out.notebook.seeds[0]).toMatchObject({ status: 'paid', paidAt: 20, quick: true });
   });
 });

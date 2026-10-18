@@ -400,7 +400,8 @@ function validateNotebook(value) {
         afterHours: after,
         status: choice(s.status, ["waiting", "shown", "offscreen", "skipped"], `${p}.status`, "waiting"),
         ...typeof at === "number" && Number.isFinite(at) ? { at } : {},
-        ...count(s.atReply) !== undefined ? { atReply: count(s.atReply) } : {}
+        ...count(s.atReply) !== undefined ? { atReply: count(s.atReply) } : {},
+        ...s.quick === true ? { quick: true } : {}
       };
     }), `${path}.steps`);
     const peopleIds = list(t.people, `${path}.people`, 8).map((x, j) => id(x, `${path}.people[${j}]`)).filter((x) => personIds.has(x));
@@ -430,7 +431,8 @@ function validateNotebook(value) {
       conditions: text(b.conditions, `${path}.conditions`),
       thread,
       intensity: choice(b.intensity, ["low", "high"], `${path}.intensity`, "low"),
-      status: choice(b.status, ["possible", "happened", "dropped"], `${path}.status`, "possible")
+      status: choice(b.status, ["possible", "happened", "dropped"], `${path}.status`, "possible"),
+      ...b.quick === true ? { quick: true } : {}
     };
   }), "beats");
   const arcInput = record2(input.arc), shape = choice(arcInput.shape, ["conflict", "kishotenketsu"], "arc.shape", "conflict");
@@ -445,9 +447,11 @@ function validateNotebook(value) {
       detail: text(s.detail, `${path}.detail`, LIMITS.short, false),
       payoff: text(s.payoff, `${path}.payoff`),
       pays,
-      status: choice(s.status, ["waiting", "planted", "paid", "dropped"], `${path}.status`, "waiting"),
+      status: choice(s.status, ["waiting", "planted", "paid", "echo", "dropped"], `${path}.status`, "waiting"),
       ...count(s.plantedAt) !== undefined ? { plantedAt: count(s.plantedAt) } : {},
-      ...count(s.paidAt) !== undefined ? { paidAt: count(s.paidAt) } : {}
+      ...count(s.paidAt) !== undefined ? { paidAt: count(s.paidAt) } : {},
+      ...count(s.echoAt) !== undefined ? { echoAt: count(s.echoAt) } : {},
+      ...s.quick === true ? { quick: true } : {}
     };
   }), "seeds");
   return {
@@ -484,18 +488,18 @@ function mergeRevision(previous, revised, now) {
       const after = next.steps.find((s) => s.id === step.id);
       if (!after)
         failMerge(`Keep step "${step.id}" of "${thread.title}".`);
-      if ((step.status === "shown" || step.status === "offscreen") && after.status === "waiting")
+      if ((step.status === "shown" || step.status === "offscreen") && after.status === "waiting" && !step.quick)
         failMerge(`Step "${step.id}" of "${thread.title}" already happened and can't go back to waiting.`);
     }
   }
   for (const beat of previous.beats)
-    if (beat.status === "happened" && revised.beats.find((b) => b.id === beat.id)?.status !== "happened")
+    if (beat.status === "happened" && !beat.quick && revised.beats.find((b) => b.id === beat.id)?.status !== "happened")
       failMerge(`Beat "${beat.id}" already happened. Keep it marked as happened.`);
   for (const seed of previous.seeds) {
     const next = revised.seeds.find((s) => s.id === seed.id);
     if (!next)
       failMerge(`Keep seed "${seed.id}" (mark it dropped if it no longer fits).`);
-    if (seed.status !== "waiting" && next.status === "waiting")
+    if (seed.status !== "waiting" && next.status === "waiting" && !seed.quick)
       failMerge(`Seed "${seed.id}" was already planted and can't go back to waiting.`);
   }
   const fresh = withoutTimes(holdTurn(previous, revised));
@@ -503,6 +507,8 @@ function mergeRevision(previous, revised, now) {
     const old = previous.threads.find((t) => t.id === thread.id);
     return { ...thread, ...old?.startAt !== undefined ? { startAt: old.startAt } : {}, ...old?.startReply !== undefined ? { startReply: old.startReply } : {}, steps: thread.steps.map((step) => {
       const before = old?.steps.find((s) => s.id === step.id);
+      if (step.status === "waiting")
+        return step;
       return { ...step, ...before?.at !== undefined ? { at: before.at } : {}, ...before?.atReply !== undefined ? { atReply: before.atReply } : {} };
     }) };
   }) }, now);
@@ -520,16 +526,18 @@ function keepTimes(previous, edited, now) {
 function withoutTimes(notebook) {
   return {
     ...notebook,
-    seeds: notebook.seeds.map(({ plantedAt: _p, paidAt: _q, ...seed }) => seed),
-    threads: notebook.threads.map(({ startAt: _start, startReply: _reply, ...thread }) => ({ ...thread, steps: thread.steps.map(({ at: _at, atReply: _atReply, ...step }) => step) }))
+    seeds: notebook.seeds.map(({ plantedAt: _p, paidAt: _q, echoAt: _e, quick: _k, ...seed }) => seed),
+    beats: notebook.beats.map(({ quick: _k, ...beat }) => beat),
+    threads: notebook.threads.map(({ startAt: _start, startReply: _reply, ...thread }) => ({ ...thread, steps: thread.steps.map(({ at: _at, atReply: _atReply, quick: _k, ...step }) => step) }))
   };
 }
 function stamp(notebook, now) {
   const m = moment(now), reply = m.reply;
   const seeds = reply === undefined ? notebook.seeds : notebook.seeds.map((seed) => ({
     ...seed,
-    ...seed.status !== "waiting" && seed.plantedAt === undefined ? { plantedAt: reply } : {},
-    ...seed.status === "paid" && seed.paidAt === undefined ? { paidAt: reply } : {}
+    ...(seed.status === "planted" || seed.status === "paid") && seed.plantedAt === undefined ? { plantedAt: reply } : {},
+    ...seed.status === "paid" && seed.paidAt === undefined ? { paidAt: reply } : {},
+    ...seed.status === "echo" && seed.echoAt === undefined ? { echoAt: reply } : {}
   }));
   return { ...notebook, seeds, threads: notebook.threads.map((thread) => ({
     ...thread,
@@ -539,7 +547,7 @@ function stamp(notebook, now) {
   })) };
 }
 function fillReplies(notebook, reply) {
-  return { ...notebook, seeds: notebook.seeds.map((seed) => seed.status !== "waiting" && seed.plantedAt === undefined ? { ...seed, plantedAt: reply } : seed), threads: notebook.threads.map((thread) => ({
+  return { ...notebook, seeds: notebook.seeds.map((seed) => (seed.status === "planted" || seed.status === "paid") && seed.plantedAt === undefined ? { ...seed, plantedAt: reply } : seed.status === "echo" && seed.echoAt === undefined ? { ...seed, echoAt: reply } : seed), threads: notebook.threads.map((thread) => ({
     ...thread,
     startReply: thread.startReply ?? reply,
     steps: thread.steps.map((step) => step.status === "waiting" || step.atReply !== undefined ? step : { ...step, atReply: reply })
@@ -548,7 +556,9 @@ function fillReplies(notebook, reply) {
 function carrySeedTimes(previous, seeds) {
   return seeds.map((seed) => {
     const old = previous.seeds.find((s) => s.id === seed.id);
-    return { ...seed, ...old?.plantedAt !== undefined ? { plantedAt: old.plantedAt } : {}, ...old?.paidAt !== undefined ? { paidAt: old.paidAt } : {} };
+    if (old?.quick && seed.status === "waiting")
+      return seed;
+    return { ...seed, ...old?.plantedAt !== undefined && seed.status !== "waiting" ? { plantedAt: old.plantedAt } : {}, ...old?.paidAt !== undefined && seed.status === "paid" ? { paidAt: old.paidAt } : {}, ...old?.echoAt !== undefined && seed.status !== "waiting" ? { echoAt: old.echoAt } : {} };
   });
 }
 function holdTurn(previous, revised) {
@@ -647,12 +657,14 @@ var PLANT_GAP = 4;
 function seedPlan(notebook, now) {
   const m = typeof now === "number" ? { hours: now } : now, reply = m.reply, gap = m.waits?.steady ?? 15;
   const planted = notebook.seeds.filter((s) => s.status === "planted");
-  const last = Math.max(-Infinity, ...notebook.seeds.map((s) => s.plantedAt ?? -Infinity));
+  const last = Math.max(-Infinity, ...notebook.seeds.map((s) => s.plantedAt ?? -Infinity), ...notebook.seeds.filter((s) => s.status === "paid" && s.echoAt !== undefined).map((s) => s.paidAt ?? -Infinity));
   const open = (s) => !s.pays || s.pays === "turn" || notebook.threads.some((t) => t.id === s.pays && t.status !== "closed") || notebook.beats.some((b) => b.id === s.pays && b.status === "possible");
-  const plant = notebook.rhythm === "peak" || reply !== undefined && reply - last < PLANT_GAP ? null : notebook.seeds.find((s) => s.status === "waiting" && open(s)) ?? null;
+  const spaced = notebook.rhythm !== "peak" && (reply === undefined || reply - last >= PLANT_GAP);
+  const echo = spaced && reply !== undefined ? notebook.seeds.find((s) => s.status === "echo" && s.echoAt !== undefined && reply - s.echoAt >= PLANT_GAP + 1) ?? null : null;
+  const plant = !spaced || echo ? null : notebook.seeds.find((s) => s.status === "waiting" && open(s)) ?? null;
   const atTurn = notebook.arc.shape === "kishotenketsu" && notebook.arc.stage === "ten";
   const ready = planted.filter((s) => (s.pays === "turn" ? atTurn : reply !== undefined && s.plantedAt !== undefined && reply - s.plantedAt >= gap) && open(s));
-  return { plant, ready };
+  return { plant, ready, echo };
 }
 function buildNote(input) {
   const { notebook, pace, now } = input, lines = [];
@@ -667,7 +679,7 @@ function buildNote(input) {
   lines.push(`What the story is about: ${notebook.story.question}`);
   const held = new Set(input.held ?? []), reworking = !!input.reworking;
   const seedsAll = seedPlan(notebook, now), used = new Set;
-  const seeds = reworking ? { plant: null, ready: [] } : { plant: seedsAll.plant && !held.has(seedsAll.plant.pays) ? seedsAll.plant : null, ready: seedsAll.ready.filter((s) => !held.has(s.pays)) };
+  const seeds = reworking ? { plant: null, ready: [], echo: null } : { plant: seedsAll.plant && !held.has(seedsAll.plant.pays) ? seedsAll.plant : null, ready: seedsAll.ready.filter((s) => !held.has(s.pays)), echo: seedsAll.echo };
   if (reworking)
     lines.push("The story has just changed direction. Follow the player's lead; older plans are being reworked, so do not steer back toward them. People left behind can still be thought of, but nothing needs to happen yet.");
   const callback = (seed) => {
@@ -715,6 +727,8 @@ function buildNote(input) {
   }
   if (seeds.plant)
     lines.push(`A small detail to mention in passing, without drawing attention to it: ${end(seeds.plant.detail)}`);
+  if (seeds.echo)
+    lines.push(`Something that happened elsewhere can reach the player in passing, as news, a rumor, an overheard remark, or a message, only if it fits: ${end(seeds.echo.detail)}`);
   const newcomer = !reworking && !quietTime && (notebook.rhythm === "calm" || notebook.rhythm === "stalled" || pace === "fast") ? notebook.people.find((p) => p.status === "active" && !p.met && !present.includes(p)) : undefined;
   if (newcomer && lines.length < 16)
     lines.push(`Someone who could appear if it fits: ${newcomer.name}${newcomer.role ? `, ${newcomer.role}` : ""}. Wants ${newcomer.wants || "something of their own"}.`);
@@ -740,14 +754,14 @@ var TRACKER_METHODS = `- {"kind":"variable","name":"exact saved variable name"}
 `;
 var RESYNC = (held) => `- The player has taken the story in a new direction. Rework the notebook to fit where they are now, without forgetting anything: what was planted and planned is what makes the story cohesive.
 - Go through every open thread and decide how it applies now: it follows the player (rewrite its waiting steps so they can reach them where they are, keeping its why), it waits (pause it; it can resume if the player returns), it reaches them (its consequence comes after them in the new situation), or it ends (close it with a reason).${held.length ? " A quick check doubted these still fit: " + held.join(", ") + "." : ""}
-- Keep every breadcrumb. Re-aim waiting ones to pay off in the new situation where they can; mark dropped only those that can't. Planted ones keep their meaning.
+- Keep every breadcrumb. Re-aim waiting ones to pay off in the new situation where they can. When a breadcrumb's story can't follow the player, let it play out offscreen instead of dropping it: set its status to "echo", write in detail how the player might hear of it in passing (a news clip, a rumor, an overheard remark, a message), and in payoff what actually happened. Planted ones keep their meaning.
 - Add threads for what the player started. Revisit the story question and the arc: if this is a new part of the story, start a new arc (its shape may change).
 - People left behind keep their wants and act on them offscreen; some may come looking.
 `;
 var SHAPE = `{
  "story": {"question": "what the story is about and its central question", "stakes": "what can be won or lost", "direction": "roughly where it could end, as possibilities", "hiddenTruth": ["established background facts the player does not know yet"], "twist": "a twist, or empty"},
  "arc": {"shape": "conflict|kishotenketsu", "stage": "setup|rising|climax|resolution for conflict; ki|sho|ten|ketsu for kishotenketsu", "turn": "kishotenketsu only: what the turn is, or empty"},
- "seeds": [{"id": "green-wax", "detail": "an ordinary-looking detail the narrator can mention in passing", "payoff": "what it turns out to mean later", "pays": "the thread id, beat id, or turn it pays into", "status": "waiting|planted|paid|dropped"}],
+ "seeds": [{"id": "green-wax", "detail": "an ordinary-looking detail the narrator can mention in passing", "payoff": "what it turns out to mean later", "pays": "the thread id, beat id, or turn it pays into", "status": "waiting|planted|paid|echo|dropped"}],
  "people": [{"id": "cole", "name": "Cole", "aliases": [], "role": "short role", "wants": "what they want", "doing": "what they are doing about it right now, on or off screen", "hint": "a narrator-safe note on how to play them, with no secrets", "met": false, "status": "active"}],
  "threads": [{"id": "stolen-ring", "title": "The stolen ring", "speed": "urgent|steady|slow", "why": "why it matters, including hidden causes", "hint": "why it matters, in narrator-safe words with no secrets", "people": ["cole"], "status": "open", "closedReason": "", "ifFollowed": "what following it leads to", "ifIgnored": "what happens if it is left alone", "steps": [{"id": "owner-notices", "text": "what happens", "sign": "how the player could notice it", "afterHours": 24, "status": "waiting"}]}],
  "beats": [{"id": "ring-recognized", "text": "a moment the story could reach", "purpose": "what it sets up or pays off", "conditions": "what must be true first", "thread": "stolen-ring", "intensity": "low|high", "status": "possible"}],
@@ -807,7 +821,8 @@ ${input.resync ? RESYNC(input.held) : ""}- The chat decides what actually happen
 - Keep every person and thread. Mark people "gone" and close threads with a closedReason instead of removing them. Something that happened cannot un-happen.
 - People invented in the chat: add them only if they matter (they act, recur, or tie into a thread). Mark people met once the player has met them.
 - Revise future beats and plans when the player's choices change what makes sense. Keep the pacing rules below: if waiting steps are packed too tightly (several threads peaking on the same night, steady steps hours apart), spread them out by raising afterHours on waiting steps. Change how the story gets somewhere, not why, unless the player has made the old why impossible. Do not force the player back onto an old plan.
-- Seeds: mark a seed "planted" once the chat has mentioned its detail, and "paid" once it came back with its meaning. Never move a seed back to waiting. When the narrator mentions a striking detail in passing that isn't a seed, consider making it one and planning where it pays off; that is how the story stays cohesive.
+- Entries with "quick": true were marked after a reply by a fast reader. Confirm them by keeping them, or correct them if the chat does not support them (a step back to waiting, a beat back to possible, a seed back to waiting or planted).
+- Seeds: mark a seed "planted" once the chat has mentioned its detail, and "paid" once it came back with its meaning. When a thread ends where the player can't see, or a seed's story is left behind, consider an "echo" (as above in shape: detail is how the player could hear of it) so it can surface later; that makes the world feel alive. Never move a seed back to waiting. When the narrator mentions a striking detail in passing that isn't a seed, consider making it one and planning where it pays off; that is how the story stays cohesive.
 - Arc stage: move it on when the story has: ki to sho once people and place are established; sho to ten only after development has had room and the turn's seeds are planted; ten to ketsu once the turn has landed; for conflict, setup to rising to climax to resolution the same way.
 - When most threads have closed or the story question has been answered, open the next arc: a new story question if needed, and new threads that grow from what has happened and from what people now want. The story goes on as long as the player plays.
 - Add threads the player started. Tie useful invented details to threads or people. Some presets add panels to each reply (scene notes, character thoughts, "seeds"): what they say happened in the scene happened, but their guesses and seeds are the narrator's inventions. Fit them to the notebook's truth where they can; never let them overwrite it. Keep the notebook compact: merge old events, drop beats that no longer fit (mark them dropped).
@@ -943,7 +958,7 @@ function tidyNotebook(value, previous) {
       });
       next.steps = next.steps.map((s) => {
         const before = old.steps.find((o) => o.id === s.id);
-        return before && before.status !== "waiting" && s.status === "waiting" ? { ...s, status: before.status } : s;
+        return before && before.status !== "waiting" && !before.quick && s.status === "waiting" ? { ...s, status: before.status } : s;
       });
     }
   }
@@ -969,7 +984,7 @@ function tidyNotebook(value, previous) {
   }).filter((b) => b.text), "beat");
   if (previous)
     for (const old of previous.beats) {
-      if (old.status !== "happened")
+      if (old.status !== "happened" || old.quick)
         continue;
       const next = beats.find((b) => b.id === old.id);
       if (!next)
@@ -986,7 +1001,7 @@ function tidyNotebook(value, previous) {
       detail,
       payoff: plain(s.payoff),
       pays: linkable.get(slug(s.pays)) ?? "",
-      status: pick(s.status, ["waiting", "planted", "paid", "dropped"], { mentioned: "planted", shown: "planted", used: "paid", "paid-off": "paid", resolved: "paid", done: "paid", cancelled: "dropped", skipped: "dropped" }, "waiting")
+      status: pick(s.status, ["waiting", "planted", "paid", "echo", "dropped"], { mentioned: "planted", shown: "planted", used: "paid", "paid-off": "paid", resolved: "paid", done: "paid", offscreen: "echo", background: "echo", rumor: "echo", news: "echo", cancelled: "dropped", skipped: "dropped" }, "waiting")
     };
   }).filter((s) => s.detail), "seed");
   if (previous)
@@ -994,7 +1009,7 @@ function tidyNotebook(value, previous) {
       const next = seeds.find((s) => s.id === old.id);
       if (!next)
         seeds.push(structuredClone(old));
-      else if (old.status !== "waiting" && next.status === "waiting")
+      else if (old.status !== "waiting" && !old.quick && next.status === "waiting")
         next.status = old.status;
     }
   const keptSeeds = new Set(previous?.seeds.map((s) => s.id));
@@ -1074,6 +1089,14 @@ function quickQuestions(notebook, now) {
     };
     marks.detail_mentioned = { kind: "seed", seed: seeds.plant.id, to: "planted" };
   }
+  if (seeds.echo) {
+    questions.echo_heard = {
+      type: "noul",
+      instructions: `Does the latest reply let the player hear of this, even in passing (news, a rumor, a remark, a message)? ${seeds.echo.detail}`,
+      criteria: { true: "It reaches the player in the latest reply.", false: "It does not come up." }
+    };
+    marks.echo_heard = { kind: "seed", seed: seeds.echo.id, to: "paid" };
+  }
   seeds.ready.slice(0, 3).forEach((seed, i) => {
     const key = `callback_${i + 1}`;
     questions[key] = {
@@ -1133,6 +1156,7 @@ function applyQuick(current, plan, result, now) {
         step.at = hours;
         if (reply !== undefined)
           step.atReply = reply;
+        step.quick = true;
         marked++;
       }
     } else if (mark.kind === "seed") {
@@ -1141,18 +1165,21 @@ function applyQuick(current, plan, result, now) {
         seed.status = "planted";
         if (reply !== undefined)
           seed.plantedAt = reply;
+        seed.quick = true;
         marked++;
       }
-      if (seed && mark.to === "paid" && seed.status === "planted") {
+      if (seed && mark.to === "paid" && (seed.status === "planted" || seed.status === "echo")) {
         seed.status = "paid";
         if (reply !== undefined)
           seed.paidAt = reply;
+        seed.quick = true;
         marked++;
       }
     } else {
       const beat = notebook.beats.find((b) => b.id === mark.beat);
       if (beat?.status === "possible") {
         beat.status = "happened";
+        beat.quick = true;
         marked++;
       }
     }
@@ -1253,7 +1280,7 @@ function glance(notebook, moment) {
     shape: notebook.arc.shape,
     stage: notebook.arc.stage,
     threads: { open: open.length, urgent: open.filter((t) => t.speed === "urgent").length, steady: open.filter((t) => t.speed === "steady").length, slow: open.filter((t) => t.speed === "slow").length, closed: notebook.threads.filter((t) => t.status === "closed").length },
-    seeds: { waiting: notebook.seeds.filter((s) => s.status === "waiting").length, planted: notebook.seeds.filter((s) => s.status === "planted").length, paid: notebook.seeds.filter((s) => s.status === "paid").length },
+    seeds: { waiting: notebook.seeds.filter((s) => s.status === "waiting").length, planted: notebook.seeds.filter((s) => s.status === "planted").length, paid: notebook.seeds.filter((s) => s.status === "paid").length, echo: notebook.seeds.filter((s) => s.status === "echo").length },
     moments: { possible: notebook.beats.filter((b) => b.status === "possible").length, big: notebook.beats.filter((b) => b.status === "possible" && b.intensity === "high").length, happened: notebook.beats.filter((b) => b.status === "happened").length },
     people: { total: notebook.people.filter((p) => p.status === "active").length, met: notebook.people.filter((p) => p.status === "active" && p.met).length },
     nextInReplies: next,
@@ -1491,7 +1518,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.5.0";
+var VERSION = "0.5.1";
 var MAX_VERSIONS = 16;
 var DEFAULT_SETTINGS = { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto", quick: { enabled: false, connectionId: "", model: "" }, wait: "medium" };
 var DEFAULT_PREFERENCES = { tone: "balanced", twist: true };

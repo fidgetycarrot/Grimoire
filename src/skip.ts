@@ -64,7 +64,7 @@ export function skipOffer(notebook: Notebook, moment: Moment, clock: StoryClock,
 export interface Glance {
   shape: Notebook['arc']['shape']; stage: string;
   threads: { open: number; urgent: number; steady: number; slow: number; closed: number };
-  seeds: { waiting: number; planted: number; paid: number };
+  seeds: { waiting: number; planted: number; paid: number; echo: number };
   moments: { possible: number; big: number; happened: number };
   people: { total: number; met: number };
   /** Replies until the next planned development at the latest, if any is planned. */
@@ -85,7 +85,7 @@ export function glance(notebook: Notebook, moment: Moment): Glance {
   return {
     shape: notebook.arc.shape, stage: notebook.arc.stage,
     threads: { open: open.length, urgent: open.filter(t => t.speed === 'urgent').length, steady: open.filter(t => t.speed === 'steady').length, slow: open.filter(t => t.speed === 'slow').length, closed: notebook.threads.filter(t => t.status === 'closed').length },
-    seeds: { waiting: notebook.seeds.filter(s => s.status === 'waiting').length, planted: notebook.seeds.filter(s => s.status === 'planted').length, paid: notebook.seeds.filter(s => s.status === 'paid').length },
+    seeds: { waiting: notebook.seeds.filter(s => s.status === 'waiting').length, planted: notebook.seeds.filter(s => s.status === 'planted').length, paid: notebook.seeds.filter(s => s.status === 'paid').length, echo: notebook.seeds.filter(s => s.status === 'echo').length },
     moments: { possible: notebook.beats.filter(b => b.status === 'possible').length, big: notebook.beats.filter(b => b.status === 'possible' && b.intensity === 'high').length, happened: notebook.beats.filter(b => b.status === 'happened').length },
     people: { total: notebook.people.filter(p => p.status === 'active').length, met: notebook.people.filter(p => p.status === 'active' && p.met).length },
     nextInReplies: next, dueNow: dueThreads(notebook, moment).length,

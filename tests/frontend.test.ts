@@ -110,7 +110,7 @@ describe('the panel', () => {
 
 describe('at a glance', () => {
   test('shows shapes and counts in its own fold, closed by default', async () => {
-    const h = harness({ glance: { shape: 'kishotenketsu', stage: 'sho', threads: { open: 3, urgent: 0, steady: 2, slow: 1, closed: 1 }, seeds: { waiting: 3, planted: 2, paid: 1 }, moments: { possible: 5, big: 1, happened: 2 }, people: { total: 6, met: 4 }, nextInReplies: 7, dueNow: 0 } }); await tick();
+    const h = harness({ glance: { shape: 'kishotenketsu', stage: 'sho', threads: { open: 3, urgent: 0, steady: 2, slow: 1, closed: 1 }, seeds: { waiting: 3, planted: 2, paid: 1, echo: 0 }, moments: { possible: 5, big: 1, happened: 2 }, people: { total: 6, met: 4 }, nextInReplies: 7, dueNow: 0 } }); await tick();
     const fold = Array.from(h.root.querySelectorAll('details')).find(d => d.textContent?.includes('At a glance'))!;
     expect(fold.open).toBe(false);
     for (const text of ['Kishōtenketsu, development', '3 open threads (2 steady, 1 slow), 1 finished', 'within about 7 replies', '2 planted, 3 waiting, 1 paid off', '5 possible (1 big), 2 happened', '6, 4 met so far'])
