@@ -26,6 +26,10 @@ It works with any card: downloaded, homemade, or made with Set Points. It never 
 - **Quick check (optional).** A small decision model reads each new reply and answers a few multiple-choice questions: did a planned development happen, did a possible moment happen, how intense is the scene, did something new come up. The notebook stays current between check-ups, the note stops offering things that already happened, and a full check-up runs as soon as something new needs planning. It uses Lumiverse's decision connections, so any decision model works (OpenRouter or TypeSafe, including Jev).
 - **Spoilers stay hidden.** The panel shows the story time, the pace, and a one-line update with no spoilers. **At a glance · no spoilers** shows only shapes and counts: the story's shape and stage, how many threads are open and how fast, when the next development comes at the latest, and how many breadcrumbs are planted or paid off. The full notebook sits behind **Show the notebook · spoilers**, where you can read it or edit it as text.
 
+## Your stories
+
+Chats that have a notebook are listed on the home page under **Your stories**, newest first, with when you last played. Tap one to open it. The Grimoire drawer shows the same list when no chat is open. Turn the home page list off in **Settings → Show my stories on the home page**.
+
 ## Install
 
 Requires **Lumiverse 1.2.0 or newer**. The built files are included; no build step is needed.

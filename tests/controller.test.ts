@@ -23,8 +23,9 @@ function host(options: { group?: boolean; granted?: string[]; decide?: (input: a
     userStorage: {
       getJson: async (key: string, o: any) => structuredClone(storage.has(key) ? storage.get(key) : o?.fallback),
       setJson: async (key: string, value: unknown) => { storage.set(key, structuredClone(value)); },
+      list: async (prefix = '') => [...storage.keys()].filter(k => k.startsWith(prefix)),
     },
-    chats: { get: async (id: string) => id === 'chat-1' || id === 'chat-2' ? { id, name: 'Low Water', character_id: 'card', metadata: options.group ? { group: true } : {} } : null },
+    chats: { get: async (id: string) => id === 'chat-1' || id === 'chat-2' ? { id, name: 'Low Water', character_id: 'card', metadata: options.group ? { group: true } : {}, updated_at: id === 'chat-1' ? 1_700_000_000 : 1_600_000_000 } : null },
     characters: { get: async () => ({ id: 'card', name: 'Mira', description: 'A ferry keeper in Low Water.', personality: 'Dry.', scenario: 'A stranger arrives.', first_mes: 'The ferry bell rings.', world_book_ids: ['book'] }) },
     personas: { getActive: async () => ({ id: 'p', name: 'Traveler', description: 'A tired traveler with a ring.' }) },
     world_books: { entries: { list: async () => ({ data: [{ comment: 'Low Water', content: 'A river town.', constant: true }], total: 1 }) } },
@@ -552,6 +553,18 @@ describe('time-skip suggestions', () => {
     expect(JSON.stringify(offer)).not.toMatch(/ring|manor|Oswin/i);
     await c.dismissSkip('chat-1');
     expect((await c.view('chat-1'))!.skipOffer).toBeNull();
+  });
+});
+
+describe('your stories', () => {
+  test('lists chats with a notebook, newest first, leaving out deleted chats and removed notebooks', async () => {
+    const { h, c } = await ready();
+    await c.fork('chat-1', 'chat-2');
+    await h.api.userStorage.setJson('chats/chat-gone.json', { version: 1, chatId: 'chat-gone', versions: [] }, {});
+    await h.api.userStorage.setJson('chats/chat-old.json', { removed: true }, {});
+    const list = await c.stories();
+    expect(list.map(s => s.chatId)).toEqual(['chat-1', 'chat-2']);
+    expect(list[0]).toEqual({ chatId: 'chat-1', character: 'Mira', chatName: 'Low Water', playedAt: 1_700_000_000_000, enabled: true });
   });
 });
 

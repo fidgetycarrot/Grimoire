@@ -17,6 +17,7 @@ export async function handle(controller: NotebookController, action: string, inp
     case 'skip': return controller.skipTime(string(data.chatId, 'Chat'), data.amount, data.unit);
     case 'edit': return controller.editNotebook(string(data.chatId, 'Chat'), data.notebook);
     case 'remove': return controller.remove(string(data.chatId, 'Chat'));
+    case 'stories': return controller.stories();
     case 'dismiss-skip': return controller.dismissSkip(string(data.chatId, 'Chat'));
     case 'settings': return controller.saveSettings(data.settings);
     case 'version': return VERSION;

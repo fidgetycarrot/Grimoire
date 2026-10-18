@@ -2,7 +2,7 @@ import type { SpindleFrontendContext } from 'lumiverse-spindle-types';
 import { styles } from './styles';
 import { describeDuration } from './clock';
 import type { Notebook, Pace } from './notebook';
-import { VERSION, type ChatView, type Settings, type Snapshot } from './types';
+import { VERSION, type ChatView, type Settings, type Snapshot, type StoryListing } from './types';
 
 const ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8 3v18"/><path d="M12 8h3M12 12h3"/></svg>';
 const PACE_ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 16a8 8 0 0 1 16 0"/><path d="M12 16l4-5"/></svg>';
@@ -45,7 +45,7 @@ export function createRpc(ctx: Rpc, onChanged: () => void, timeoutMs = 45_000) {
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text?: string): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag); if (className) node.className = className; if (text !== undefined) node.textContent = text; return node;
 }
-const ago = (time: number) => { const s = Math.max(0, (Date.now() - time) / 1000); return s < 60 ? 'just now' : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} days ago`; };
+const ago = (time: number) => { const s = Math.max(0, (Date.now() - time) / 1000), d = Math.round(s / 86400); return s < 60 ? 'just now' : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${d} ${d === 1 ? 'day' : 'days'} ago`; };
 const STATUS_WORDS = { verified: 'Read from your preset', waiting: 'Waiting for a reply to check', unavailable: 'Not found, Grimoire keeps this' } as const;
 const FIELD_WORDS: Record<string, string> = { datetime: 'Date and time', date: 'Date', time: 'Time', location: 'Place', present: 'Who is here' };
 
@@ -235,7 +235,11 @@ export function setup(ctx: SpindleFrontendContext) {
   }
   function renderChat() {
     const view = snapshot?.chat;
-    if (!view) { const empty = el('div', 'gm-empty'); empty.append(el('p', '', snapshot?.notice || 'Open a chat to use Grimoire.')); body.append(empty); return; }
+    if (!view) {
+      const empty = el('div', 'gm-empty'); empty.append(el('p', '', snapshot?.notice || 'Open a chat to use Grimoire.')); body.append(empty);
+      if (stories.length) { const card = el('section', 'gm-card gm-stack'); card.append(el('h4', '', 'Your stories'), storyList('gm-story-list')); body.append(card); }
+      return;
+    }
     if (!view.supported) { body.append(el('p', 'gm-notice', view.reason)); return; }
     const job = renderJob(view);
     if (!view.hasNotebook) { if (job) body.append(job); body.append(renderStart(view)); return; }
@@ -259,7 +263,7 @@ export function setup(ctx: SpindleFrontendContext) {
 
   // ----- Settings -----
   function renderSettings() {
-    const settings: Settings = { ...(snapshot?.settings ?? { connectionId: '', maxOutputTokens: 16000, reasoningMode: 'inherit', every: 8, placement: 'auto', quick: { enabled: false, connectionId: '', model: '' }, wait: 'medium' }) };
+    const settings: Settings = { ...(snapshot?.settings ?? { connectionId: '', maxOutputTokens: 16000, reasoningMode: 'inherit', every: 8, placement: 'auto', quick: { enabled: false, connectionId: '', model: '' }, wait: 'medium', homeList: true }) };
     const card = el('section', 'gm-card gm-stack');
     const connection = select([['', 'Choose a connection'], ...(snapshot?.connections ?? []).map(c => [c.id, `${c.name}${c.model ? ` · ${c.model}` : ''}`] as [string, string])], settings.connectionId);
     const every = el('input'); every.type = 'number'; every.min = '2'; every.max = '50'; every.value = String(settings.every);
@@ -289,7 +293,10 @@ export function setup(ctx: SpindleFrontendContext) {
       if (!decisions.connections.length) quickCard.append(el('p', 'gm-notice', 'Add a decision connection in Lumiverse’s connection settings first (OpenRouter or TypeSafe).'));
       quickCard.append(labeled('Decision connection', decision), labeled('Model', model, 'Any decision model works. To use a different one than the connection’s, type its exact ID. Pick one with a version in its name rather than one ending in “latest”, so it doesn’t change without you knowing.'));
     }
-    const save = button('Save settings', async () => { await act('settings', { settings: { connectionId: connection.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, placement: placement.value, wait: wait.value, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } }); notify('Settings saved.'); }, 'primary');
+    const homeRow = el('label', 'gm-row gm-small'), home = el('input'); home.type = 'checkbox'; home.checked = settings.homeList !== false; home.style.width = 'auto';
+    homeRow.append(home, document.createTextNode('Show my stories on the home page'));
+    card.append(homeRow);
+    const save = button('Save settings', async () => { await act('settings', { settings: { connectionId: connection.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, placement: placement.value, wait: wait.value, homeList: home.checked, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } }); notify('Settings saved.'); }, 'primary');
     body.append(card, quickCard, save);
   }
 
@@ -315,6 +322,42 @@ export function setup(ctx: SpindleFrontendContext) {
     return !!active && body.contains(active) && /^(INPUT|SELECT|TEXTAREA)$/.test(active.tagName);
   }
   body.addEventListener('focusout', () => { setTimeout(() => { if (pendingDraw && !busyHere() && !editing) render(); }, 0); });
+
+  // ----- Your stories: chats with a notebook, on the home page and in the drawer -----
+  let stories: StoryListing[] = [];
+  function openChat(chatId: string) {
+    const surfaces = (ctx as { host?: { surfaces?: { invoke(ref: { kind: string; id: string }, params?: Record<string, string>): unknown } } }).host?.surfaces;
+    if (surfaces) { void Promise.resolve(surfaces.invoke({ kind: 'route', id: '/chat/:chatId' }, { chatId })).catch(error => notify(error instanceof Error ? error.message : String(error), 'error')); return; }
+    // Older hosts: the app follows the address bar.
+    history.pushState(null, '', `/chat/${encodeURIComponent(chatId)}`); window.dispatchEvent(new PopStateEvent('popstate'));
+  }
+  function storyList(className: string) {
+    const list = el('div', className);
+    for (const story of stories) {
+      const item = el('button', 'gm-story'); item.type = 'button';
+      item.append(el('span', 'gm-story-name', story.character || story.chatName || 'A chat'), el('span', 'gm-story-meta', `${story.chatName && story.character ? `${story.chatName} · ` : ''}played ${ago(story.playedAt)}${story.enabled ? '' : ' · Grimoire off'}`));
+      item.title = `Open ${story.character || 'this chat'}`;
+      item.addEventListener('click', () => openChat(story.chatId));
+      list.append(item);
+    }
+    return list;
+  }
+  let homeMount: HTMLElement | null = null;
+  try { homeMount = ctx.ui.mount('landing_hero') as HTMLElement; } catch { homeMount = null; }
+  const home = el('section', 'gm-home'); home.hidden = true;
+  if (homeMount) { homeMount.append(home); teardown.push(() => home.remove()); }
+  function renderHome() {
+    const show = !!snapshot && snapshot.settings.homeList !== false && !chatId() && stories.length > 0;
+    home.hidden = !show;
+    if (!show) { home.replaceChildren(); return; }
+    const title = el('div', 'gm-home-title'); title.innerHTML = ICON; title.append(el('span', '', 'Your stories'));
+    home.replaceChildren(title, storyList('gm-home-list'));
+  }
+  async function refreshStories() {
+    if (destroyed || chatId()) { renderHome(); return; }
+    try { stories = await rpc.request<StoryListing[]>('stories'); } catch { stories = []; }
+    renderHome(); if (!snapshot?.chat) render();
+  }
 
   // ----- Pace button above the input -----
   let mount: HTMLElement | null = null, paceButton: HTMLButtonElement | null = null, skipButton: HTMLButtonElement | null = null;
@@ -366,7 +409,7 @@ export function setup(ctx: SpindleFrontendContext) {
     })();
     return refreshing;
   }
-  teardown.push(tab.onActivate(() => void refresh()), ctx.events.on('CHAT_CHANGED', () => { editing = false; void refresh(true); }), ctx.events.on('CHAT_SWITCHED', () => { editing = false; void refresh(true); }));
-  render(); ctx.ready(); void refresh(true);
+  teardown.push(tab.onActivate(() => void refresh()), ctx.events.on('CHAT_CHANGED', () => { editing = false; void refresh(true); }), ctx.events.on('CHAT_SWITCHED', () => { editing = false; void refresh(true).then(refreshStories); }));
+  render(); ctx.ready(); void refresh(true).then(refreshStories);
   return () => { if (destroyed) return; destroyed = true; if (polling) clearInterval(polling); rpc.destroy(); for (const fn of teardown.reverse()) fn(); app.remove(); tab.destroy(); };
 }

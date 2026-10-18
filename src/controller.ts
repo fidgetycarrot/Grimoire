@@ -10,7 +10,7 @@ import { applyQuick, quickError, quickQuestions, quickState } from './quick';
 import { glance, skipOffer } from './skip';
 import type { DecisionResult } from 'lumiverse-spindle-types';
 import { checkRecipe, guessRecipe, readTracker, trackerText, validateRecipe, type FieldType, type Recipe } from './tracker';
-import { DEFAULT_PREFERENCES, DEFAULT_SETTINGS, MAX_VERSIONS, VERSION, type ChatState, type ChatView, type Job, type Settings, type Snapshot, type Version } from './types';
+import { DEFAULT_PREFERENCES, DEFAULT_SETTINGS, MAX_VERSIONS, VERSION, type ChatState, type ChatView, type Job, type Settings, type Snapshot, type StoryListing, type Version } from './types';
 
 const record = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
 const PACES: Pace[] = ['auto', 'quiet', 'fast'];
@@ -44,6 +44,7 @@ export function validSettings(value: unknown): Settings {
     placement: v.placement === 'macro' ? 'macro' : 'auto',
     quick: { enabled: quick.enabled === true, connectionId: plainSetting(quick.connectionId, 120), model: plainSetting(quick.model, 200) },
     wait: v.wait === 'short' || v.wait === 'long' ? v.wait : 'medium',
+    homeList: v.homeList !== false,
   };
 }
 
@@ -174,6 +175,24 @@ export class NotebookController {
         skipOffer: live && state.enabled && state.job?.status !== 'running' && !state.skipHours && !this.reworking(state, live) ? skipOffer(live.version.notebook, live.moment, live.clock, state.skipDismissedAt) : null,
       };
     });
+  }
+  /** Chats that have a notebook, most recently played first. Chats that were deleted are left out. */
+  async stories(limit = 12): Promise<StoryListing[]> {
+    let paths: string[] = [];
+    try { paths = await this.api.userStorage.list('chats/', this.userId); } catch { return []; }
+    const ids = [...new Set(paths.map(p => /([\w-]{1,120})\.json$/.exec(p)?.[1]).filter((x): x is string => !!x))];
+    const found = await Promise.all(ids.slice(0, 200).map(async (chatId): Promise<StoryListing | null> => {
+      try {
+        const state = await this.load(chatId);
+        if (!state?.versions.length) return null;
+        const chat = await this.api.chats.get(chatId, this.userId);
+        if (!chat) return null;
+        const character = chat.character_id ? await this.api.characters.get(chat.character_id, this.userId).catch(() => null) : null;
+        const played = Number((chat as { updated_at?: number }).updated_at) || 0;
+        return { chatId, character: character?.name ?? '', chatName: chat.name ?? '', playedAt: played > 1e11 ? played : played * 1000, enabled: state.enabled };
+      } catch { return null; }
+    }));
+    return found.filter((x): x is StoryListing => !!x).sort((a, b) => b.playedAt - a.playedAt).slice(0, limit);
   }
   async snapshot(chatId: string | null): Promise<Snapshot> {
     const permissions = await this.api.permissions.getGranted();

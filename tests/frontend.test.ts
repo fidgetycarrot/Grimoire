@@ -10,15 +10,17 @@ const cleanups: Array<() => void> = [];
 afterEach(() => { for (const fn of cleanups.splice(0)) fn(); });
 const tick = (ms = 10) => new Promise(r => setTimeout(r, ms));
 
+const storyList = [{ chatId: 'chat-9', character: 'Riley', chatName: 'Comic-Con', playedAt: Date.now() - 3_600_000, enabled: true }, { chatId: 'chat-8', character: 'Mira', chatName: 'Low Water', playedAt: Date.now() - 86_400_000 * 2, enabled: false }];
 function harness(chat: Partial<NonNullable<Snapshot['chat']>> | null = {}, settings: Partial<Snapshot['settings']> = {}) {
   const window = new Window({ url: 'https://lumiverse.example/' });
   Object.assign(globalThis, { document: window.document });
-  const root = window.document.createElement('div'), bar = window.document.createElement('div');
-  window.document.body.append(root, bar);
+  const root = window.document.createElement('div'), bar = window.document.createElement('div'), landing = window.document.createElement('div');
+  window.document.body.append(root, bar, landing);
+  const opened: Array<{ ref: unknown; params: unknown }> = [];
   const state: Snapshot = {
     version: '0.1.0', permissions: ['generation', 'interceptor', 'chats', 'characters'], notice: '',
     connections: [{ id: 'model', name: 'Writer', model: 'm' }],
-    settings: { connectionId: 'model', maxOutputTokens: 16000, reasoningMode: 'inherit', every: 8, placement: 'auto', quick: { enabled: false, connectionId: '', model: '' }, wait: 'medium', ...settings },
+    settings: { connectionId: 'model', maxOutputTokens: 16000, reasoningMode: 'inherit', every: 8, placement: 'auto', quick: { enabled: false, connectionId: '', model: '' }, wait: 'medium', homeList: true, ...settings },
     decisions: { available: true, reason: '', connections: [{ id: 'dec', name: 'Jev', provider: 'typesafe', model: '~typesafe/jev-latest', isDefault: true }] },
     chat: chat === null ? null : { chatId: 'chat-1', name: 'Low Water', supported: true, reason: '', enabled: true, pace: 'auto', preferences: { tone: 'balanced', twist: true }, hasNotebook: true,
       summary: 'Notebook updated after the tavern.', clock: { day: 2, hour: 21, label: '' }, clockText: 'Day 2, 21:00', sources: { day: 'notebook', hour: 'notebook', exact: false }, checks: [],
@@ -29,18 +31,19 @@ function harness(chat: Partial<NonNullable<Snapshot['chat']>> | null = {}, setti
   const extras: string[] = [];
   const ctx = {
     ui: { registerDrawerTab: () => ({ root, tabId: 'g', setBadge: () => {}, onActivate: () => () => {}, activate: () => {}, destroy: () => {} }),
-      registerInputBarAction: () => ({ actionId: 'a', onClick: () => () => {}, destroy: () => {}, setLabel: (l: string) => extras.push(l), setSubtitle: () => {}, setEnabled: () => {} }), mount: () => bar },
-    dom: { addStyle: () => () => {} }, events: { on: () => () => {} }, getActiveChat: () => ({ chatId: 'chat-1', characterId: 'card' }), ready: () => {},
+      registerInputBarAction: () => ({ actionId: 'a', onClick: () => () => {}, destroy: () => {}, setLabel: (l: string) => extras.push(l), setSubtitle: () => {}, setEnabled: () => {} }), mount: (point: string) => point === 'landing_hero' ? landing : bar },
+    dom: { addStyle: () => () => {} }, events: { on: () => () => {} }, getActiveChat: () => ({ chatId: chat === null ? null : 'chat-1', characterId: 'card' }), ready: () => {},
+    host: { surfaces: { invoke: (ref: unknown, params: unknown) => { opened.push({ ref, params }); } } },
     onBackendMessage: (cb: (m: unknown) => void) => { receive = cb; return () => {}; },
     sendToBackend: (m: any) => { requests.push(m); queueMicrotask(() => {
       if (m.action === 'pace' && state.chat) state.chat.pace = m.input.pace;
       if (m.action === 'enable' && state.chat) state.chat.enabled = m.input.enabled;
-      receive({ type: 'grimoire:response', id: m.id, result: m.action === 'snapshot' ? structuredClone(state) : m.action === 'skip' ? 24 : null });
+      receive({ type: 'grimoire:response', id: m.id, result: m.action === 'snapshot' ? structuredClone(state) : m.action === 'skip' ? 24 : m.action === 'stories' ? structuredClone(storyList) : null });
     }); },
   } as unknown as SpindleFrontendContext;
   cleanups.push(setup(ctx));
   const button = (text: string) => Array.from(root.querySelectorAll('button')).find(b => b.textContent === text) as unknown as HTMLButtonElement | undefined;
-  return { root, bar, state, requests, button, extras, window, changed: () => receive({ type: 'grimoire:changed' }) };
+  return { root, bar, landing, opened, state, requests, button, extras, window, changed: () => receive({ type: 'grimoire:changed' }) };
 }
 
 describe('the panel', () => {
@@ -207,6 +210,28 @@ describe('background updates', () => {
     expect(h.root.querySelector('input[type=number]') as unknown).toBe(amount);
     amount.blur(); await tick();
     expect(h.root.textContent).toContain('7 replies since the last update');
+  });
+});
+
+describe('your stories', () => {
+  test('on the home page, chats with a notebook are listed and open with a tap', async () => {
+    const h = harness(null); await tick(20);
+    const home = h.landing.querySelector('.gm-home') as unknown as HTMLElement;
+    expect(home.hidden).toBe(false);
+    expect(home.textContent).toContain('Your stories');
+    expect(home.textContent).toContain('Riley');
+    expect(home.textContent).toContain('Comic-Con · played 1 h ago');
+    expect(home.textContent).toContain('Grimoire off');
+    (home.querySelector('.gm-story') as unknown as HTMLButtonElement).click();
+    expect(h.opened[0]).toEqual({ ref: { kind: 'route', id: '/chat/:chatId' }, params: { chatId: 'chat-9' } });
+    // The drawer lists them too when no chat is open.
+    expect(h.root.textContent).toContain('Your stories');
+  });
+  test('stays hidden inside a chat, and when turned off', async () => {
+    const inChat = harness(); await tick(20);
+    expect((inChat.landing.querySelector('.gm-home') as unknown as HTMLElement).hidden).toBe(true);
+    const off = harness(null, { homeList: false }); await tick(20);
+    expect((off.landing.querySelector('.gm-home') as unknown as HTMLElement).hidden).toBe(true);
   });
 });
 

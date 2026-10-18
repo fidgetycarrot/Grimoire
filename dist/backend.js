@@ -1518,9 +1518,9 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.5.1";
+var VERSION = "0.6.0";
 var MAX_VERSIONS = 16;
-var DEFAULT_SETTINGS = { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto", quick: { enabled: false, connectionId: "", model: "" }, wait: "medium" };
+var DEFAULT_SETTINGS = { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto", quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true };
 var DEFAULT_PREFERENCES = { tone: "balanced", twist: true };
 
 // src/controller.ts
@@ -1553,7 +1553,8 @@ function validSettings(value) {
     every: Number.isInteger(every) && every >= 2 && every <= 50 ? every : DEFAULT_SETTINGS.every,
     placement: v.placement === "macro" ? "macro" : "auto",
     quick: { enabled: quick.enabled === true, connectionId: plainSetting(quick.connectionId, 120), model: plainSetting(quick.model, 200) },
-    wait: v.wait === "short" || v.wait === "long" ? v.wait : "medium"
+    wait: v.wait === "short" || v.wait === "long" ? v.wait : "medium",
+    homeList: v.homeList !== false
   };
 }
 
@@ -1731,6 +1732,31 @@ class NotebookController {
         skipOffer: live && state.enabled && state.job?.status !== "running" && !state.skipHours && !this.reworking(state, live) ? skipOffer(live.version.notebook, live.moment, live.clock, state.skipDismissedAt) : null
       };
     });
+  }
+  async stories(limit = 12) {
+    let paths = [];
+    try {
+      paths = await this.api.userStorage.list("chats/", this.userId);
+    } catch {
+      return [];
+    }
+    const ids = [...new Set(paths.map((p) => /([\w-]{1,120})\.json$/.exec(p)?.[1]).filter((x) => !!x))];
+    const found = await Promise.all(ids.slice(0, 200).map(async (chatId) => {
+      try {
+        const state = await this.load(chatId);
+        if (!state?.versions.length)
+          return null;
+        const chat = await this.api.chats.get(chatId, this.userId);
+        if (!chat)
+          return null;
+        const character = chat.character_id ? await this.api.characters.get(chat.character_id, this.userId).catch(() => null) : null;
+        const played = Number(chat.updated_at) || 0;
+        return { chatId, character: character?.name ?? "", chatName: chat.name ?? "", playedAt: played > 100000000000 ? played : played * 1000, enabled: state.enabled };
+      } catch {
+        return null;
+      }
+    }));
+    return found.filter((x) => !!x).sort((a, b) => b.playedAt - a.playedAt).slice(0, limit);
   }
   async snapshot(chatId) {
     const permissions = await this.api.permissions.getGranted();
@@ -2304,6 +2330,8 @@ async function handle(controller, action, input) {
       return controller.editNotebook(string(data.chatId, "Chat"), data.notebook);
     case "remove":
       return controller.remove(string(data.chatId, "Chat"));
+    case "stories":
+      return controller.stories();
     case "dismiss-skip":
       return controller.dismissSkip(string(data.chatId, "Chat"));
     case "settings":

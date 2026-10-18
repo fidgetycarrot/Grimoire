@@ -24,6 +24,9 @@ var styles = `
 .gm-empty{text-align:center;padding:34px 18px;border:1px dashed var(--gm-line);border-radius:12px;color:var(--gm-muted)}
 .gm-footer{margin-top:26px;font-size:10px;letter-spacing:1.4px;color:var(--gm-muted);text-transform:uppercase}
 .gm-pace-button{display:inline-flex;white-space:nowrap;align-items:center;gap:6px;border:1px solid var(--lumiverse-border,rgba(255,255,255,.14));background:transparent;color:inherit;border-radius:999px;padding:3px 10px 3px 8px;font:600 12px/1.6 ui-sans-serif,system-ui,sans-serif;cursor:pointer;opacity:.9}.gm-pace-button:hover{opacity:1}.gm-pace-button svg{width:14px;height:14px}.gm-pace-button[hidden]{display:none!important}
+.gm-home{margin:14px 0;font:13px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--lumiverse-text,inherit)}.gm-home[hidden]{display:none!important}.gm-home-title{display:flex;align-items:center;gap:7px;font-weight:650;font-size:12px;letter-spacing:.5px;text-transform:uppercase;opacity:.75;margin-bottom:8px}.gm-home-title svg{width:15px;height:15px}
+.gm-home-list,.gm-story-list{display:flex;gap:8px;flex-wrap:wrap}.gm-story-list{flex-direction:column}
+.gm-story{display:flex;flex-direction:column;align-items:flex-start;gap:1px;text-align:left;border:1px solid var(--lumiverse-border,rgba(127,127,127,.28));border-radius:10px;background:var(--lumiverse-bg-secondary,rgba(127,127,127,.08));color:inherit;padding:8px 12px;cursor:pointer;max-width:260px;min-width:0;font:inherit}.gm-story:hover{border-color:var(--lumiverse-primary,#8fb3d9)}.gm-story-name{font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}.gm-story-meta{font-size:11.5px;opacity:.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}.gm-story-list .gm-story{max-width:none;width:100%}
 @media(prefers-color-scheme:light){.gm-app{--gm-bg:var(--lumiverse-bg,#faf8f3);--gm-card:var(--lumiverse-bg-secondary,#fffdf8);--gm-ink:var(--lumiverse-text,#25231e);--gm-muted:var(--lumiverse-text-muted,#6f6a60);--gm-accent:#2f6699;--gm-accent-ink:#f5f9fd;--gm-warn:#a06d10;--gm-good:#2f7a45;color-scheme:light}}
 @container(max-width:380px){.gm-grid{grid-template-columns:1fr}.gm-app h1{font-size:26px}}
 `;
@@ -45,7 +48,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.5.1";
+var VERSION = "0.6.0";
 
 // src/frontend.ts
 var ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8 3v18"/><path d="M12 8h3M12 12h3"/></svg>';
@@ -119,8 +122,8 @@ function el(tag, className = "", text) {
   return node;
 }
 var ago = (time) => {
-  const s = Math.max(0, (Date.now() - time) / 1000);
-  return s < 60 ? "just now" : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} days ago`;
+  const s = Math.max(0, (Date.now() - time) / 1000), d = Math.round(s / 86400);
+  return s < 60 ? "just now" : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${d} ${d === 1 ? "day" : "days"} ago`;
 };
 var STATUS_WORDS = { verified: "Read from your preset", waiting: "Waiting for a reply to check", unavailable: "Not found, Grimoire keeps this" };
 var FIELD_WORDS = { datetime: "Date and time", date: "Date", time: "Time", location: "Place", present: "Who is here" };
@@ -493,6 +496,11 @@ function setup(ctx) {
       const empty = el("div", "gm-empty");
       empty.append(el("p", "", snapshot?.notice || "Open a chat to use Grimoire."));
       body.append(empty);
+      if (stories.length) {
+        const card = el("section", "gm-card gm-stack");
+        card.append(el("h4", "", "Your stories"), storyList("gm-story-list"));
+        body.append(card);
+      }
       return;
     }
     if (!view.supported) {
@@ -549,7 +557,7 @@ function setup(ctx) {
     body.append(remove);
   }
   function renderSettings() {
-    const settings = { ...snapshot?.settings ?? { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto", quick: { enabled: false, connectionId: "", model: "" }, wait: "medium" } };
+    const settings = { ...snapshot?.settings ?? { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto", quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true } };
     const card = el("section", "gm-card gm-stack");
     const connection = select([["", "Choose a connection"], ...(snapshot?.connections ?? []).map((c) => [c.id, `${c.name}${c.model ? ` · ${c.model}` : ""}`])], settings.connectionId);
     const every = el("input");
@@ -588,8 +596,14 @@ function setup(ctx) {
         quickCard.append(el("p", "gm-notice", "Add a decision connection in Lumiverse’s connection settings first (OpenRouter or TypeSafe)."));
       quickCard.append(labeled("Decision connection", decision), labeled("Model", model, "Any decision model works. To use a different one than the connection’s, type its exact ID. Pick one with a version in its name rather than one ending in “latest”, so it doesn’t change without you knowing."));
     }
+    const homeRow = el("label", "gm-row gm-small"), home = el("input");
+    home.type = "checkbox";
+    home.checked = settings.homeList !== false;
+    home.style.width = "auto";
+    homeRow.append(home, document.createTextNode("Show my stories on the home page"));
+    card.append(homeRow);
     const save = button("Save settings", async () => {
-      await act("settings", { settings: { connectionId: connection.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, placement: placement.value, wait: wait.value, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } });
+      await act("settings", { settings: { connectionId: connection.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, placement: placement.value, wait: wait.value, homeList: home.checked, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } });
       notify("Settings saved.");
     }, "primary");
     body.append(card, quickCard, save);
@@ -632,6 +646,66 @@ function setup(ctx) {
         render();
     }, 0);
   });
+  let stories = [];
+  function openChat(chatId) {
+    const surfaces = ctx.host?.surfaces;
+    if (surfaces) {
+      Promise.resolve(surfaces.invoke({ kind: "route", id: "/chat/:chatId" }, { chatId })).catch((error) => notify(error instanceof Error ? error.message : String(error), "error"));
+      return;
+    }
+    history.pushState(null, "", `/chat/${encodeURIComponent(chatId)}`);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }
+  function storyList(className) {
+    const list = el("div", className);
+    for (const story of stories) {
+      const item = el("button", "gm-story");
+      item.type = "button";
+      item.append(el("span", "gm-story-name", story.character || story.chatName || "A chat"), el("span", "gm-story-meta", `${story.chatName && story.character ? `${story.chatName} · ` : ""}played ${ago(story.playedAt)}${story.enabled ? "" : " · Grimoire off"}`));
+      item.title = `Open ${story.character || "this chat"}`;
+      item.addEventListener("click", () => openChat(story.chatId));
+      list.append(item);
+    }
+    return list;
+  }
+  let homeMount = null;
+  try {
+    homeMount = ctx.ui.mount("landing_hero");
+  } catch {
+    homeMount = null;
+  }
+  const home = el("section", "gm-home");
+  home.hidden = true;
+  if (homeMount) {
+    homeMount.append(home);
+    teardown.push(() => home.remove());
+  }
+  function renderHome() {
+    const show = !!snapshot && snapshot.settings.homeList !== false && !chatId() && stories.length > 0;
+    home.hidden = !show;
+    if (!show) {
+      home.replaceChildren();
+      return;
+    }
+    const title = el("div", "gm-home-title");
+    title.innerHTML = ICON;
+    title.append(el("span", "", "Your stories"));
+    home.replaceChildren(title, storyList("gm-home-list"));
+  }
+  async function refreshStories() {
+    if (destroyed || chatId()) {
+      renderHome();
+      return;
+    }
+    try {
+      stories = await rpc.request("stories");
+    } catch {
+      stories = [];
+    }
+    renderHome();
+    if (!snapshot?.chat)
+      render();
+  }
   let mount = null, paceButton = null, skipButton = null;
   try {
     mount = ctx.ui.mount("chat_actions");
@@ -730,11 +804,11 @@ function setup(ctx) {
     refresh(true);
   }), ctx.events.on("CHAT_SWITCHED", () => {
     editing = false;
-    refresh(true);
+    refresh(true).then(refreshStories);
   }));
   render();
   ctx.ready();
-  refresh(true);
+  refresh(true).then(refreshStories);
   return () => {
     if (destroyed)
       return;

@@ -6,7 +6,7 @@ import type { FieldCheck, Recipe } from './tracker';
 import type { Glance, SkipOffer } from './skip';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.5.1';
+export const VERSION = '0.6.0';
 export const MAX_VERSIONS = 16;
 
 /** One saved state of the notebook and the chat history it describes. */
@@ -35,8 +35,8 @@ export interface ChatState {
 }
 /** The quick check after each reply. An empty connection means the default decision connection; an empty model means the connection's model. */
 export interface QuickSettings { enabled: boolean; connectionId: string; model: string }
-export interface Settings { connectionId: string; maxOutputTokens: number; reasoningMode: ReasoningMode; every: number; placement: 'auto' | 'macro'; quick: QuickSettings; /** The most replies a planned development waits, as a size. */ wait: WaitSetting }
-export const DEFAULT_SETTINGS: Settings = { connectionId: '', maxOutputTokens: 16000, reasoningMode: 'inherit', every: 8, placement: 'auto', quick: { enabled: false, connectionId: '', model: '' }, wait: 'medium' };
+export interface Settings { connectionId: string; maxOutputTokens: number; reasoningMode: ReasoningMode; every: number; placement: 'auto' | 'macro'; quick: QuickSettings; /** The most replies a planned development waits, as a size. */ wait: WaitSetting; /** List chats with a notebook on the home page. */ homeList: boolean }
+export const DEFAULT_SETTINGS: Settings = { connectionId: '', maxOutputTokens: 16000, reasoningMode: 'inherit', every: 8, placement: 'auto', quick: { enabled: false, connectionId: '', model: '' }, wait: 'medium', homeList: true };
 export const DEFAULT_PREFERENCES: Preferences = { tone: 'balanced', twist: true };
 
 export interface ChatView {
@@ -58,6 +58,8 @@ export interface ChatView {
   /** The story changed direction and Grimoire is reworking its plans. */
   reworking: boolean;
 }
+/** A chat with a notebook, for the home page and the drawer. Names and times only. */
+export interface StoryListing { chatId: string; character: string; chatName: string; playedAt: number; enabled: boolean }
 export interface Snapshot {
   version: string; permissions: string[]; connections: Array<{ id: string; name: string; model: string }>;
   settings: Settings; chat: ChatView | null; notice: string;
