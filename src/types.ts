@@ -6,12 +6,12 @@ import type { FieldCheck, Recipe } from './tracker';
 import type { Glance, SkipOffer } from './skip';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.6.3';
+export const VERSION = '0.7.0';
 export const MAX_VERSIONS = 16;
 
 /** One saved state of the notebook and the chat history it describes. */
 export interface Version { notebook: Notebook; covered: string[]; at: number; reason: string; location?: string; /** Made by a quick check, not a full check-up. */ quick?: true }
-export interface Job { id: string; kind: 'create' | 'checkup'; status: 'running' | 'complete' | 'failed'; label: string; error?: string; startedAt: number; /** Chat length when it failed, so automatic retries wait a little. */ failedAtTurn?: number }
+export interface Job { id: string; kind: 'create' | 'checkup' | 'talk'; status: 'running' | 'complete' | 'failed'; label: string; error?: string; startedAt: number; /** Chat length when it failed, so automatic retries wait a little. */ failedAtTurn?: number }
 export interface ChatState {
   version: 1; chatId: string; enabled: boolean; pace: Pace; preferences: Preferences;
   versions: Version[]; recipe: Recipe; checks: FieldCheck[];
@@ -31,8 +31,29 @@ export interface ChatState {
   held: string[];
   /** The reply count when the story changed direction; the next check-up reworks the notebook. Null when none is due. */
   resync: number | null;
+  /** Talking to Grimoire: the recent conversation, newest last. */
+  talk: TalkLine[];
+  /** Standing wishes the player pinned. They steer every check-up and the narrator note. */
+  notes: PlayerNote[];
   job: Job | null; updatedAt: number;
 }
+/** One message in the talk with Grimoire. Grimoire's lines are written to be spoiler-free. */
+export interface TalkLine {
+  from: 'you' | 'grimoire'; text: string; at: number;
+  /** Your message asked to pin what it says as a lasting note. */
+  keep?: true;
+  /** Grimoire asked a question back instead of acting. */
+  asked?: true;
+  /** What changed in the plans, as shapes and counts made by code. */
+  changes?: string[];
+  /** The notebook version this answer made, so it can be undone while it is the newest. */
+  versionAt?: number;
+  /** The note this answer pinned. */
+  noteId?: string;
+  undone?: true;
+}
+export interface PlayerNote { id: string; text: string; at: number }
+export const TALK_LIMITS = { message: 1000, lines: 40, notes: 8, note: 200 } as const;
 /** The quick check after each reply. An empty connection means the default decision connection; an empty model means the connection's model. */
 export interface QuickSettings { enabled: boolean; connectionId: string; model: string }
 export interface Settings { connectionId: string; maxOutputTokens: number; reasoningMode: ReasoningMode; every: number; placement: 'auto' | 'macro'; quick: QuickSettings; /** The most replies a planned development waits, as a size. */ wait: WaitSetting; /** List chats with a notebook on the home page. */ homeList: boolean }
@@ -57,6 +78,9 @@ export interface ChatView {
   glance: Glance | null;
   /** The story changed direction and Grimoire is reworking its plans. */
   reworking: boolean;
+  talk: TalkLine[]; notes: PlayerNote[];
+  /** The newest answer changed the notebook and nothing came after it, so it can be undone. */
+  canUndo: boolean;
 }
 /** A chat with a notebook, for the home page and the drawer. Names and times only. */
 export interface StoryListing { chatId: string; character: string; chatName: string; playedAt: number; enabled: boolean }

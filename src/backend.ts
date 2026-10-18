@@ -18,6 +18,10 @@ export async function handle(controller: NotebookController, action: string, inp
     case 'edit': return controller.editNotebook(string(data.chatId, 'Chat'), data.notebook);
     case 'remove': return controller.remove(string(data.chatId, 'Chat'));
     case 'stories': return controller.stories();
+    case 'talk': return controller.talk(string(data.chatId, 'Chat'), data.text, data.keep);
+    case 'undo-talk': return controller.undoTalk(string(data.chatId, 'Chat'));
+    case 'unpin': return controller.unpin(string(data.chatId, 'Chat'), data.noteId);
+    case 'clear-talk': return controller.clearTalk(string(data.chatId, 'Chat'));
     case 'dismiss-skip': return controller.dismissSkip(string(data.chatId, 'Chat'));
     case 'settings': return controller.saveSettings(data.settings);
     case 'version': return VERSION;

@@ -42,14 +42,14 @@ function host(options: { group?: boolean; granted?: string[]; decide?: (input: a
   return { api, storage, messages, add, decisionCalls };
 }
 /** A scripted model: creation and check-up answers come from the given functions. */
-function model(answers: { create?: (input: any) => unknown; checkup?: (input: any) => unknown; digest?: (input: any) => unknown }) {
+function model(answers: { create?: (input: any) => unknown; checkup?: (input: any) => unknown; digest?: (input: any) => unknown; talk?: (input: any) => unknown }) {
   const calls: Array<{ task: string; input: any; messages: Message[] }> = [];
   let hold: Promise<void> | null = null;
   const ask = async (messages: Message[]) => {
     const input = JSON.parse(messages[1].content);
     calls.push({ task: input.task, input, messages });
     if (hold) await hold;
-    const answer = input.task === 'grimoire-create-v1' ? answers.create?.(input) : input.task === 'grimoire-digest-v1' ? answers.digest?.(input) : answers.checkup?.(input);
+    const answer = input.task === 'grimoire-create-v1' ? answers.create?.(input) : input.task === 'grimoire-digest-v1' ? answers.digest?.(input) : input.task === 'grimoire-talk-v1' ? answers.talk?.(input) : answers.checkup?.(input);
     return typeof answer === 'string' ? answer : JSON.stringify(answer);
   };
   return { ask, calls, pause() { let release!: () => void; hold = new Promise(r => { release = () => { hold = null; r(); }; }); return release; } };
@@ -735,5 +735,98 @@ describe('safeguards', () => {
     expect(tries()).toBe(2);
     await c.checkup('chat-1', 'You asked for a check-up'); await c.waitForJobs();
     expect(tries()).toBe(4);
+  });
+});
+
+describe('talking to Grimoire', () => {
+  const slower = (input: any) => {
+    const notebook = structuredClone(input.notebook);
+    notebook.threads[1].speed = 'steady'; notebook.threads[1].steps[0].afterHours = 8;
+    notebook.beats[0].status = 'dropped';
+    return { ask: false, reply: 'Got it. I will let things breathe for a while.', notebook, note: input.keep ? 'Keep the pace slow.' : '' };
+  };
+  const setup = (talk: (input: any) => unknown) => ready(host(), model({ create: created, checkup: input => ({ notebook: input.notebook, tracker: null }), talk }));
+
+  test('acts on a clear message: changes the plans and says what changed in shapes only', async () => {
+    const { m, c } = await setup(slower);
+    await c.talk('chat-1', 'This is moving too fast.', false); await c.waitForJobs();
+    const sent = m.calls.find(x => x.task === 'grimoire-talk-v1')!;
+    expect(sent.input.exchange).toEqual([{ from: 'you', text: 'This is moving too fast.' }]);
+    expect(sent.messages[0].content).toContain('no spoilers');
+    const view = (await c.view('chat-1'))!;
+    const answer = view.talk.at(-1)!;
+    expect(answer.from).toBe('grimoire');
+    expect(answer.changes).toEqual(['Slowed 1 storyline', 'Moved 1 storyline further out', 'Set aside 1 planned moment']);
+    expect(view.notebook!.threads[1].speed).toBe('steady');
+    expect(view.summary).toBe('Last update: Changed after you talked to Grimoire');
+    expect(view.canUndo).toBe(true);
+    expect(view.notes).toEqual([]);
+  });
+  test('asks back only when unsure, then acts on the answer with the whole exchange', async () => {
+    let turn = 0;
+    const { m, c } = await setup(input => (turn++ === 0 ? { ask: true, reply: 'Slower overall, or just the storm?', notebook: null, note: '' } : slower(input)));
+    await c.talk('chat-1', 'Change things.', false); await c.waitForJobs();
+    let view = (await c.view('chat-1'))!;
+    expect(view.talk.at(-1)).toMatchObject({ from: 'grimoire', asked: true });
+    expect(view.canUndo).toBe(false);
+    expect(view.notebook!.threads[1].speed).toBe('urgent');
+    await c.talk('chat-1', 'Overall.', false); await c.waitForJobs();
+    const second = m.calls.filter(x => x.task === 'grimoire-talk-v1')[1];
+    expect(second.input.exchange.map((l: any) => l.from)).toEqual(['you', 'grimoire', 'you']);
+    view = (await c.view('chat-1'))!;
+    expect(view.notebook!.threads[1].speed).toBe('steady');
+    // A new message after that starts a fresh exchange.
+    await c.talk('chat-1', 'Thanks.', false); await c.waitForJobs();
+    expect(m.calls.filter(x => x.task === 'grimoire-talk-v1')[2].input.exchange).toHaveLength(1);
+  });
+  test('keep pins a note that steers check-ups and the narrator note; removing it stops that', async () => {
+    const { h, m, c } = await setup(slower);
+    await c.talk('chat-1', 'Keep it slow from now on.', true); await c.waitForJobs();
+    let view = (await c.view('chat-1'))!;
+    expect(view.notes.map(n => n.text)).toEqual(['Keep the pace slow.']);
+    expect(await c.noteFor('chat-1')).toContain("The player's standing wishes for this story (they outrank the plans below): Keep the pace slow.");
+    h.add('user', 'I wait.'); h.add('assistant', `Mira waits too.${tracker('Day 1, 18:40', 'The ferry')}`);
+    await c.checkup('chat-1', 'You asked for a check-up'); await c.waitForJobs();
+    const checkup = m.calls.filter(x => x.task === 'grimoire-checkup-v1').at(-1)!;
+    expect(checkup.input.notes).toEqual(['Keep the pace slow.']);
+    expect(checkup.messages[0].content).toContain('standing wishes from the player');
+    await c.unpin('chat-1', view.notes[0].id);
+    view = (await c.view('chat-1'))!;
+    expect(view.notes).toEqual([]);
+    expect(await c.noteFor('chat-1')).not.toContain('standing wishes');
+  });
+  test('undo puts the plans back and unpins the note, only while nothing came after', async () => {
+    const { h, c } = await setup(slower);
+    await c.talk('chat-1', 'Slow down.', true); await c.waitForJobs();
+    await c.undoTalk('chat-1');
+    let view = (await c.view('chat-1'))!;
+    expect(view.notebook!.threads[1].speed).toBe('urgent');
+    expect(view.notes).toEqual([]);
+    expect(view.canUndo).toBe(false);
+    await expect(c.undoTalk('chat-1')).rejects.toThrow('nothing to undo');
+    await c.talk('chat-1', 'Slow down.', false); await c.waitForJobs();
+    h.add('user', 'I wait.'); h.add('assistant', `Mira waits too.${tracker('Day 1, 18:40', 'The ferry')}`);
+    await c.checkup('chat-1', 'You asked for a check-up'); await c.waitForJobs();
+    view = (await c.view('chat-1'))!;
+    expect(view.canUndo).toBe(false);
+  });
+  test('a thread left out is kept, and a broken answer changes nothing', async () => {
+    const { c } = await setup(input => { const notebook = structuredClone(input.notebook); notebook.threads = notebook.threads.slice(1); return { ask: false, reply: 'Done.', notebook, note: '' }; });
+    await c.talk('chat-1', 'Forget the ring.', false); await c.waitForJobs();
+    let view = (await c.view('chat-1'))!;
+    expect(view.notebook!.threads).toHaveLength(2);
+    expect(view.talk.at(-1)).toMatchObject({ from: 'grimoire', changes: [] });
+    expect(view.canUndo).toBe(false);
+    const { c: other } = await setup(() => ({ ask: false, reply: '', notebook: null }));
+    await other.talk('chat-1', 'Hello?', false); await other.waitForJobs();
+    view = (await other.view('chat-1'))!;
+    expect(view.job).toMatchObject({ kind: 'talk', status: 'failed', label: 'Grimoire could not answer' });
+    expect(view.talk.map(l => l.from)).toEqual(['you']);
+  });
+  test('empty and overlong messages are refused before any request', async () => {
+    const { m, c } = await setup(slower);
+    await expect(c.talk('chat-1', '   ', false)).rejects.toThrow('Write something');
+    await expect(c.talk('chat-1', 'x'.repeat(1001), false)).rejects.toThrow('under 1000');
+    expect(m.calls.filter(x => x.task === 'grimoire-talk-v1')).toHaveLength(0);
   });
 });

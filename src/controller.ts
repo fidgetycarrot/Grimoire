@@ -4,16 +4,33 @@ import { conversation, fingerprints, newestMatching, covers, planHistory, readab
 import { askJson, askModel, ModelError, type Ask } from './model';
 import { buildNote, liveClock, paceLine, type ClockSources } from './note';
 import { dueThreads, fillReplies, keepTimes, mergeRevision, NotebookError, stamp, validateNotebook, waitsFor, withoutTimes, type Moment, type Pace, type Preferences } from './notebook';
-import { checkupMessages, creationMessages, digestMessages, type Material } from './prompts';
-import { plainBlock, tidyNotebook } from './tidy';
+import { checkupMessages, creationMessages, digestMessages, talkMessages, type Material } from './prompts';
+import { describeChanges, openExchange } from './talk';
+import { plain, plainBlock, tidyNotebook } from './tidy';
 import { applyQuick, quickError, quickQuestions, quickState } from './quick';
 import { glance, skipOffer } from './skip';
 import type { DecisionResult } from 'lumiverse-spindle-types';
 import { checkRecipe, guessRecipe, readTracker, trackerText, validateRecipe, type FieldType, type Recipe } from './tracker';
-import { DEFAULT_PREFERENCES, DEFAULT_SETTINGS, MAX_VERSIONS, VERSION, type ChatState, type ChatView, type Job, type Settings, type Snapshot, type StoryListing, type Version } from './types';
+import { DEFAULT_PREFERENCES, DEFAULT_SETTINGS, MAX_VERSIONS, TALK_LIMITS, VERSION, type ChatState, type PlayerNote, type TalkLine, type ChatView, type Job, type Settings, type Snapshot, type StoryListing, type Version } from './types';
 
 const record = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
 const PACES: Pace[] = ['auto', 'quiet', 'fast'];
+const TALK_REASON = 'Changed after you talked to Grimoire';
+function talkLines(value: unknown): TalkLine[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(-TALK_LIMITS.lines).flatMap((v): TalkLine[] => {
+    const x = record(v);
+    if ((x.from !== 'you' && x.from !== 'grimoire') || typeof x.text !== 'string') return [];
+    return [{ from: x.from, text: x.text.slice(0, 2000), at: Number(x.at) || 0,
+      ...(x.keep === true ? { keep: true as const } : {}), ...(x.asked === true ? { asked: true as const } : {}), ...(x.undone === true ? { undone: true as const } : {}),
+      ...(Array.isArray(x.changes) ? { changes: x.changes.filter((c): c is string => typeof c === 'string').slice(0, 20) } : {}),
+      ...(Number(x.versionAt) > 0 ? { versionAt: Number(x.versionAt) } : {}), ...(typeof x.noteId === 'string' ? { noteId: x.noteId } : {}) }];
+  });
+}
+function playerNotes(value: unknown): PlayerNote[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, TALK_LIMITS.notes).flatMap((v): PlayerNote[] => { const x = record(v); return typeof x.id === 'string' && typeof x.text === 'string' && x.text ? [{ id: x.id, text: x.text.slice(0, TALK_LIMITS.note), at: Number(x.at) || 0 }] : []; });
+}
 type Messages = Awaited<ReturnType<SpindleAPI['chat']['getMessages']>>;
 interface Live { state: ChatState; turns: Turn[]; prints: string[]; index: number; /** False when no saved version fits the chat, so the oldest one stands in. */ matched: boolean; version: Version; replies: string[]; values: Record<string, string>; types: Record<string, FieldType>; clock: StoryClock; sources: ClockSources; now: number; /** Story hours, replies so far, and how long steps may wait. */ moment: Moment; text: string }
 
@@ -83,6 +100,7 @@ export class NotebookController {
         versions, recipe: validateRecipe(saved.recipe).recipe, checks: Array.isArray(saved.checks) ? saved.checks as ChatState['checks'] : [],
         skipHours: Number(saved.skipHours) > 0 ? Number(saved.skipHours) : 0, skipTurn: Number(saved.skipTurn) > 0 ? Number(saved.skipTurn) : 0, needsCheck: typeof saved.needsCheck === 'string' ? saved.needsCheck : '', trackerTried: saved.trackerTried === true, skipDismissedAt: Number(saved.skipDismissedAt) > 0 ? Number(saved.skipDismissedAt) : 0,
         held: Array.isArray(saved.held) ? saved.held.filter((x): x is string => typeof x === 'string').slice(0, 12) : [], resync: Number.isInteger(saved.resync) ? Number(saved.resync) : null,
+        talk: talkLines(saved.talk), notes: playerNotes(saved.notes),
         quick: saved.quick && typeof saved.quick === 'object' ? { at: Number(record(saved.quick).at) || 0, ok: record(saved.quick).ok === true, error: String(record(saved.quick).error ?? '').slice(0, 200) } : null,
         // A job cannot survive a restart; its request may or may not have finished.
         job: job && job.status === 'running' && !this.running.has(chatId) ? { ...job, status: 'failed', label: 'Stopped when Lumiverse restarted', error: 'Run it again when ready.' } : job,
@@ -98,7 +116,7 @@ export class NotebookController {
     await this.api.userStorage.setJson(this.path(state.chatId), state, { userId: this.userId });
   }
   private blank(chatId: string): ChatState {
-    return { version: 1, chatId, enabled: false, pace: 'auto', preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: '' }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: '', trackerTried: false, quick: null, skipDismissedAt: 0, held: [], resync: null, job: null, updatedAt: 0 };
+    return { version: 1, chatId, enabled: false, pace: 'auto', preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: '' }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: '', trackerTried: false, quick: null, skipDismissedAt: 0, held: [], resync: null, talk: [], notes: [], job: null, updatedAt: 0 };
   }
   private async chatInfo(chatId: string): Promise<{ name: string; supported: boolean; reason: string; characterId: string }> {
     const chat = await this.api.chats.get(chatId, this.userId);
@@ -175,6 +193,7 @@ export class NotebookController {
         checks: live ? state.checks : [], needsCheck: state.needsCheck || (live && !live.matched ? 'The chat changed before the notebook was written.' : ''),
         job: state.job, updatedAt: state.updatedAt, repliesSinceCheck: live ? this.repliesSince(live) : 0, skipHours: state.skipHours, notebook, behind: !!live && live.index !== state.versions.length - 1, earlierParts, quick: state.quick, dueIds: live ? dueThreads(live.version.notebook, live.moment).map(d => d.thread.id) : [],
         glance: live ? glance(live.version.notebook, live.moment) : null, reworking: !!live && this.reworking(state, live),
+        talk: state.talk, notes: state.notes, canUndo: this.undoable(state) !== null,
         skipOffer: live && state.enabled && state.job?.status !== 'running' && !state.skipHours && !this.reworking(state, live) ? skipOffer(live.version.notebook, live.moment, live.clock, state.skipDismissedAt) : null,
       };
     });
@@ -338,7 +357,7 @@ export class NotebookController {
       if (!current || current.job?.id !== job.id) return;
       let turns: number | undefined;
       try { turns = conversation(await this.api.chat.getMessages(chatId)).length; } catch { /* unknown */ }
-      current.job = { ...job, status: 'failed', label: job.kind === 'create' ? 'The notebook could not be written' : 'The check-up could not finish', error: this.explain(error), ...(turns !== undefined ? { failedAtTurn: turns } : {}) };
+      current.job = { ...job, status: 'failed', label: job.kind === 'create' ? 'The notebook could not be written' : job.kind === 'talk' ? 'Grimoire could not answer' : 'The check-up could not finish', error: this.explain(error), ...(turns !== undefined ? { failedAtTurn: turns } : {}) };
       await this.save(current);
     }).catch(() => {});
   }
@@ -366,7 +385,7 @@ export class NotebookController {
     const input = {
       notebook: { ...base.notebook, clock: live.clock }, pace: state.pace, chat, trackerText: live.text, trackerValues: live.values, trackerChecks: live.state.checks, recipe: state.recipe,
       clockOwner: { day: live.sources.day, hour: live.sources.hour }, due: dueThreads(base.notebook, live.moment).map(d => ({ thread: d.thread.id, step: d.step.id })),
-      skipHours: state.skipHours, reason, preferences: state.preferences, resync: state.resync !== null, held: state.held, replies: learning ? this.trackerSamples(live.turns).slice(0, 2).map(r => r.slice(0, 20_000)) : [],
+      skipHours: state.skipHours, reason, preferences: state.preferences, resync: state.resync !== null, held: state.held, notes: state.notes.map(n => n.text), replies: learning ? this.trackerSamples(live.turns).slice(0, 2).map(r => r.slice(0, 20_000)) : [],
     };
     this.track((async () => {
       try {
@@ -405,6 +424,120 @@ export class NotebookController {
       finally { this.running.delete(chatId); this.changed(); }
     })());
     return job;
+  }
+
+  // ----- Talking to Grimoire ------------------------------------------------------
+  /**
+   * The player's message to Grimoire. One model request: it either asks one
+   * short question back, or changes the plans and says what it will do.
+   */
+  async talk(chatId: string, text: unknown, keep: unknown): Promise<Job> {
+    const message = typeof text === 'string' ? text.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim() : '';
+    if (!message) throw new Error('Write something for Grimoire first.');
+    if (message.length > TALK_LIMITS.message) throw new Error(`Keep it under ${TALK_LIMITS.message} characters.`);
+    return this.serial(chatId, async () => {
+      const state = await this.load(chatId);
+      if (!state?.versions.length) throw new Error('Write a notebook for this chat first.');
+      if (this.running.has(chatId)) throw new Error('Grimoire is busy updating the notebook. Try again in a moment.');
+      const settings = await this.settings(), ask = this.asker(settings);
+      const live = await this.live(state, await this.api.chat.getMessages(chatId));
+      if (!live) throw new Error('Write a notebook for this chat first.');
+      state.talk = [...state.talk, { from: 'you' as const, text: message, at: Date.now(), ...(keep === true ? { keep: true as const } : {}) }].slice(-TALK_LIMITS.lines);
+      const { job, signal } = this.startJob(state, 'talk', 'Grimoire is thinking');
+      await this.save(state); this.changed();
+      const base = live.version, read = live.prints.slice();
+      const open = openExchange(state.talk), earlier = state.talk.slice(0, state.talk.length - open.length).slice(-6);
+      const pinning = open.some(line => line.from === 'you' && line.keep);
+      const input = {
+        notebook: base.notebook, preferences: state.preferences, storyTime: describeClock(live.clock),
+        chat: live.turns.slice(-12).map(t => ({ role: t.role, content: readable(t.content, 4000) })),
+        earlier: earlier.map(l => ({ from: l.from, text: l.text })), exchange: open.map(l => ({ from: l.from, text: l.text })),
+        notes: state.notes.map(n => n.text), keep: pinning,
+      };
+      this.track((async () => {
+        try {
+          const result = await askJson(ask, talkMessages(input), value => {
+            const output = record(value);
+            const reply = plainBlock(output.reply, 600);
+            if (!reply) throw new NotebookError('"reply" is empty. Answer the player in one or two short sentences.');
+            const asked = output.ask === true;
+            const notebook = !asked && output.notebook && typeof output.notebook === 'object' ? mergeRevision(base.notebook, validateNotebook(tidyNotebook(output.notebook, base.notebook)), live.moment) : null;
+            return { reply, asked, notebook, note: !asked && pinning ? plain(output.note, TALK_LIMITS.note) : '' };
+          }, signal);
+          await this.serial(chatId, async () => {
+            const current = await this.load(chatId);
+            if (!current || current.job?.id !== job.id) return;
+            const prints = await fingerprints(conversation(await this.api.chat.getMessages(chatId)));
+            const line: TalkLine = { from: 'grimoire', text: result.reply, at: Date.now(), ...(result.asked ? { asked: true as const } : {}) };
+            // The chat it read must still be the chat; otherwise the answer stands but the plans wait for the next check-up.
+            const fits = covers(read, prints);
+            if (result.notebook && fits) {
+              const changes = describeChanges(base.notebook, result.notebook);
+              line.changes = changes;
+              if (changes.length) {
+                const at = Date.now();
+                const kept = current.versions.filter((v, i) => i === 0 || covers(v.covered, read));
+                current.versions = prune([...kept, { notebook: result.notebook, covered: read, at, reason: TALK_REASON, ...(live.values.location ? { location: live.values.location } : {}) }]);
+                line.versionAt = at;
+              }
+            } else if (!result.asked) line.changes = [];
+            if (result.notebook && !fits) line.text += ' The chat changed while I was thinking, so I left the plans as they were. Tell me again and I will apply it.';
+            if (!result.asked && pinning) {
+              const fallback = open.filter(l => l.from === 'you' && l.keep).at(-1)?.text ?? '';
+              const text = result.note || plain(fallback, TALK_LIMITS.note);
+              if (text) {
+                const note: PlayerNote = { id: crypto.randomUUID(), text, at: Date.now() };
+                current.notes = [...current.notes, note].slice(-TALK_LIMITS.notes);
+                line.noteId = note.id;
+              }
+            }
+            current.talk = [...current.talk, line].slice(-TALK_LIMITS.lines);
+            current.job = { ...job, status: 'complete', label: 'Grimoire answered' };
+            await this.save(current);
+          });
+        } catch (error) { await this.failJob(chatId, job, error); }
+        finally { this.running.delete(chatId); this.changed(); }
+      })());
+      return job;
+    });
+  }
+  /** The newest answer that changed the plans, while its version is still the newest one. */
+  private undoable(state: ChatState): TalkLine | null {
+    const line = [...state.talk].reverse().find(l => l.from === 'grimoire' && !l.asked);
+    const last = state.versions.at(-1);
+    return line?.versionAt && !line.undone && last?.reason === TALK_REASON && last.at === line.versionAt ? line : null;
+  }
+  /** Put the plans back as they were before the last answer, and unpin its note. */
+  async undoTalk(chatId: string) {
+    return this.serial(chatId, async () => {
+      const state = await this.load(chatId);
+      if (!state) return;
+      if (this.running.has(chatId)) throw new Error('Wait for Grimoire to finish first.');
+      const line = state ? this.undoable(state) : null;
+      if (!line) throw new Error('There is nothing to undo. The story has moved on since then.');
+      state.versions = state.versions.slice(0, -1);
+      if (line.noteId) state.notes = state.notes.filter(n => n.id !== line.noteId);
+      line.undone = true;
+      state.talk = [...state.talk, { from: 'grimoire' as const, text: 'Undone. The plans are back the way they were.', at: Date.now(), changes: [] }].slice(-TALK_LIMITS.lines);
+      await this.save(state);
+    });
+  }
+  async unpin(chatId: string, noteId: unknown) {
+    return this.serial(chatId, async () => {
+      const state = await this.load(chatId);
+      if (!state) return;
+      state.notes = state.notes.filter(n => n.id !== noteId);
+      await this.save(state);
+    });
+  }
+  async clearTalk(chatId: string) {
+    return this.serial(chatId, async () => {
+      const state = await this.load(chatId);
+      if (!state) return;
+      if (this.running.has(chatId) && state.job?.kind === 'talk') throw new Error('Wait for Grimoire to finish first.');
+      state.talk = [];
+      await this.save(state);
+    });
   }
 
   // ----- Player controls ---------------------------------------------------------
@@ -475,7 +608,7 @@ export class NotebookController {
       if (!live) return '';
       const recent = live.turns.slice(-2).map(t => t.content).join('\n');
       const clockMayLag = (live.sources.day !== 'tracker' || live.sources.hour !== 'tracker') && this.repliesSince(live) > 0;
-      return buildNote({ notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag, guided });
+      return buildNote({ notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map(n => n.text) });
     });
   }
   async macro(name: 'note' | 'clock' | 'pace', chatId: string | undefined): Promise<string> {

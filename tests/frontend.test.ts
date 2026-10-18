@@ -24,7 +24,7 @@ function harness(chat: Partial<NonNullable<Snapshot['chat']>> | null = {}, setti
     decisions: { available: true, reason: '', connections: [{ id: 'dec', name: 'Jev', provider: 'typesafe', model: '~typesafe/jev-latest', isDefault: true }] },
     chat: chat === null ? null : { chatId: 'chat-1', name: 'Low Water', supported: true, reason: '', enabled: true, pace: 'auto', preferences: { tone: 'balanced', twist: true }, hasNotebook: true,
       summary: 'Notebook updated after the tavern.', clock: { day: 2, hour: 21, label: '' }, clockText: 'Day 2, 21:00', sources: { day: 'notebook', hour: 'notebook', exact: false }, checks: [],
-      needsCheck: '', job: null, updatedAt: Date.now(), repliesSinceCheck: 2, skipHours: 0, notebook: stamp(validateNotebook(sampleNotebook()), 40), behind: false, earlierParts: 0, quick: null, dueIds: [], skipOffer: null, glance: null, reworking: false, ...chat },
+      needsCheck: '', job: null, updatedAt: Date.now(), repliesSinceCheck: 2, skipHours: 0, notebook: stamp(validateNotebook(sampleNotebook()), 40), behind: false, earlierParts: 0, quick: null, dueIds: [], skipOffer: null, glance: null, reworking: false, talk: [], notes: [], canUndo: false, ...chat },
   };
   const requests: Array<{ action: string; input: any }> = [];
   let receive: (m: unknown) => void = () => {};
@@ -47,6 +47,22 @@ function harness(chat: Partial<NonNullable<Snapshot['chat']>> | null = {}, setti
 }
 
 describe('the panel', () => {
+  test('talking to Grimoire: send with keep, see changes, remove a note, undo', async () => {
+    const h = harness({ notes: [{ id: 'n1', text: 'Keep the romance a slow burn.', at: 1 }], canUndo: true,
+      talk: [{ from: 'you', text: 'Slow down.', at: 1 }, { from: 'grimoire', text: 'Got it.', at: 2, changes: ['Slowed 1 storyline'], versionAt: 2 }] }); await tick();
+    expect(h.root.textContent).toContain('Keep the romance a slow burn.');
+    expect(h.root.textContent).toContain('Slowed 1 storyline');
+    const box = h.root.querySelector('textarea[aria-label="Message to Grimoire"]') as unknown as HTMLTextAreaElement;
+    box.value = 'More trouble, please.'; box.dispatchEvent(new h.window.Event('input') as unknown as Event);
+    const keep = Array.from(h.root.querySelectorAll('label')).find(l => l.textContent === 'Keep this as a lasting note')!.querySelector('input') as unknown as HTMLInputElement;
+    keep.checked = true; keep.dispatchEvent(new h.window.Event('change') as unknown as Event);
+    h.button('Send')!.click(); await tick();
+    expect(h.requests.find(r => r.action === 'talk')!.input).toEqual({ chatId: 'chat-1', text: 'More trouble, please.', keep: true });
+    h.button('Remove')!.click(); await tick();
+    expect(h.requests.find(r => r.action === 'unpin')!.input).toEqual({ chatId: 'chat-1', noteId: 'n1' });
+    h.button('Undo the last change')!.click(); await tick();
+    expect(h.requests.some(r => r.action === 'undo-talk')).toBe(true);
+  });
   test('shows story time, pace, and controls, and keeps the notebook folded', async () => {
     const h = harness(); await tick();
     expect(h.root.textContent).toContain('Day 2, 21:00');
@@ -97,7 +113,7 @@ describe('the panel', () => {
   test('editing as text refuses broken JSON without sending it', async () => {
     const h = harness(); await tick();
     h.button('Edit as text')!.click(); await tick();
-    const area = h.root.querySelector('textarea') as unknown as HTMLTextAreaElement;
+    const area = h.root.querySelector('textarea[aria-label="Notebook as text"]') as unknown as HTMLTextAreaElement;
     area.value = '{ broken';
     h.button('Save changes')!.click(); await tick();
     expect(h.requests.some(r => r.action === 'edit')).toBe(false);

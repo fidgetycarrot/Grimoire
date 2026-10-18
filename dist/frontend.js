@@ -27,6 +27,8 @@ var styles = `
 .gm-home{margin:14px 0;font:13px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--lumiverse-text,inherit)}.gm-home[hidden]{display:none!important}.gm-home-title{display:flex;align-items:center;gap:7px;font-weight:650;font-size:12px;letter-spacing:.5px;text-transform:uppercase;opacity:.75;margin-bottom:8px}.gm-home-title svg{width:15px;height:15px}
 .gm-home-list,.gm-story-list{display:flex;gap:8px;flex-wrap:wrap}.gm-story-list{flex-direction:column}
 .gm-story{display:flex;flex-direction:column;align-items:flex-start;gap:1px;text-align:left;border:1px solid var(--lumiverse-border,rgba(127,127,127,.28));border-radius:10px;background:var(--lumiverse-bg-secondary,rgba(127,127,127,.08));color:inherit;padding:8px 12px;cursor:pointer;max-width:260px;min-width:0;font:inherit}.gm-story:hover{border-color:var(--lumiverse-primary,#8fb3d9)}.gm-story-name{font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}.gm-story-meta{font-size:11.5px;opacity:.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}.gm-story-list .gm-story{max-width:none;width:100%}
+.gm-talk textarea.gm-talk-input{min-height:72px;font:13px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}.gm-note{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;border-left:2px solid var(--gm-accent);padding:2px 0 2px 10px}.gm-note .gm-button{flex:none;padding:3px 9px;font-size:11.5px}
+.gm-talk-log{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--gm-rule);padding-top:10px}.gm-line{display:flex;flex-direction:column;gap:2px;padding:7px 10px;border-radius:9px;background:color-mix(in srgb,var(--gm-ink) 4%,transparent)}.gm-line-you{align-self:flex-end;max-width:88%;background:color-mix(in srgb,var(--gm-accent) 12%,transparent)}.gm-line-grimoire{align-self:flex-start;max-width:94%}.gm-line-who{font-size:10.5px;font-weight:650;letter-spacing:.5px;text-transform:uppercase;color:var(--gm-muted)}.gm-changes{margin:3px 0 0;padding-left:16px;font-size:11.5px;color:var(--gm-muted)}
 @media(prefers-color-scheme:light){.gm-app{--gm-bg:var(--lumiverse-bg,#faf8f3);--gm-card:var(--lumiverse-bg-secondary,#fffdf8);--gm-ink:var(--lumiverse-text,#25231e);--gm-muted:var(--lumiverse-text-muted,#6f6a60);--gm-accent:#2f6699;--gm-accent-ink:#f5f9fd;--gm-warn:#a06d10;--gm-good:#2f7a45;color-scheme:light}}
 @container(max-width:380px){.gm-grid{grid-template-columns:1fr}.gm-app h1{font-size:26px}}
 `;
@@ -48,7 +50,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.6.3";
+var VERSION = "0.7.0";
 
 // src/frontend.ts
 var ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8 3v18"/><path d="M12 8h3M12 12h3"/></svg>';
@@ -129,6 +131,7 @@ var STATUS_WORDS = { verified: "Read from your preset", waiting: "Waiting for a 
 var FIELD_WORDS = { datetime: "Date and time", date: "Date", time: "Time", location: "Place", present: "Who is here" };
 function setup(ctx) {
   let destroyed = false, snapshot = null, page = "chat", editing = false, confirmDelete = false;
+  let draft = "", draftKeep = false, draftChat = "";
   let refreshing = null, again = false, againForced = false, polling;
   let drawn = "", pendingDraw = false;
   const tab = ctx.ui.registerDrawerTab({ id: "grimoire", title: "Grimoire", shortName: "Grimoire", description: "The story behind your chat: where it is going, why, and how fast.", keywords: ["story", "notebook", "plot", "pace", "pacing"], iconSvg: ICON });
@@ -318,6 +321,102 @@ function setup(ctx) {
     const quick = snapshot?.settings.quick.enabled ? view.quick : undefined;
     if (snapshot?.settings.quick.enabled)
       card.insertBefore(el("p", quick && !quick.ok ? "gm-notice" : "gm-hint", !quick ? "Quick check is on. It runs after the next reply." : quick.ok ? `Quick check ran ${ago(quick.at)}.` : `The last quick check didn’t run: ${quick.error}`), check);
+    return card;
+  }
+  function renderTalk(view) {
+    const card = el("section", "gm-card gm-stack gm-talk");
+    if (draftChat !== view.chatId) {
+      draft = "";
+      draftKeep = false;
+      draftChat = view.chatId;
+    }
+    card.append(el("h4", "", "Talk to Grimoire"), el("p", "gm-hint", "Not happy with where the story is going? Tell Grimoire. It changes its plans and answers without spoilers. It only asks back if it isn’t sure what you mean."));
+    if (view.notes.length) {
+      const notes = el("div", "gm-stack gm-notes");
+      notes.append(el("p", "gm-label", "Your notes"));
+      for (const note of view.notes) {
+        const row = el("div", "gm-note");
+        row.append(el("p", "gm-small", note.text), button("Remove", async () => {
+          await act("unpin", { chatId: view.chatId, noteId: note.id });
+          notify("Note removed.");
+        }));
+        notes.append(row);
+      }
+      notes.append(el("p", "gm-hint", "Notes stay in force for every check-up and every reply until you remove them."));
+      card.append(notes);
+    }
+    const lines = view.talk.slice(-8);
+    if (lines.length) {
+      const log = el("div", "gm-talk-log");
+      for (const line of lines) {
+        const item = el("div", `gm-line gm-line-${line.from}`);
+        item.append(el("p", "gm-line-who", line.from === "you" ? "You" : "Grimoire"), el("p", "gm-small", line.text));
+        if (line.from === "you" && line.keep)
+          item.append(el("p", "gm-meta", "Asked to keep as a note"));
+        if (line.changes?.length) {
+          const ul = el("ul", "gm-changes");
+          for (const c of line.changes)
+            ul.append(el("li", "", c));
+          item.append(ul);
+        } else if (line.changes && !line.asked && line.from === "grimoire" && !line.text.startsWith("Undone"))
+          item.append(el("p", "gm-meta", "No plans changed."));
+        if (line.undone)
+          item.append(el("p", "gm-meta", "Undone"));
+        log.append(item);
+      }
+      card.append(log);
+    }
+    const busy = view.job?.status === "running";
+    const actions = el("div", "gm-row");
+    if (view.canUndo)
+      actions.append(button("Undo the last change", async () => {
+        await act("undo-talk", { chatId: view.chatId });
+        notify("The plans are back the way they were.");
+      }));
+    if (view.talk.length)
+      actions.append(button("Clear conversation", async () => {
+        await act("clear-talk", { chatId: view.chatId });
+      }));
+    if (actions.childElementCount)
+      card.append(actions);
+    const box = el("textarea", "gm-talk-input");
+    box.rows = 3;
+    box.maxLength = 1000;
+    box.value = draft;
+    box.placeholder = "Like “This is moving too fast” or “Give the side characters more to do”";
+    box.setAttribute("aria-label", "Message to Grimoire");
+    box.addEventListener("input", () => {
+      draft = box.value;
+    });
+    const keep = el("input");
+    keep.type = "checkbox";
+    keep.checked = draftKeep;
+    keep.style.width = "auto";
+    keep.addEventListener("change", () => {
+      draftKeep = keep.checked;
+    });
+    const keepRow = el("label", "gm-row gm-small");
+    keepRow.append(keep, document.createTextNode("Keep this as a lasting note"));
+    const send = button("Send", async () => {
+      const text = box.value.trim();
+      if (!text) {
+        notify("Write something for Grimoire first.", "error");
+        return;
+      }
+      await act("talk", { chatId: view.chatId, text, keep: keep.checked });
+      draft = "";
+      draftKeep = false;
+      render();
+      notify("Grimoire is thinking. One model request.");
+    }, "primary");
+    send.disabled = busy || !snapshot?.settings.connectionId;
+    box.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !send.disabled)
+        send.click();
+    });
+    card.append(box, keepRow, send);
+    if (busy && view.job?.kind !== "talk")
+      card.append(el("p", "gm-hint", "Grimoire is updating the notebook. You can send once it’s done."));
     return card;
   }
   function renderTracker(view) {
@@ -539,7 +638,7 @@ function setup(ctx) {
       body.append(el("p", "gm-hint", "The story changed direction. Grimoire is reworking its plans to fit, and holds older plans back meanwhile. Nothing it already set up is forgotten."));
     if (view.skipOffer && view.enabled)
       body.append(renderSkipOffer(view));
-    body.append(renderClock(view), renderPace(view), renderActions(view), renderTracker(view), renderGlance(view), renderSpoilers(view));
+    body.append(renderClock(view), renderPace(view), renderActions(view), renderTalk(view), renderTracker(view), renderGlance(view), renderSpoilers(view));
     const remove = button(confirmDelete ? "Tap again to delete this notebook" : "Delete this notebook", async () => {
       if (!confirmDelete) {
         confirmDelete = true;

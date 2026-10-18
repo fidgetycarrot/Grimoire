@@ -51,6 +51,8 @@ const FIELD_WORDS: Record<string, string> = { datetime: 'Date and time', date: '
 
 export function setup(ctx: SpindleFrontendContext) {
   let destroyed = false, snapshot: Snapshot | null = null, page: 'chat' | 'settings' = 'chat', editing = false, confirmDelete = false;
+  /** What you are writing to Grimoire, kept across redraws. */
+  let draft = '', draftKeep = false, draftChat = '';
   let refreshing: Promise<void> | null = null, again = false, againForced = false, polling: ReturnType<typeof setInterval> | undefined;
   /** What the panel last drew, so a refresh that changes nothing draws nothing. */
   let drawn = '', pendingDraw = false;
@@ -160,6 +162,56 @@ export function setup(ctx: SpindleFrontendContext) {
     if (snapshot?.settings.quick.enabled) card.insertBefore(el('p', quick && !quick.ok ? 'gm-notice' : 'gm-hint', !quick ? 'Quick check is on. It runs after the next reply.' : quick.ok ? `Quick check ran ${ago(quick.at)}.` : `The last quick check didn’t run: ${quick.error}`), check);
     return card;
   }
+  function renderTalk(view: ChatView) {
+    const card = el('section', 'gm-card gm-stack gm-talk');
+    if (draftChat !== view.chatId) { draft = ''; draftKeep = false; draftChat = view.chatId; }
+    card.append(el('h4', '', 'Talk to Grimoire'), el('p', 'gm-hint', 'Not happy with where the story is going? Tell Grimoire. It changes its plans and answers without spoilers. It only asks back if it isn’t sure what you mean.'));
+    if (view.notes.length) {
+      const notes = el('div', 'gm-stack gm-notes'); notes.append(el('p', 'gm-label', 'Your notes'));
+      for (const note of view.notes) {
+        const row = el('div', 'gm-note'); row.append(el('p', 'gm-small', note.text), button('Remove', async () => { await act('unpin', { chatId: view.chatId, noteId: note.id }); notify('Note removed.'); }));
+        notes.append(row);
+      }
+      notes.append(el('p', 'gm-hint', 'Notes stay in force for every check-up and every reply until you remove them.'));
+      card.append(notes);
+    }
+    const lines = view.talk.slice(-8);
+    if (lines.length) {
+      const log = el('div', 'gm-talk-log');
+      for (const line of lines) {
+        const item = el('div', `gm-line gm-line-${line.from}`);
+        item.append(el('p', 'gm-line-who', line.from === 'you' ? 'You' : 'Grimoire'), el('p', 'gm-small', line.text));
+        if (line.from === 'you' && line.keep) item.append(el('p', 'gm-meta', 'Asked to keep as a note'));
+        if (line.changes?.length) { const ul = el('ul', 'gm-changes'); for (const c of line.changes) ul.append(el('li', '', c)); item.append(ul); }
+        else if (line.changes && !line.asked && line.from === 'grimoire' && !line.text.startsWith('Undone')) item.append(el('p', 'gm-meta', 'No plans changed.'));
+        if (line.undone) item.append(el('p', 'gm-meta', 'Undone'));
+        log.append(item);
+      }
+      card.append(log);
+    }
+    const busy = view.job?.status === 'running';
+    const actions = el('div', 'gm-row');
+    if (view.canUndo) actions.append(button('Undo the last change', async () => { await act('undo-talk', { chatId: view.chatId }); notify('The plans are back the way they were.'); }));
+    if (view.talk.length) actions.append(button('Clear conversation', async () => { await act('clear-talk', { chatId: view.chatId }); }));
+    if (actions.childElementCount) card.append(actions);
+    const box = el('textarea', 'gm-talk-input'); box.rows = 3; box.maxLength = 1000; box.value = draft; box.placeholder = 'Like “This is moving too fast” or “Give the side characters more to do”';
+    box.setAttribute('aria-label', 'Message to Grimoire');
+    box.addEventListener('input', () => { draft = box.value; });
+    const keep = el('input'); keep.type = 'checkbox'; keep.checked = draftKeep; keep.style.width = 'auto';
+    keep.addEventListener('change', () => { draftKeep = keep.checked; });
+    const keepRow = el('label', 'gm-row gm-small'); keepRow.append(keep, document.createTextNode('Keep this as a lasting note'));
+    const send = button('Send', async () => {
+      const text = box.value.trim(); if (!text) { notify('Write something for Grimoire first.', 'error'); return; }
+      await act('talk', { chatId: view.chatId, text, keep: keep.checked });
+      draft = ''; draftKeep = false; render();
+      notify('Grimoire is thinking. One model request.');
+    }, 'primary');
+    send.disabled = busy || !snapshot?.settings.connectionId;
+    box.addEventListener('keydown', event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !send.disabled) send.click(); });
+    card.append(box, keepRow, send);
+    if (busy && view.job?.kind !== 'talk') card.append(el('p', 'gm-hint', 'Grimoire is updating the notebook. You can send once it’s done.'));
+    return card;
+  }
   function renderTracker(view: ChatView) {
     const d = details('What Grimoire reads from your preset');
     if (!view.checks.length) { d.body.append(el('p', 'gm-small', 'No tracker was found in this chat, so Grimoire keeps the story time itself. If your preset adds a status block later, a check-up can learn to read it.')); return d.root; }
@@ -253,7 +305,7 @@ export function setup(ctx: SpindleFrontendContext) {
     else if (view.behind && view.enabled) body.append(el('p', 'gm-hint', 'You went back in the chat, so Grimoire is using its notebook from before that point. Nothing from the removed replies counts.'));
     if (view.reworking && view.enabled) body.append(el('p', 'gm-hint', 'The story changed direction. Grimoire is reworking its plans to fit, and holds older plans back meanwhile. Nothing it already set up is forgotten.'));
     if (view.skipOffer && view.enabled) body.append(renderSkipOffer(view));
-    body.append(renderClock(view), renderPace(view), renderActions(view), renderTracker(view), renderGlance(view), renderSpoilers(view));
+    body.append(renderClock(view), renderPace(view), renderActions(view), renderTalk(view), renderTracker(view), renderGlance(view), renderSpoilers(view));
     const remove = button(confirmDelete ? 'Tap again to delete this notebook' : 'Delete this notebook', async () => {
       if (!confirmDelete) { confirmDelete = true; render(); setTimeout(() => { confirmDelete = false; render(); }, 5000); return; }
       confirmDelete = false; await act('remove', { chatId: view.chatId }); notify('Notebook deleted for this chat.');
