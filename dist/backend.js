@@ -1518,7 +1518,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.6.0";
+var VERSION = "0.6.1";
 var MAX_VERSIONS = 16;
 var DEFAULT_SETTINGS = { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto", quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true };
 var DEFAULT_PREFERENCES = { tone: "balanced", twist: true };
@@ -1682,11 +1682,14 @@ class NotebookController {
   }
   learnTracker(state, turns) {
     const found = guessRecipe(this.trackerSamples(turns));
-    const have = new Set(state.recipe.fields.map((f) => f.name)), time = have.has("datetime");
+    const broken = new Set(state.checks.filter((c) => c.status === "unavailable").map((c) => c.name));
+    const covers = (name) => found.fields.some((g) => g.name === name || name === "datetime" && (g.name === "date" || g.name === "time"));
+    const kept = state.recipe.fields.filter((f) => !broken.has(f.name) || !covers(f.name));
+    const have = new Set(kept.map((f) => f.name)), time = have.has("datetime");
     const extra = found.fields.filter((f) => !have.has(f.name) && !(time && (f.name === "date" || f.name === "time")));
     if (!extra.length)
       return false;
-    state.recipe = { fields: [...state.recipe.fields, ...extra], note: state.recipe.note || found.note };
+    state.recipe = { fields: [...kept, ...extra], note: state.recipe.note || found.note };
     return true;
   }
   repliesSince(live) {

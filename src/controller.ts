@@ -145,11 +145,14 @@ export class NotebookController {
   /** Try to find the tracker in code, for free. Returns true if one was found. */
   private learnTracker(state: ChatState, turns: Turn[]): boolean {
     const found = guessRecipe(this.trackerSamples(turns));
-    // Fill in only what is missing: a field the model described stays the model's.
-    const have = new Set(state.recipe.fields.map(f => f.name)), time = have.has('datetime');
+    // A field that stopped reading (a new preset, a changed format) may be replaced; one that still reads stays as it is.
+    const broken = new Set(state.checks.filter(c => c.status === 'unavailable').map(c => c.name));
+    const covers = (name: string) => found.fields.some(g => g.name === name || (name === 'datetime' && (g.name === 'date' || g.name === 'time')));
+    const kept = state.recipe.fields.filter(f => !broken.has(f.name) || !covers(f.name));
+    const have = new Set(kept.map(f => f.name)), time = have.has('datetime');
     const extra = found.fields.filter(f => !have.has(f.name) && !(time && (f.name === 'date' || f.name === 'time')));
     if (!extra.length) return false;
-    state.recipe = { fields: [...state.recipe.fields, ...extra], note: state.recipe.note || found.note };
+    state.recipe = { fields: [...kept, ...extra], note: state.recipe.note || found.note };
     return true;
   }
   private repliesSince(live: Live) { return live.turns.slice(this.fullVersion(live).covered.length).filter(t => t.role === 'assistant').length; }

@@ -326,6 +326,20 @@ describe('presets that show their tracker only after the first replies', () => {
     expect(view.checks.map(x => [x.name, x.status])).toEqual([['time', 'verified'], ['date', 'verified'], ['location', 'verified']]);
     expect(view.sources).toMatchObject({ day: 'tracker', hour: 'tracker' });
   });
+  test('switching presets: once the old tracker stops reading, a new common layout replaces it for free', async () => {
+    const { h, m, c } = await ready();
+    expect((await c.view('chat-1'))!.checks.every(x => x.status === 'verified')).toBe(true);
+    const fresh = (t: string) => `New preset prose.\n\n**Time:** ${t}\n**Location:** The north bank`;
+    for (const t of ['7:00 PM', '7:10 PM', '7:20 PM']) { h.add('user', 'Onward.'); h.add('assistant', fresh(t)); }
+    await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+    const view = (await c.view('chat-1'))!;
+    expect(view.checks.find(x => x.name === 'location')).toMatchObject({ status: 'verified', value: 'The north bank' });
+    expect(view.checks.find(x => x.name === 'time')).toMatchObject({ status: 'verified', value: '7:20 PM' });
+    expect(view.clockText).toBe('7:20 PM');
+    expect(view.clock!.hour).toBeCloseTo(19.33);
+    expect(view.sources).toMatchObject({ hour: 'tracker' });
+    expect(m.calls.filter(x => x.task === 'grimoire-checkup-v1').length).toBeLessThanOrEqual(1);
+  });
   test('a layout only a model can describe gets one look, with the raw replies but not the greeting', async () => {
     const fence = (time: string) => `Mira coils the rope.\n\n\`\`\`status\n{"when": "${time}", "where": "The ferry"}\n\`\`\``;
     const jsonRecipe = { fields: [{ name: 'time', type: 'time', source: { kind: 'json', path: 'when', region: { kind: 'fence', lang: 'status' } } }], note: 'json block' };
