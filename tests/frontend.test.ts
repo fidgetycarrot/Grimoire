@@ -47,6 +47,14 @@ function harness(chat: Partial<NonNullable<Snapshot['chat']>> | null = {}, setti
 }
 
 describe('the panel', () => {
+  test('the get-things-moving buttons send the kind of push, and nothing else', async () => {
+    const h = harness(); await tick();
+    expect(h.root.textContent).toContain('Story feeling stuck?');
+    h.button('Surprise me')!.click(); await tick();
+    expect(h.requests.find(r => r.action === 'push')!.input).toEqual({ chatId: 'chat-1', kind: 'surprise' });
+    h.button('Start a new chapter')!.click(); await tick();
+    expect(h.requests.filter(r => r.action === 'push').at(-1)!.input).toEqual({ chatId: 'chat-1', kind: 'chapter' });
+  });
   test('quick check answers show as numbers with plain labels', async () => {
     const h = harness({ quickLog: [{ reply: 7, at: Date.now(), ok: true, answers: { due_1: 0.91, new_turn: 0.82, story_shift: 0.03, rhythm: { choice: 'peak', confidence: 0.7 } }, marked: 1, checkup: true, shifted: false, held: 0 }] }, { quick: { enabled: true, connectionId: '', model: '' } }); await tick();
     const text = h.root.textContent!;

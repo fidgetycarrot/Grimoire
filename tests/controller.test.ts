@@ -860,3 +860,77 @@ describe('out-of-character talk in the chat', () => {
     expect(h.decisionCalls[0].state.playerMessage).toBe('I wave.');
   });
 });
+
+describe('getting a stalled story moving', () => {
+  const setup = (talk: (input: any) => unknown) => ready(host(), model({ create: created, checkup: input => ({ notebook: input.notebook, tracker: null }), talk }));
+  /** Oswin acts on his want: the ring storyline's next sign comes now. */
+  const oswinMoves = (input: any) => {
+    const notebook = structuredClone(input.notebook);
+    notebook.threads[0].steps[0] = { ...notebook.threads[0].steps[0], text: 'Oswin sends a boy with a polite note asking the player to visit the harbor office.', sign: 'A boy waits by the ferry with a sealed note.' };
+    return { reply: 'Ignored for a push.', notebook, push: { thread: 'stolen-ring', from: { kind: 'person', ref: 'harbor-master' } } };
+  };
+  test('a button press ties the push to the story, makes its sign due now, and says nothing about what it is', async () => {
+    const { m, c } = await setup(oswinMoves);
+    expect(await c.noteFor('chat-1')).not.toContain('A boy waits by the ferry');
+    await c.push('chat-1', 'person'); await c.waitForJobs();
+    const sent = m.calls.find(x => x.task === 'grimoire-talk-v1')!;
+    expect(sent.input.push).toBe('person');
+    expect(sent.messages[0].content).toContain('Grow it out of something already established');
+    const view = (await c.view('chat-1'))!;
+    expect(view.talk.map(l => l.text)).toEqual(['Get things moving: someone makes a move', 'Something is in motion. Watch for it over the next few replies.']);
+    expect(view.notebook!.threads[0]).toMatchObject({ speed: 'urgent', steps: [{ afterHours: 0, status: 'waiting' }, {}, {}] });
+    expect(view.summary).toBe('Last update: You asked to get things moving');
+    expect(await c.noteFor('chat-1')).toContain('A boy waits by the ferry');
+    expect(view.canUndo).toBe(true);
+    await c.undoTalk('chat-1');
+    expect(await c.noteFor('chat-1')).not.toContain('A boy waits by the ferry');
+  });
+  test('a push from nowhere is sent back, and a second one leaves the story alone', async () => {
+    const { m, c } = await setup(input => { const notebook = structuredClone(input.notebook);
+      notebook.people.push({ id: 'stranger', name: 'A stranger', aliases: [], role: 'drifter', wants: 'trouble', doing: 'arriving', hint: '', met: false, status: 'active' });
+      notebook.threads.push({ id: 'meteor', title: 'A meteor', speed: 'urgent', why: 'it falls', hint: 'the sky glows', people: ['stranger'], status: 'open', closedReason: '', ifFollowed: '', ifIgnored: '', steps: [{ id: 'glow', text: 'The sky glows.', sign: 'A light in the sky.', afterHours: 3, status: 'waiting' }] });
+      return { notebook, push: { thread: 'meteor', from: { kind: 'person', ref: 'stranger' } } }; });
+    await c.push('chat-1', 'surprise'); await c.waitForJobs();
+    const tries = m.calls.filter(x => x.task === 'grimoire-talk-v1');
+    expect(tries).toHaveLength(2);
+    expect(tries[1].messages.at(-1)!.content).toContain('already in the notebook');
+    const view = (await c.view('chat-1'))!;
+    expect(view.job).toMatchObject({ status: 'failed', label: 'Grimoire could not answer' });
+    expect(view.job!.error).toContain('wasn’t tied to anything already in the story');
+    expect(view.notebook!.threads.map(t => t.id)).toEqual(['stolen-ring', 'storm']);
+  });
+  test('each kind only grows from what fits it', async () => {
+    const { c } = await setup(input => ({ notebook: input.notebook, push: { thread: 'storm', from: { kind: 'event', ref: '0' } } }));
+    await c.push('chat-1', 'person'); await c.waitForJobs();
+    expect((await c.view('chat-1'))!.job).toMatchObject({ status: 'failed' });
+    const { c: other } = await setup(input => ({ notebook: input.notebook, push: { thread: 'storm', from: { kind: 'truth', ref: '0' } } }));
+    await other.push('chat-1', 'secret'); await other.waitForJobs();
+    const view = (await other.view('chat-1'))!;
+    expect(view.job).toMatchObject({ status: 'complete' });
+    expect(view.notebook!.threads[1].steps[0].afterHours).toBe(0);
+  });
+  test('a new chapter starts the arc over and can open after a jump in time, which undo takes back', async () => {
+    const { c } = await setup(input => { const notebook = structuredClone(input.notebook);
+      notebook.arc = { shape: 'kishotenketsu', stage: 'ki', turn: '' };
+      notebook.threads[1] = { ...notebook.threads[1], status: 'closed', closedReason: 'The storm passed.' };
+      notebook.threads.push({ id: 'ferry-repairs', title: 'Ferry repairs', speed: 'steady', why: 'the chain is worn', hint: 'the ferry needs work', people: ['mira'], status: 'open', closedReason: '', ifFollowed: '', ifIgnored: '', steps: [{ id: 'chain-slips', text: 'The chain slips.', sign: 'A grinding sound from the winch.', afterHours: 5, status: 'waiting' }] });
+      return { notebook, push: { thread: 'ferry-repairs', from: { kind: 'person', ref: 'mira' } }, skipHours: 48 }; });
+    await c.push('chat-1', 'chapter'); await c.waitForJobs();
+    let view = (await c.view('chat-1'))!;
+    expect(view.talk.at(-1)!.text).toBe('A new chapter is set. It starts with the next reply, about 2 days later.');
+    expect(view.skipHours).toBe(48);
+    expect(view.notebook!.arc.stage).toBe('ki');
+    expect(await c.noteFor('chat-1')).toContain('A grinding sound from the winch');
+    await c.undoTalk('chat-1');
+    view = (await c.view('chat-1'))!;
+    expect(view.skipHours).toBe(0);
+    expect(view.notebook!.threads.map(t => t.id)).toEqual(['stolen-ring', 'storm']);
+  });
+  test('telling Grimoire you are bored does the same, with the same spoiler-free answer', async () => {
+    const { c } = await setup(input => ({ ...oswinMoves(input), reply: 'Oswin will send for you!', pushKind: 'person' }));
+    await c.talk('chat-1', 'I am bored, this has stalled.', false); await c.waitForJobs();
+    const view = (await c.view('chat-1'))!;
+    expect(view.talk.at(-1)!.text).toBe('Something is in motion. Watch for it over the next few replies.');
+    expect(view.notebook!.threads[0].speed).toBe('urgent');
+  });
+});

@@ -19,6 +19,7 @@ export async function handle(controller: NotebookController, action: string, inp
     case 'remove': return controller.remove(string(data.chatId, 'Chat'));
     case 'stories': return controller.stories();
     case 'talk': return controller.talk(string(data.chatId, 'Chat'), data.text, data.keep);
+    case 'push': return controller.push(string(data.chatId, 'Chat'), data.kind);
     case 'undo-talk': return controller.undoTalk(string(data.chatId, 'Chat'));
     case 'unpin': return controller.unpin(string(data.chatId, 'Chat'), data.noteId);
     case 'clear-talk': return controller.clearTalk(string(data.chatId, 'Chat'));

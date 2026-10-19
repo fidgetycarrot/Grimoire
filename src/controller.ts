@@ -1,12 +1,13 @@
 import type { SpindleAPI, LlmMessageDTO, InterceptorContextDTO, InterceptorResultDTO } from 'lumiverse-spindle-types';
-import { absoluteHours, advanceClock, describeClock, durationHours, type StoryClock } from './clock';
+import { absoluteHours, advanceClock, describeClock, describeDuration, durationHours, type StoryClock } from './clock';
 import { conversation, fingerprints, newestMatching, covers, planHistory, readable, storyReplies, told, type Piece, type Turn } from './history';
 import { splitOoc } from './ooc';
 import { askJson, askModel, ModelError, type Ask } from './model';
 import { buildNote, liveClock, paceLine, type ClockSources } from './note';
-import { dueThreads, fillReplies, keepTimes, mergeRevision, NotebookError, stamp, validateNotebook, waitsFor, withoutTimes, type Moment, type Pace, type Preferences } from './notebook';
+import { dueThreads, fillReplies, keepTimes, mergeRevision, NotebookError, stamp, validateNotebook, waitsFor, withoutTimes, type Moment, type Notebook, type Pace, type Preferences } from './notebook';
 import { checkupMessages, creationMessages, digestMessages, talkMessages, type Material } from './prompts';
 import { describeChanges, openExchange } from './talk';
+import { checkPush, launchPush, PUSH_KINDS, type PushKind } from './push';
 import { plain, plainBlock, tidyNotebook } from './tidy';
 import { applyQuick, quickError, quickQuestions, quickState } from './quick';
 import { glance, skipOffer } from './skip';
@@ -17,6 +18,14 @@ import { DEFAULT_PREFERENCES, DEFAULT_SETTINGS, MAX_VERSIONS, QUICK_LOG, TALK_LI
 const record = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
 const PACES: Pace[] = ['auto', 'quiet', 'fast'];
 const TALK_REASON = 'Changed after you talked to Grimoire';
+const PUSH_REASON = 'You asked to get things moving';
+const CHAPTER_REASON = 'You started a new chapter';
+const PUSH_LABELS: Record<PushKind, string> = { person: 'Get things moving: someone makes a move', secret: 'Get things moving: a secret starts to surface', consequence: 'Get things moving: something catches up with me', surprise: 'Get things moving: surprise me', chapter: 'Start a new chapter' };
+/** Fixed words, never the model's: a push must not give away what it is. */
+function pushReply(kind: PushKind, skip: number): string {
+  if (kind === 'chapter') return `A new chapter is set. It starts with the next reply${skip ? `, about ${describeDuration(skip)} later` : ''}.`;
+  return 'Something is in motion. Watch for it over the next few replies.';
+}
 function talkLines(value: unknown): TalkLine[] {
   if (!Array.isArray(value)) return [];
   return value.slice(-TALK_LIMITS.lines).flatMap((v): TalkLine[] => {
@@ -25,7 +34,7 @@ function talkLines(value: unknown): TalkLine[] {
     return [{ from: x.from, text: x.text.slice(0, 2000), at: Number(x.at) || 0,
       ...(x.keep === true ? { keep: true as const } : {}), ...(x.asked === true ? { asked: true as const } : {}), ...(x.undone === true ? { undone: true as const } : {}),
       ...(Array.isArray(x.changes) ? { changes: x.changes.filter((c): c is string => typeof c === 'string').slice(0, 20) } : {}),
-      ...(Number(x.versionAt) > 0 ? { versionAt: Number(x.versionAt) } : {}), ...(typeof x.noteId === 'string' ? { noteId: x.noteId } : {}) }];
+      ...(Number(x.versionAt) > 0 ? { versionAt: Number(x.versionAt) } : {}), ...(Number(x.skipHours) > 0 ? { skipHours: Number(x.skipHours) } : {}), ...(typeof x.noteId === 'string' ? { noteId: x.noteId } : {}) }];
   });
 }
 function quickLog(value: unknown): QuickRecord[] {
@@ -462,6 +471,14 @@ export class NotebookController {
     const message = typeof text === 'string' ? text.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim() : '';
     if (!message) throw new Error('Write something for Grimoire first.');
     if (message.length > TALK_LIMITS.message) throw new Error(`Keep it under ${TALK_LIMITS.message} characters.`);
+    return this.startTalk(chatId, message, keep === true, null);
+  }
+  /** The buttons: get a stalled story moving, or start a new chapter. One model request. */
+  async push(chatId: string, kind: unknown): Promise<Job> {
+    if (!PUSH_KINDS.includes(kind as PushKind)) throw new Error('Pick how to get things moving.');
+    return this.startTalk(chatId, PUSH_LABELS[kind as PushKind], false, kind as PushKind);
+  }
+  private startTalk(chatId: string, message: string, keep: boolean, push: PushKind | null): Promise<Job> {
     return this.serial(chatId, async () => {
       const state = await this.load(chatId);
       if (!state?.versions.length) throw new Error('Write a notebook for this chat first.');
@@ -469,46 +486,62 @@ export class NotebookController {
       const settings = await this.settings(), ask = this.asker(settings);
       const live = await this.live(state, await this.api.chat.getMessages(chatId));
       if (!live) throw new Error('Write a notebook for this chat first.');
-      state.talk = [...state.talk, { from: 'you' as const, text: message, at: Date.now(), ...(keep === true ? { keep: true as const } : {}) }].slice(-TALK_LIMITS.lines);
-      const { job, signal } = this.startJob(state, 'talk', 'Grimoire is thinking');
+      state.talk = [...state.talk, { from: 'you' as const, text: message, at: Date.now(), ...(keep ? { keep: true as const } : {}) }].slice(-TALK_LIMITS.lines);
+      const { job, signal } = this.startJob(state, 'talk', push ? 'Grimoire is setting something in motion' : 'Grimoire is thinking');
       await this.save(state); this.changed();
       const base = live.version, read = live.prints.slice();
-      const open = openExchange(state.talk), earlier = state.talk.slice(0, state.talk.length - open.length).slice(-6);
+      // A button press is its own request, not part of a conversation.
+      const open = push ? state.talk.slice(-1) : openExchange(state.talk), earlier = state.talk.slice(0, state.talk.length - open.length).slice(-6);
       const pinning = open.some(line => line.from === 'you' && line.keep);
       const input = {
         notebook: base.notebook, preferences: state.preferences, storyTime: describeClock(live.clock),
         chat: live.turns.slice(-12).map(t => ({ role: t.role, content: told(t, 4000) })),
         earlier: earlier.map(l => ({ from: l.from, text: l.text })), exchange: open.map(l => ({ from: l.from, text: l.text })),
-        notes: state.notes.map(n => n.text), keep: pinning,
+        notes: state.notes.map(n => n.text), keep: pinning, push,
       };
       this.track((async () => {
         try {
           const result = await askJson(ask, talkMessages(input), value => {
             const output = record(value);
-            const reply = plainBlock(output.reply, 600);
+            const asked = !push && output.ask === true;
+            const kind: PushKind | null = push ?? (!asked && output.push && PUSH_KINDS.includes(output.pushKind as PushKind) ? output.pushKind as PushKind : null);
+            const reply = kind ? pushReply(kind, 0) : plainBlock(output.reply, 600);
             if (!reply) throw new NotebookError('"reply" is empty. Answer the player in one or two short sentences.');
-            const asked = output.ask === true;
-            const notebook = !asked && output.notebook && typeof output.notebook === 'object' ? mergeRevision(base.notebook, validateNotebook(tidyNotebook(output.notebook, base.notebook)), live.moment) : null;
-            return { reply, asked, notebook, note: !asked && pinning ? plain(output.note, TALK_LIMITS.note) : '' };
+            if (kind && !(output.notebook && typeof output.notebook === 'object')) throw new NotebookError('Return the revised notebook and "push".');
+            let notebook: Notebook | null = null, skip = 0, moment = live.moment, clock = live.clock;
+            if (!asked && output.notebook && typeof output.notebook === 'object') {
+              let revised = validateNotebook(tidyNotebook(output.notebook, base.notebook));
+              if (kind) revised = launchPush(revised, checkPush(base.notebook, revised, output.push, kind));
+              // A new chapter may open after a jump in time. Only the parts of the clock Grimoire owns move; the narrator is told.
+              if (kind === 'chapter') skip = Math.min(720, Math.max(0, Math.round(Number(output.skipHours) || 0)));
+              if (skip) {
+                const moved = advanceClock(live.clock, skip);
+                clock = { day: live.sources.day === 'tracker' ? live.clock.day : moved.day, hour: live.sources.hour === 'tracker' ? live.clock.hour : moved.hour, label: '' };
+                moment = { ...live.moment, hours: absoluteHours(clock) };
+              }
+              notebook = { ...mergeRevision(base.notebook, revised, moment), ...(skip ? { clock } : {}) };
+            }
+            return { reply: kind ? pushReply(kind, skip) : reply, asked, notebook, kind, skip, note: !asked && pinning ? plain(output.note, TALK_LIMITS.note) : '' };
           }, signal);
           await this.serial(chatId, async () => {
             const current = await this.load(chatId);
             if (!current || current.job?.id !== job.id) return;
             const prints = await fingerprints(conversation(await this.api.chat.getMessages(chatId)));
             const line: TalkLine = { from: 'grimoire', text: result.reply, at: Date.now(), ...(result.asked ? { asked: true as const } : {}) };
-            // The chat it read must still be the chat; otherwise the answer stands but the plans wait for the next check-up.
+            // The chat it read must still be the chat; otherwise the answer stands but the plans wait.
             const fits = covers(read, prints);
             if (result.notebook && fits) {
               const changes = describeChanges(base.notebook, result.notebook);
               line.changes = changes;
-              if (changes.length) {
+              if (changes.length || result.kind) {
                 const at = Date.now();
                 const kept = current.versions.filter((v, i) => i === 0 || covers(v.covered, read));
-                current.versions = prune([...kept, { notebook: result.notebook, covered: read, at, reason: TALK_REASON, ...(live.values.location ? { location: live.values.location } : {}) }]);
+                current.versions = prune([...kept, { notebook: result.notebook, covered: read, at, reason: result.kind === 'chapter' ? CHAPTER_REASON : result.kind ? PUSH_REASON : TALK_REASON, ...(live.values.location ? { location: live.values.location } : {}) }]);
                 line.versionAt = at;
+                if (result.skip) { current.skipHours = (current.skipHours || 0) + result.skip; current.skipTurn = live.turns.length; line.skipHours = result.skip; }
               }
             } else if (!result.asked) line.changes = [];
-            if (result.notebook && !fits) line.text += ' The chat changed while I was thinking, so I left the plans as they were. Tell me again and I will apply it.';
+            if (result.notebook && !fits) line.text = result.kind ? 'The chat changed while I was working, so nothing was set in motion. Try again.' : `${line.text} The chat changed while I was thinking, so I left the plans as they were. Tell me again and I will apply it.`;
             if (!result.asked && pinning) {
               const fallback = open.filter(l => l.from === 'you' && l.keep).at(-1)?.text ?? '';
               const text = result.note || plain(fallback, TALK_LIMITS.note);
@@ -519,7 +552,7 @@ export class NotebookController {
               }
             }
             current.talk = [...current.talk, line].slice(-TALK_LIMITS.lines);
-            current.job = { ...job, status: 'complete', label: 'Grimoire answered' };
+            current.job = { ...job, status: 'complete', label: result.kind ? 'Something is in motion' : 'Grimoire answered' };
             await this.save(current);
           });
         } catch (error) { await this.failJob(chatId, job, error); }
@@ -532,7 +565,7 @@ export class NotebookController {
   private undoable(state: ChatState): TalkLine | null {
     const line = [...state.talk].reverse().find(l => l.from === 'grimoire' && !l.asked);
     const last = state.versions.at(-1);
-    return line?.versionAt && !line.undone && last?.reason === TALK_REASON && last.at === line.versionAt ? line : null;
+    return line?.versionAt && !line.undone && [TALK_REASON, PUSH_REASON, CHAPTER_REASON].includes(last?.reason ?? '') && last!.at === line.versionAt ? line : null;
   }
   /** Put the plans back as they were before the last answer, and unpin its note. */
   async undoTalk(chatId: string) {
@@ -544,6 +577,7 @@ export class NotebookController {
       if (!line) throw new Error('There is nothing to undo. The story has moved on since then.');
       state.versions = state.versions.slice(0, -1);
       if (line.noteId) state.notes = state.notes.filter(n => n.id !== line.noteId);
+      if (line.skipHours) state.skipHours = Math.max(0, (state.skipHours || 0) - line.skipHours);
       line.undone = true;
       state.talk = [...state.talk, { from: 'grimoire' as const, text: 'Undone. The plans are back the way they were.', at: Date.now(), changes: [] }].slice(-TALK_LIMITS.lines);
       await this.save(state);

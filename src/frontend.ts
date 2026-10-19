@@ -162,6 +162,21 @@ export function setup(ctx: SpindleFrontendContext) {
     if (snapshot?.settings.quick.enabled) card.insertBefore(el('p', quick && !quick.ok ? 'gm-notice' : 'gm-hint', !quick ? 'Quick check is on. It runs after the next reply.' : quick.ok ? `Quick check ran ${ago(quick.at)}.` : `The last quick check didn’t run: ${quick.error}`), check);
     return card;
   }
+  const PUSHES: Array<[string, string]> = [['person', 'Someone makes a move'], ['secret', 'A secret starts to surface'], ['consequence', 'Something catches up with me'], ['surprise', 'Surprise me']];
+  function renderMoving(view: ChatView) {
+    const card = el('section', 'gm-card gm-stack');
+    card.append(el('h4', '', 'Story feeling stuck?'), el('p', 'gm-hint', 'Grimoire picks something already in your story and sets it in motion. It starts with a small sign and builds over the next few replies. You won’t be told what it is.'));
+    const busy = view.job?.status === 'running' || !snapshot?.settings.connectionId;
+    const grid = el('div', 'gm-grid');
+    for (const [kind, label] of PUSHES) {
+      const b = button(label, async () => { await act('push', { chatId: view.chatId, kind }); notify('Setting something in motion. One model request.'); });
+      b.disabled = busy; grid.append(b);
+    }
+    const chapter = button('Start a new chapter', async () => { await act('push', { chatId: view.chatId, kind: 'chapter' }); notify('Starting a new chapter. One model request.'); });
+    chapter.disabled = busy; chapter.classList.add('gm-wide');
+    card.append(grid, chapter, el('p', 'gm-hint', 'A new chapter wraps up what’s run its course and starts the next part from where things stand, sometimes after a jump in time. You can undo either one below, as long as no reply has come since.'));
+    return card;
+  }
   function renderTalk(view: ChatView) {
     const card = el('section', 'gm-card gm-stack gm-talk');
     if (draftChat !== view.chatId) { draft = ''; draftKeep = false; draftChat = view.chatId; }
@@ -331,7 +346,7 @@ export function setup(ctx: SpindleFrontendContext) {
     else if (view.behind && view.enabled) body.append(el('p', 'gm-hint', 'You went back in the chat, so Grimoire is using its notebook from before that point. Nothing from the removed replies counts.'));
     if (view.reworking && view.enabled) body.append(el('p', 'gm-hint', 'The story changed direction. Grimoire is reworking its plans to fit, and holds older plans back meanwhile. Nothing it already set up is forgotten.'));
     if (view.skipOffer && view.enabled) body.append(renderSkipOffer(view));
-    body.append(renderClock(view), renderPace(view), renderActions(view), renderTalk(view), renderTracker(view), renderGlance(view));
+    body.append(renderClock(view), renderPace(view), renderActions(view), renderMoving(view), renderTalk(view), renderTracker(view), renderGlance(view));
     if (snapshot?.settings.quick.enabled || view.quickLog?.length) body.append(renderQuickLog(view));
     body.append(renderSpoilers(view));
     const remove = button(confirmDelete ? 'Tap again to delete this notebook' : 'Delete this notebook', async () => {
