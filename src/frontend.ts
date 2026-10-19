@@ -128,69 +128,45 @@ export function setup(ctx: SpindleFrontendContext) {
     card.append(button('Not now', async () => { await act('dismiss-skip', { chatId: view.chatId }); }));
     return card;
   }
-  function renderClock(view: ChatView) {
+  /** Where the story stands: time, pace, and when Grimoire last updated. */
+  function renderNow(view: ChatView) {
     const card = el('section', 'gm-card gm-stack');
     const s = view.sources;
     const source = !s ? '' : s.day === 'tracker' && s.hour === 'tracker' ? 'From your preset’s tracker' : s.day === 'tracker' || s.hour === 'tracker' ? `${s.day === 'tracker' ? 'Day' : 'Hour'} from your preset’s tracker, the rest kept by Grimoire` : 'Kept by Grimoire, updated at check-ups';
     card.append(el('h4', '', 'Story time'), el('p', 'gm-clock', view.clockText || 'Not set yet'), el('p', 'gm-source', `${source}${s && s.hour !== 'unknown' && !s.exact ? ' · approximate' : ''}`));
     if (view.skipHours) card.append(el('p', 'gm-hint', `The narrator will be told that about ${describeDuration(view.skipHours)} have passed.`));
-    return card;
-  }
-  function renderPace(view: ChatView) {
-    const card = el('section', 'gm-card gm-stack'), group = el('div', 'gm-pace'); group.setAttribute('role', 'group'); group.setAttribute('aria-label', 'Story pace');
+    const group = el('div', 'gm-pace'); group.setAttribute('role', 'group'); group.setAttribute('aria-label', 'Story pace');
     for (const pace of ORDER) {
       const b = el('button', '', PACE_LABELS[pace].name); b.type = 'button'; b.setAttribute('aria-pressed', String(view.pace === pace));
       b.addEventListener('click', () => { void act('pace', { chatId: view.chatId, pace }).catch(error => notify(error.message, 'error')); });
       group.append(b);
     }
-    card.append(el('h4', '', 'Pace'), group, el('p', 'gm-hint', PACE_LABELS[view.pace].help));
-    return card;
-  }
-  function renderActions(view: ChatView) {
-    const card = el('section', 'gm-card gm-stack');
-    const amount = el('input'); amount.type = 'number'; amount.min = '1'; amount.max = '999'; amount.value = '1';
-    const unit = select([['hours', 'hours'], ['days', 'days'], ['weeks', 'weeks']], 'days');
-    const busy = view.job?.status === 'running';
-    const check = button('Check now', async () => { await act('checkup', { chatId: view.chatId }); notify('Checking the story against the chat. One model request.'); });
-    const skip = button('Skip time', async () => { const hours = await act<number>('skip', { chatId: view.chatId, amount: Number(amount.value), unit: unit.value }); notify(`Skipped about ${describeDuration(hours)}. The narrator will open with that gap.`); });
-    check.disabled = busy || !view.enabled; skip.disabled = busy || !view.enabled;
-    const skipRow = el('div', 'gm-grid'); skipRow.append(labeled('Skip ahead by', amount), labeled('Unit', unit));
-    card.append(el('h4', '', 'Story controls'), el('p', 'gm-small', view.summary || 'No updates yet.'),
-      el('p', 'gm-hint', `${view.repliesSinceCheck} ${view.repliesSinceCheck === 1 ? 'reply' : 'replies'} since the last update${view.updatedAt ? ` · saved ${ago(view.updatedAt)}` : ''}`),
-      check, el('p', 'gm-hint', 'Check now reads the latest chat and updates the plan. Check-ups also run on their own when a scene changes, time jumps, or enough replies pass.'), skipRow, skip);
+    const pace = el('div', 'gm-stack gm-sub'); pace.append(el('h4', '', 'Pace'), group, el('p', 'gm-hint', PACE_LABELS[view.pace].help));
+    const status = el('div', 'gm-sub gm-stack');
+    status.append(el('p', 'gm-small', view.summary || 'No updates yet.'),
+      el('p', 'gm-hint', `${view.repliesSinceCheck} ${view.repliesSinceCheck === 1 ? 'reply' : 'replies'} since the last update${view.updatedAt ? ` · saved ${ago(view.updatedAt)}` : ''}`));
     const quick = snapshot?.settings.quick.enabled ? view.quick : undefined;
-    if (snapshot?.settings.quick.enabled) card.insertBefore(el('p', quick && !quick.ok ? 'gm-notice' : 'gm-hint', !quick ? 'Quick check is on. It runs after the next reply.' : quick.ok ? `Quick check ran ${ago(quick.at)}.` : `The last quick check didn’t run: ${quick.error}`), check);
+    if (snapshot?.settings.quick.enabled) status.append(el('p', quick && !quick.ok ? 'gm-notice' : 'gm-hint', !quick ? 'Quick check is on. It runs after the next reply.' : quick.ok ? `Quick check ran ${ago(quick.at)}.` : `The last quick check didn’t run: ${quick.error}`));
+    card.append(pace, status);
     return card;
   }
   const PUSHES: Array<[string, string]> = [['person', 'Someone makes a move'], ['secret', 'A secret starts to surface'], ['consequence', 'Something catches up with me'], ['surprise', 'Surprise me']];
-  function renderMoving(view: ChatView) {
-    const card = el('section', 'gm-card gm-stack');
-    card.append(el('h4', '', 'Story feeling stuck?'), el('p', 'gm-hint', 'Grimoire picks something already in your story and sets it in motion. It starts with a small sign and builds over the next few replies. You won’t be told what it is.'));
-    const busy = view.job?.status === 'running' || !snapshot?.settings.connectionId;
-    const grid = el('div', 'gm-grid');
-    for (const [kind, label] of PUSHES) {
-      const b = button(label, async () => { await act('push', { chatId: view.chatId, kind }); notify('Setting something in motion. One model request.'); });
-      b.disabled = busy; grid.append(b);
-    }
-    const chapter = button('Start a new chapter', async () => { await act('push', { chatId: view.chatId, kind: 'chapter' }); notify('Starting a new chapter. One model request.'); });
-    chapter.disabled = busy; chapter.classList.add('gm-wide');
-    card.append(grid, chapter, el('p', 'gm-hint', 'A new chapter wraps up what’s run its course and starts the next part from where things stand, sometimes after a jump in time. You can undo either one below, as long as no reply has come since.'));
-    return card;
-  }
-  function renderTalk(view: ChatView) {
+  /** Your say as co-author: talk, pinned notes, and the buttons for a stalled story. */
+  function renderSteer(view: ChatView) {
     const card = el('section', 'gm-card gm-stack gm-talk');
     if (draftChat !== view.chatId) { draft = ''; draftKeep = false; draftChat = view.chatId; }
-    card.append(el('h4', '', 'Talk to Grimoire'), el('p', 'gm-hint', 'Not happy with where the story is going? Tell Grimoire. It changes its plans and answers without spoilers. It only asks back if it isn’t sure what you mean.'));
+    const busy = view.job?.status === 'running', offline = !snapshot?.settings.connectionId;
+    card.append(el('h4', '', 'Talk to Grimoire'), el('p', 'gm-hint', 'Tell Grimoire what you’d like from the story. It changes its plans without telling you what they are, and only asks back if it isn’t sure what you mean.'));
     if (view.notes.length) {
       const notes = el('div', 'gm-stack gm-notes'); notes.append(el('p', 'gm-label', 'Your notes'));
       for (const note of view.notes) {
         const row = el('div', 'gm-note'); row.append(el('p', 'gm-small', note.text), button('Remove', async () => { await act('unpin', { chatId: view.chatId, noteId: note.id }); notify('Note removed.'); }));
         notes.append(row);
       }
-      notes.append(el('p', 'gm-hint', 'Notes stay in force for every check-up and every reply until you remove them.'));
+      notes.append(el('p', 'gm-hint', 'Notes steer every check-up and every reply until you remove them.'));
       card.append(notes);
     }
-    const lines = view.talk.slice(-8);
+    const lines = view.talk.slice(-6);
     if (lines.length) {
       const log = el('div', 'gm-talk-log');
       for (const line of lines) {
@@ -202,13 +178,11 @@ export function setup(ctx: SpindleFrontendContext) {
         if (line.undone) item.append(el('p', 'gm-meta', 'Undone'));
         log.append(item);
       }
-      card.append(log);
+      const actions = el('div', 'gm-row gm-quiet');
+      if (view.canUndo) actions.append(button('Undo the last change', async () => { await act('undo-talk', { chatId: view.chatId }); notify('The plans are back the way they were.'); }));
+      actions.append(button('Clear conversation', async () => { await act('clear-talk', { chatId: view.chatId }); }));
+      card.append(log, actions);
     }
-    const busy = view.job?.status === 'running';
-    const actions = el('div', 'gm-row');
-    if (view.canUndo) actions.append(button('Undo the last change', async () => { await act('undo-talk', { chatId: view.chatId }); notify('The plans are back the way they were.'); }));
-    if (view.talk.length) actions.append(button('Clear conversation', async () => { await act('clear-talk', { chatId: view.chatId }); }));
-    if (actions.childElementCount) card.append(actions);
     const box = el('textarea', 'gm-talk-input'); box.rows = 3; box.maxLength = 1000; box.value = draft; box.placeholder = 'Like “This is moving too fast” or “Give the side characters more to do”';
     box.setAttribute('aria-label', 'Message to Grimoire');
     box.addEventListener('input', () => { draft = box.value; });
@@ -221,18 +195,68 @@ export function setup(ctx: SpindleFrontendContext) {
       draft = ''; draftKeep = false; render();
       notify('Grimoire is thinking. One model request.');
     }, 'primary');
-    send.disabled = busy || !snapshot?.settings.connectionId;
+    send.disabled = busy || offline;
     box.addEventListener('keydown', event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !send.disabled) send.click(); });
-    card.append(box, keepRow, send);
+    const sendRow = el('div', 'gm-row gm-spread'); sendRow.append(keepRow, send);
+    card.append(box, sendRow);
     if (busy && view.job?.kind !== 'talk') card.append(el('p', 'gm-hint', 'Grimoire is updating the notebook. You can send once it’s done.'));
+    // A stalled story: say so in the box above, or tap one of these.
+    const stuck = el('div', 'gm-sub gm-stack');
+    stuck.append(el('p', 'gm-label', 'Story feeling stuck?'), el('p', 'gm-hint', 'Say “I’m bored” above, or tap one. Grimoire sets something already in your story in motion. It starts small, and you won’t be told what it is. You can undo it until the next reply.'));
+    const chips = el('div', 'gm-chips');
+    for (const [kind, label] of [...PUSHES, ['chapter', 'Start a new chapter'] as [string, string]]) {
+      const b = button(label, async () => { await act('push', { chatId: view.chatId, kind }); notify(kind === 'chapter' ? 'Starting a new chapter. One model request.' : 'Setting something in motion. One model request.'); });
+      b.disabled = busy || offline; chips.append(b);
+      if (kind === 'chapter') b.title = 'Wraps up what’s run its course and starts the next part from where things stand, sometimes after a jump in time.';
+    }
+    stuck.append(chips);
+    card.append(stuck);
     return card;
+  }
+  /** Things you seldom need: a check-up on demand, a manual time skip, deleting the notebook. */
+  function renderMore(view: ChatView) {
+    const d = details('More: check-ups, time skips, delete');
+    const amount = el('input'); amount.type = 'number'; amount.min = '1'; amount.max = '999'; amount.value = '1';
+    const unit = select([['hours', 'hours'], ['days', 'days'], ['weeks', 'weeks']], 'days');
+    const busy = view.job?.status === 'running';
+    const check = button('Check now', async () => { await act('checkup', { chatId: view.chatId }); notify('Checking the story against the chat. One model request.'); });
+    const skip = button('Skip time', async () => { const hours = await act<number>('skip', { chatId: view.chatId, amount: Number(amount.value), unit: unit.value }); notify(`Skipped about ${describeDuration(hours)}. The narrator will open with that gap.`); });
+    check.disabled = busy || !view.enabled; skip.disabled = busy || !view.enabled;
+    const skipRow = el('div', 'gm-grid'); skipRow.append(labeled('Skip ahead by', amount), labeled('Unit', unit));
+    const remove = button(confirmDelete ? 'Tap again to delete this notebook' : 'Delete this notebook', async () => {
+      if (!confirmDelete) { confirmDelete = true; render(); setTimeout(() => { confirmDelete = false; render(); }, 5000); return; }
+      confirmDelete = false; await act('remove', { chatId: view.chatId }); notify('Notebook deleted for this chat.');
+    }, 'danger');
+    d.body.append(check, el('p', 'gm-hint', 'Reads the latest chat and updates the plan. Check-ups also run on their own when a scene changes, time jumps, or enough replies pass.'),
+      el('div', 'gm-sub'), skipRow, skip, el('div', 'gm-sub'), remove);
+    return d.root;
   }
   const QUICK_WORDS: Array<[RegExp, string]> = [[/^due_/, 'Planned development shown'], [/^moment_/, 'Possible moment happened'], [/^detail_mentioned$/, 'Breadcrumb mentioned'], [/^echo_heard$/, 'Echo heard'], [/^callback_/, 'Breadcrumb paid off'], [/^fits_/, 'Storyline still fits'], [/^story_shift$/, 'Change of direction'], [/^new_turn$/, 'Something new']];
   const RHYTHM_WORDS: Record<string, string> = { calm: 'calm', rising: 'building', peak: 'big moment', aftermath: 'aftermath', stalled: 'stalled' };
-  function renderQuickLog(view: ChatView) {
-    const d = details('Quick check answers · no spoilers');
+  const STAGE_WORDS: Record<string, string> = { setup: 'setup', rising: 'rising action', climax: 'climax', resolution: 'resolution', ki: 'introduction', sho: 'development', ten: 'the turn', ketsu: 'bringing it together' };
+  const part = (title: string) => { const s = el('section', 'gm-stack gm-part'); s.append(el('h4', '', title)); return s; };
+  function glancePart(view: ChatView) {
+    const s = part('At a glance'), g = view.glance;
+    if (!g) return s;
+    const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+    const speeds = [g.threads.urgent && `${g.threads.urgent} urgent`, g.threads.steady && `${g.threads.steady} steady`, g.threads.slow && `${g.threads.slow} slow`].filter(Boolean).join(', ');
+    const rows: Array<[string, string]> = [
+      ['Story shape', `${g.shape === 'kishotenketsu' ? 'Kishōtenketsu' : 'Conflict'}, ${STAGE_WORDS[g.stage] ?? g.stage}`],
+      ['Story threads', `${plural(g.threads.open, 'open thread')}${speeds ? ` (${speeds})` : ''}${g.threads.closed ? `, ${g.threads.closed} finished` : ''}`],
+      ['Next development', g.dueNow ? `${plural(g.dueNow, 'development')} ready now` : g.nextInReplies === null ? 'Nothing planned yet' : `within about ${plural(g.nextInReplies, 'reply', 'replies')}, sooner if story time moves`],
+      ['Breadcrumbs', `${g.seeds.planted} planted, ${g.seeds.waiting} waiting, ${g.seeds.paid} paid off${g.seeds.echo ? `, ${g.seeds.echo} still out in the world` : ''}`],
+      ['Planned moments', `${g.moments.possible} possible (${g.moments.big} big)${g.moments.happened ? `, ${g.moments.happened} happened` : ''}`],
+      ['People', `${g.people.total}, ${g.people.met} met so far`],
+    ];
+    const list = el('ul', 'gm-fields');
+    for (const [label, value] of rows) { const li = el('li'); li.append(el('span', '', label), el('span', 'gm-dot', value)); list.append(li); }
+    s.append(list);
+    return s;
+  }
+  function quickPart(view: ChatView) {
+    const s = part('Quick check answers');
     const records = [...(view.quickLog ?? [])].reverse().slice(0, 12);
-    if (!records.length) { d.body.append(el('p', 'gm-small', 'No quick checks yet.')); return d.root; }
+    if (!records.length) { s.append(el('p', 'gm-small', 'No quick checks yet.')); return s; }
     const pct = (n: number) => `${Math.round(n * 100)}%`;
     for (const r of records) {
       const item = el('div', 'gm-entry');
@@ -245,20 +269,28 @@ export function setup(ctx: SpindleFrontendContext) {
         if (typeof value !== 'number') continue;
         const label = QUICK_WORDS.find(([re]) => re.test(key))?.[1] ?? key;
         const n = /_(\d+)$/.exec(key)?.[1];
-        parts.push(`${label}${n && key !== 'new_turn' ? ` ${n}` : ''}: ${pct(value)}`);
+        parts.push(`${label}${n ? ` ${n}` : ''}: ${pct(value)}`);
       }
       if (parts.length) item.append(el('p', 'gm-meta', parts.join(' · ')));
-      d.body.append(item);
+      s.append(item);
     }
-    d.body.append(el('p', 'gm-hint', `How sure the decision model was about each question. Yes counts at ${pct(0.7)} or more. Only numbers: no names, no plans.`));
-    return d.root;
+    s.append(el('p', 'gm-hint', `How sure the decision model was about each question. Yes counts at ${pct(0.7)} or more.`));
+    return s;
   }
-  function renderTracker(view: ChatView) {
-    const d = details('What Grimoire reads from your preset');
-    if (!view.checks.length) { d.body.append(el('p', 'gm-small', 'No tracker was found in this chat, so Grimoire keeps the story time itself. If your preset adds a status block later, a check-up can learn to read it.')); return d.root; }
+  function trackerPart(view: ChatView) {
+    const s = part('What Grimoire reads from your preset');
+    if (!view.checks.length) { s.append(el('p', 'gm-small', 'No tracker was found in this chat, so Grimoire keeps the story time itself. If your preset adds a status block later, a check-up can learn to read it.')); return s; }
     const list = el('ul', 'gm-fields');
     for (const check of view.checks) { const li = el('li'); const state = el('span', 'gm-dot', STATUS_WORDS[check.status]); state.dataset.state = check.status; li.append(el('span', '', `${FIELD_WORDS[check.name] ?? check.name}${check.value ? `: ${check.value}` : ''}`), state); list.append(li); }
-    d.body.append(list, el('p', 'gm-hint', 'Each fact has one owner. Anything read from your preset is never asked for twice.'));
+    s.append(list, el('p', 'gm-hint', 'Each fact has one owner. Anything read from your preset is never asked for twice.'));
+    return s;
+  }
+  /** How Grimoire is doing, in shapes, counts, and numbers only. */
+  function renderBehind(view: ChatView) {
+    const d = details('Behind the scenes · no spoilers');
+    d.body.append(glancePart(view));
+    if (snapshot?.settings.quick.enabled || view.quickLog?.length) d.body.append(quickPart(view));
+    d.body.append(trackerPart(view), el('p', 'gm-hint', 'Only shapes, counts, and numbers: no names, no plans.'));
     return d.root;
   }
   function renderBook(notebook: Notebook, due: string[]) {
@@ -293,25 +325,6 @@ export function setup(ctx: SpindleFrontendContext) {
     if (notebook.events.length) { const s = section('What has happened'), list = el('ul'); for (const ev of notebook.events) list.append(el('li', 'gm-small', ev)); s.append(list); }
     return book;
   }
-  const STAGE_WORDS: Record<string, string> = { setup: 'setup', rising: 'rising action', climax: 'climax', resolution: 'resolution', ki: 'introduction', sho: 'development', ten: 'the turn', ketsu: 'bringing it together' };
-  function renderGlance(view: ChatView) {
-    const d = details('At a glance · no spoilers'), g = view.glance;
-    if (!g) return d.root;
-    const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-    const speeds = [g.threads.urgent && `${g.threads.urgent} urgent`, g.threads.steady && `${g.threads.steady} steady`, g.threads.slow && `${g.threads.slow} slow`].filter(Boolean).join(', ');
-    const rows: Array<[string, string]> = [
-      ['Story shape', `${g.shape === 'kishotenketsu' ? 'Kishōtenketsu' : 'Conflict'}, ${STAGE_WORDS[g.stage] ?? g.stage}`],
-      ['Story threads', `${plural(g.threads.open, 'open thread')}${speeds ? ` (${speeds})` : ''}${g.threads.closed ? `, ${g.threads.closed} finished` : ''}`],
-      ['Next development', g.dueNow ? `${plural(g.dueNow, 'development')} ready now` : g.nextInReplies === null ? 'Nothing planned yet' : `within about ${plural(g.nextInReplies, 'reply', 'replies')}, sooner if story time moves`],
-      ['Breadcrumbs', `${g.seeds.planted} planted, ${g.seeds.waiting} waiting, ${g.seeds.paid} paid off${g.seeds.echo ? `, ${g.seeds.echo} still out in the world` : ''}`],
-      ['Planned moments', `${g.moments.possible} possible (${g.moments.big} big)${g.moments.happened ? `, ${g.moments.happened} happened` : ''}`],
-      ['People', `${g.people.total}, ${g.people.met} met so far`],
-    ];
-    const list = el('ul', 'gm-fields');
-    for (const [label, value] of rows) { const li = el('li'); li.append(el('span', '', label), el('span', 'gm-dot', value)); list.append(li); }
-    d.body.append(list, el('p', 'gm-hint', 'Only shapes and counts: no names, no plans.'));
-    return d.root;
-  }
   function renderSpoilers(view: ChatView) {
     const d = details('Show the notebook · spoilers');
     if (!view.notebook) return d.root;
@@ -342,18 +355,11 @@ export function setup(ctx: SpindleFrontendContext) {
     toggleRow.append(words, toggle);
     body.append(toggleRow);
     if (job) body.append(job);
-    if (view.needsCheck && view.enabled && view.job?.status !== 'running') body.append(el('p', 'gm-notice', `${view.needsCheck} An update will run after the next reply, or choose Check now.`));
+    if (view.needsCheck && view.enabled && view.job?.status !== 'running') body.append(el('p', 'gm-notice', `${view.needsCheck} An update will run after the next reply, or choose Check now under More.`));
     else if (view.behind && view.enabled) body.append(el('p', 'gm-hint', 'You went back in the chat, so Grimoire is using its notebook from before that point. Nothing from the removed replies counts.'));
     if (view.reworking && view.enabled) body.append(el('p', 'gm-hint', 'The story changed direction. Grimoire is reworking its plans to fit, and holds older plans back meanwhile. Nothing it already set up is forgotten.'));
     if (view.skipOffer && view.enabled) body.append(renderSkipOffer(view));
-    body.append(renderClock(view), renderPace(view), renderActions(view), renderMoving(view), renderTalk(view), renderTracker(view), renderGlance(view));
-    if (snapshot?.settings.quick.enabled || view.quickLog?.length) body.append(renderQuickLog(view));
-    body.append(renderSpoilers(view));
-    const remove = button(confirmDelete ? 'Tap again to delete this notebook' : 'Delete this notebook', async () => {
-      if (!confirmDelete) { confirmDelete = true; render(); setTimeout(() => { confirmDelete = false; render(); }, 5000); return; }
-      confirmDelete = false; await act('remove', { chatId: view.chatId }); notify('Notebook deleted for this chat.');
-    }, 'danger');
-    body.append(remove);
+    body.append(renderNow(view), renderSteer(view), renderBehind(view), renderSpoilers(view), renderMore(view));
   }
 
   // ----- Settings -----

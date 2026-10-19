@@ -1781,7 +1781,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.8.0";
+var VERSION = "0.8.1";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, lines: 40, notes: 8, note: 200 };

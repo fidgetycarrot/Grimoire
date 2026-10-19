@@ -29,6 +29,9 @@ var styles = `
 .gm-story{display:flex;flex-direction:column;align-items:flex-start;gap:1px;text-align:left;border:1px solid var(--lumiverse-border,rgba(127,127,127,.28));border-radius:10px;background:var(--lumiverse-bg-secondary,rgba(127,127,127,.08));color:inherit;padding:8px 12px;cursor:pointer;max-width:260px;min-width:0;font:inherit}.gm-story:hover{border-color:var(--lumiverse-primary,#8fb3d9)}.gm-story-name{font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}.gm-story-meta{font-size:11.5px;opacity:.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}.gm-story-list .gm-story{max-width:none;width:100%}
 .gm-talk textarea.gm-talk-input{min-height:72px;font:13px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}.gm-note{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;border-left:2px solid var(--gm-accent);padding:2px 0 2px 10px}.gm-note .gm-button{flex:none;padding:3px 9px;font-size:11.5px}
 .gm-talk-log{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--gm-rule);padding-top:10px}.gm-line{display:flex;flex-direction:column;gap:2px;padding:7px 10px;border-radius:9px;background:color-mix(in srgb,var(--gm-ink) 4%,transparent)}.gm-line-you{align-self:flex-end;max-width:88%;background:color-mix(in srgb,var(--gm-accent) 12%,transparent)}.gm-line-grimoire{align-self:flex-start;max-width:94%}.gm-line-who{font-size:10.5px;font-weight:650;letter-spacing:.5px;text-transform:uppercase;color:var(--gm-muted)}.gm-changes{margin:3px 0 0;padding-left:16px;font-size:11.5px;color:var(--gm-muted)}
+.gm-sub{border-top:1px solid var(--gm-rule);padding-top:12px}.gm-part{border-top:1px solid var(--gm-rule);padding-top:12px}.gm-part:first-child{border:0;padding-top:0}
+.gm-chips{display:flex;flex-wrap:wrap;gap:6px}.gm-chips .gm-button{padding:6px 11px;font-size:12px;border-radius:999px}
+.gm-quiet .gm-button{border-color:transparent;color:var(--gm-muted);padding:4px 8px;font-size:11.5px}.gm-quiet .gm-button:hover:not(:disabled){color:var(--gm-ink)}
 @media(prefers-color-scheme:light){.gm-app{--gm-bg:var(--lumiverse-bg,#faf8f3);--gm-card:var(--lumiverse-bg-secondary,#fffdf8);--gm-ink:var(--lumiverse-text,#25231e);--gm-muted:var(--lumiverse-text-muted,#6f6a60);--gm-accent:#2f6699;--gm-accent-ink:#f5f9fd;--gm-warn:#a06d10;--gm-good:#2f7a45;color-scheme:light}}
 @container(max-width:380px){.gm-grid{grid-template-columns:1fr}.gm-app h1{font-size:26px}}
 `;
@@ -50,7 +53,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.8.0";
+var VERSION = "0.8.1";
 
 // src/frontend.ts
 var ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8 3v18"/><path d="M12 8h3M12 12h3"/></svg>';
@@ -271,17 +274,14 @@ function setup(ctx) {
     }));
     return card;
   }
-  function renderClock(view) {
+  function renderNow(view) {
     const card = el("section", "gm-card gm-stack");
     const s = view.sources;
     const source = !s ? "" : s.day === "tracker" && s.hour === "tracker" ? "From your preset’s tracker" : s.day === "tracker" || s.hour === "tracker" ? `${s.day === "tracker" ? "Day" : "Hour"} from your preset’s tracker, the rest kept by Grimoire` : "Kept by Grimoire, updated at check-ups";
     card.append(el("h4", "", "Story time"), el("p", "gm-clock", view.clockText || "Not set yet"), el("p", "gm-source", `${source}${s && s.hour !== "unknown" && !s.exact ? " · approximate" : ""}`));
     if (view.skipHours)
       card.append(el("p", "gm-hint", `The narrator will be told that about ${describeDuration(view.skipHours)} have passed.`));
-    return card;
-  }
-  function renderPace(view) {
-    const card = el("section", "gm-card gm-stack"), group = el("div", "gm-pace");
+    const group = el("div", "gm-pace");
     group.setAttribute("role", "group");
     group.setAttribute("aria-label", "Story pace");
     for (const pace of ORDER) {
@@ -293,67 +293,26 @@ function setup(ctx) {
       });
       group.append(b);
     }
-    card.append(el("h4", "", "Pace"), group, el("p", "gm-hint", PACE_LABELS[view.pace].help));
-    return card;
-  }
-  function renderActions(view) {
-    const card = el("section", "gm-card gm-stack");
-    const amount = el("input");
-    amount.type = "number";
-    amount.min = "1";
-    amount.max = "999";
-    amount.value = "1";
-    const unit = select([["hours", "hours"], ["days", "days"], ["weeks", "weeks"]], "days");
-    const busy = view.job?.status === "running";
-    const check = button("Check now", async () => {
-      await act("checkup", { chatId: view.chatId });
-      notify("Checking the story against the chat. One model request.");
-    });
-    const skip = button("Skip time", async () => {
-      const hours = await act("skip", { chatId: view.chatId, amount: Number(amount.value), unit: unit.value });
-      notify(`Skipped about ${describeDuration(hours)}. The narrator will open with that gap.`);
-    });
-    check.disabled = busy || !view.enabled;
-    skip.disabled = busy || !view.enabled;
-    const skipRow = el("div", "gm-grid");
-    skipRow.append(labeled("Skip ahead by", amount), labeled("Unit", unit));
-    card.append(el("h4", "", "Story controls"), el("p", "gm-small", view.summary || "No updates yet."), el("p", "gm-hint", `${view.repliesSinceCheck} ${view.repliesSinceCheck === 1 ? "reply" : "replies"} since the last update${view.updatedAt ? ` · saved ${ago(view.updatedAt)}` : ""}`), check, el("p", "gm-hint", "Check now reads the latest chat and updates the plan. Check-ups also run on their own when a scene changes, time jumps, or enough replies pass."), skipRow, skip);
+    const pace = el("div", "gm-stack gm-sub");
+    pace.append(el("h4", "", "Pace"), group, el("p", "gm-hint", PACE_LABELS[view.pace].help));
+    const status = el("div", "gm-sub gm-stack");
+    status.append(el("p", "gm-small", view.summary || "No updates yet."), el("p", "gm-hint", `${view.repliesSinceCheck} ${view.repliesSinceCheck === 1 ? "reply" : "replies"} since the last update${view.updatedAt ? ` · saved ${ago(view.updatedAt)}` : ""}`));
     const quick = snapshot?.settings.quick.enabled ? view.quick : undefined;
     if (snapshot?.settings.quick.enabled)
-      card.insertBefore(el("p", quick && !quick.ok ? "gm-notice" : "gm-hint", !quick ? "Quick check is on. It runs after the next reply." : quick.ok ? `Quick check ran ${ago(quick.at)}.` : `The last quick check didn’t run: ${quick.error}`), check);
+      status.append(el("p", quick && !quick.ok ? "gm-notice" : "gm-hint", !quick ? "Quick check is on. It runs after the next reply." : quick.ok ? `Quick check ran ${ago(quick.at)}.` : `The last quick check didn’t run: ${quick.error}`));
+    card.append(pace, status);
     return card;
   }
   const PUSHES = [["person", "Someone makes a move"], ["secret", "A secret starts to surface"], ["consequence", "Something catches up with me"], ["surprise", "Surprise me"]];
-  function renderMoving(view) {
-    const card = el("section", "gm-card gm-stack");
-    card.append(el("h4", "", "Story feeling stuck?"), el("p", "gm-hint", "Grimoire picks something already in your story and sets it in motion. It starts with a small sign and builds over the next few replies. You won’t be told what it is."));
-    const busy = view.job?.status === "running" || !snapshot?.settings.connectionId;
-    const grid = el("div", "gm-grid");
-    for (const [kind, label] of PUSHES) {
-      const b = button(label, async () => {
-        await act("push", { chatId: view.chatId, kind });
-        notify("Setting something in motion. One model request.");
-      });
-      b.disabled = busy;
-      grid.append(b);
-    }
-    const chapter = button("Start a new chapter", async () => {
-      await act("push", { chatId: view.chatId, kind: "chapter" });
-      notify("Starting a new chapter. One model request.");
-    });
-    chapter.disabled = busy;
-    chapter.classList.add("gm-wide");
-    card.append(grid, chapter, el("p", "gm-hint", "A new chapter wraps up what’s run its course and starts the next part from where things stand, sometimes after a jump in time. You can undo either one below, as long as no reply has come since."));
-    return card;
-  }
-  function renderTalk(view) {
+  function renderSteer(view) {
     const card = el("section", "gm-card gm-stack gm-talk");
     if (draftChat !== view.chatId) {
       draft = "";
       draftKeep = false;
       draftChat = view.chatId;
     }
-    card.append(el("h4", "", "Talk to Grimoire"), el("p", "gm-hint", "Not happy with where the story is going? Tell Grimoire. It changes its plans and answers without spoilers. It only asks back if it isn’t sure what you mean."));
+    const busy = view.job?.status === "running", offline = !snapshot?.settings.connectionId;
+    card.append(el("h4", "", "Talk to Grimoire"), el("p", "gm-hint", "Tell Grimoire what you’d like from the story. It changes its plans without telling you what they are, and only asks back if it isn’t sure what you mean."));
     if (view.notes.length) {
       const notes = el("div", "gm-stack gm-notes");
       notes.append(el("p", "gm-label", "Your notes"));
@@ -365,10 +324,10 @@ function setup(ctx) {
         }));
         notes.append(row);
       }
-      notes.append(el("p", "gm-hint", "Notes stay in force for every check-up and every reply until you remove them."));
+      notes.append(el("p", "gm-hint", "Notes steer every check-up and every reply until you remove them."));
       card.append(notes);
     }
-    const lines = view.talk.slice(-8);
+    const lines = view.talk.slice(-6);
     if (lines.length) {
       const log = el("div", "gm-talk-log");
       for (const line of lines) {
@@ -387,21 +346,17 @@ function setup(ctx) {
           item.append(el("p", "gm-meta", "Undone"));
         log.append(item);
       }
-      card.append(log);
-    }
-    const busy = view.job?.status === "running";
-    const actions = el("div", "gm-row");
-    if (view.canUndo)
-      actions.append(button("Undo the last change", async () => {
-        await act("undo-talk", { chatId: view.chatId });
-        notify("The plans are back the way they were.");
-      }));
-    if (view.talk.length)
+      const actions = el("div", "gm-row gm-quiet");
+      if (view.canUndo)
+        actions.append(button("Undo the last change", async () => {
+          await act("undo-talk", { chatId: view.chatId });
+          notify("The plans are back the way they were.");
+        }));
       actions.append(button("Clear conversation", async () => {
         await act("clear-talk", { chatId: view.chatId });
       }));
-    if (actions.childElementCount)
-      card.append(actions);
+      card.append(log, actions);
+    }
     const box = el("textarea", "gm-talk-input");
     box.rows = 3;
     box.maxLength = 1000;
@@ -432,24 +387,108 @@ function setup(ctx) {
       render();
       notify("Grimoire is thinking. One model request.");
     }, "primary");
-    send.disabled = busy || !snapshot?.settings.connectionId;
+    send.disabled = busy || offline;
     box.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !send.disabled)
         send.click();
     });
-    card.append(box, keepRow, send);
+    const sendRow = el("div", "gm-row gm-spread");
+    sendRow.append(keepRow, send);
+    card.append(box, sendRow);
     if (busy && view.job?.kind !== "talk")
       card.append(el("p", "gm-hint", "Grimoire is updating the notebook. You can send once it’s done."));
+    const stuck = el("div", "gm-sub gm-stack");
+    stuck.append(el("p", "gm-label", "Story feeling stuck?"), el("p", "gm-hint", "Say “I’m bored” above, or tap one. Grimoire sets something already in your story in motion. It starts small, and you won’t be told what it is. You can undo it until the next reply."));
+    const chips = el("div", "gm-chips");
+    for (const [kind, label] of [...PUSHES, ["chapter", "Start a new chapter"]]) {
+      const b = button(label, async () => {
+        await act("push", { chatId: view.chatId, kind });
+        notify(kind === "chapter" ? "Starting a new chapter. One model request." : "Setting something in motion. One model request.");
+      });
+      b.disabled = busy || offline;
+      chips.append(b);
+      if (kind === "chapter")
+        b.title = "Wraps up what’s run its course and starts the next part from where things stand, sometimes after a jump in time.";
+    }
+    stuck.append(chips);
+    card.append(stuck);
     return card;
+  }
+  function renderMore(view) {
+    const d = details("More: check-ups, time skips, delete");
+    const amount = el("input");
+    amount.type = "number";
+    amount.min = "1";
+    amount.max = "999";
+    amount.value = "1";
+    const unit = select([["hours", "hours"], ["days", "days"], ["weeks", "weeks"]], "days");
+    const busy = view.job?.status === "running";
+    const check = button("Check now", async () => {
+      await act("checkup", { chatId: view.chatId });
+      notify("Checking the story against the chat. One model request.");
+    });
+    const skip = button("Skip time", async () => {
+      const hours = await act("skip", { chatId: view.chatId, amount: Number(amount.value), unit: unit.value });
+      notify(`Skipped about ${describeDuration(hours)}. The narrator will open with that gap.`);
+    });
+    check.disabled = busy || !view.enabled;
+    skip.disabled = busy || !view.enabled;
+    const skipRow = el("div", "gm-grid");
+    skipRow.append(labeled("Skip ahead by", amount), labeled("Unit", unit));
+    const remove = button(confirmDelete ? "Tap again to delete this notebook" : "Delete this notebook", async () => {
+      if (!confirmDelete) {
+        confirmDelete = true;
+        render();
+        setTimeout(() => {
+          confirmDelete = false;
+          render();
+        }, 5000);
+        return;
+      }
+      confirmDelete = false;
+      await act("remove", { chatId: view.chatId });
+      notify("Notebook deleted for this chat.");
+    }, "danger");
+    d.body.append(check, el("p", "gm-hint", "Reads the latest chat and updates the plan. Check-ups also run on their own when a scene changes, time jumps, or enough replies pass."), el("div", "gm-sub"), skipRow, skip, el("div", "gm-sub"), remove);
+    return d.root;
   }
   const QUICK_WORDS = [[/^due_/, "Planned development shown"], [/^moment_/, "Possible moment happened"], [/^detail_mentioned$/, "Breadcrumb mentioned"], [/^echo_heard$/, "Echo heard"], [/^callback_/, "Breadcrumb paid off"], [/^fits_/, "Storyline still fits"], [/^story_shift$/, "Change of direction"], [/^new_turn$/, "Something new"]];
   const RHYTHM_WORDS = { calm: "calm", rising: "building", peak: "big moment", aftermath: "aftermath", stalled: "stalled" };
-  function renderQuickLog(view) {
-    const d = details("Quick check answers · no spoilers");
+  const STAGE_WORDS = { setup: "setup", rising: "rising action", climax: "climax", resolution: "resolution", ki: "introduction", sho: "development", ten: "the turn", ketsu: "bringing it together" };
+  const part = (title) => {
+    const s = el("section", "gm-stack gm-part");
+    s.append(el("h4", "", title));
+    return s;
+  };
+  function glancePart(view) {
+    const s = part("At a glance"), g = view.glance;
+    if (!g)
+      return s;
+    const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+    const speeds = [g.threads.urgent && `${g.threads.urgent} urgent`, g.threads.steady && `${g.threads.steady} steady`, g.threads.slow && `${g.threads.slow} slow`].filter(Boolean).join(", ");
+    const rows = [
+      ["Story shape", `${g.shape === "kishotenketsu" ? "Kishōtenketsu" : "Conflict"}, ${STAGE_WORDS[g.stage] ?? g.stage}`],
+      ["Story threads", `${plural(g.threads.open, "open thread")}${speeds ? ` (${speeds})` : ""}${g.threads.closed ? `, ${g.threads.closed} finished` : ""}`],
+      ["Next development", g.dueNow ? `${plural(g.dueNow, "development")} ready now` : g.nextInReplies === null ? "Nothing planned yet" : `within about ${plural(g.nextInReplies, "reply", "replies")}, sooner if story time moves`],
+      ["Breadcrumbs", `${g.seeds.planted} planted, ${g.seeds.waiting} waiting, ${g.seeds.paid} paid off${g.seeds.echo ? `, ${g.seeds.echo} still out in the world` : ""}`],
+      ["Planned moments", `${g.moments.possible} possible (${g.moments.big} big)${g.moments.happened ? `, ${g.moments.happened} happened` : ""}`],
+      ["People", `${g.people.total}, ${g.people.met} met so far`]
+    ];
+    const list = el("ul", "gm-fields");
+    for (const [label, value] of rows) {
+      const li = el("li");
+      li.append(el("span", "", label), el("span", "gm-dot", value));
+      list.append(li);
+    }
+    s.append(list);
+    return s;
+  }
+  function quickPart(view) {
+    const s = part("Quick check answers");
     const records = [...view.quickLog ?? []].reverse().slice(0, 12);
     if (!records.length) {
-      d.body.append(el("p", "gm-small", "No quick checks yet."));
-      return d.root;
+      s.append(el("p", "gm-small", "No quick checks yet."));
+      return s;
     }
     const pct = (n) => `${Math.round(n * 100)}%`;
     for (const r of records) {
@@ -465,20 +504,20 @@ function setup(ctx) {
           continue;
         const label = QUICK_WORDS.find(([re]) => re.test(key))?.[1] ?? key;
         const n = /_(\d+)$/.exec(key)?.[1];
-        parts.push(`${label}${n && key !== "new_turn" ? ` ${n}` : ""}: ${pct(value)}`);
+        parts.push(`${label}${n ? ` ${n}` : ""}: ${pct(value)}`);
       }
       if (parts.length)
         item.append(el("p", "gm-meta", parts.join(" · ")));
-      d.body.append(item);
+      s.append(item);
     }
-    d.body.append(el("p", "gm-hint", `How sure the decision model was about each question. Yes counts at ${pct(0.7)} or more. Only numbers: no names, no plans.`));
-    return d.root;
+    s.append(el("p", "gm-hint", `How sure the decision model was about each question. Yes counts at ${pct(0.7)} or more.`));
+    return s;
   }
-  function renderTracker(view) {
-    const d = details("What Grimoire reads from your preset");
+  function trackerPart(view) {
+    const s = part("What Grimoire reads from your preset");
     if (!view.checks.length) {
-      d.body.append(el("p", "gm-small", "No tracker was found in this chat, so Grimoire keeps the story time itself. If your preset adds a status block later, a check-up can learn to read it."));
-      return d.root;
+      s.append(el("p", "gm-small", "No tracker was found in this chat, so Grimoire keeps the story time itself. If your preset adds a status block later, a check-up can learn to read it."));
+      return s;
     }
     const list = el("ul", "gm-fields");
     for (const check of view.checks) {
@@ -488,7 +527,15 @@ function setup(ctx) {
       li.append(el("span", "", `${FIELD_WORDS[check.name] ?? check.name}${check.value ? `: ${check.value}` : ""}`), state);
       list.append(li);
     }
-    d.body.append(list, el("p", "gm-hint", "Each fact has one owner. Anything read from your preset is never asked for twice."));
+    s.append(list, el("p", "gm-hint", "Each fact has one owner. Anything read from your preset is never asked for twice."));
+    return s;
+  }
+  function renderBehind(view) {
+    const d = details("Behind the scenes · no spoilers");
+    d.body.append(glancePart(view));
+    if (snapshot?.settings.quick.enabled || view.quickLog?.length)
+      d.body.append(quickPart(view));
+    d.body.append(trackerPart(view), el("p", "gm-hint", "Only shapes, counts, and numbers: no names, no plans."));
     return d.root;
   }
   function renderBook(notebook, due) {
@@ -586,30 +633,6 @@ function setup(ctx) {
     }
     return book;
   }
-  const STAGE_WORDS = { setup: "setup", rising: "rising action", climax: "climax", resolution: "resolution", ki: "introduction", sho: "development", ten: "the turn", ketsu: "bringing it together" };
-  function renderGlance(view) {
-    const d = details("At a glance · no spoilers"), g = view.glance;
-    if (!g)
-      return d.root;
-    const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-    const speeds = [g.threads.urgent && `${g.threads.urgent} urgent`, g.threads.steady && `${g.threads.steady} steady`, g.threads.slow && `${g.threads.slow} slow`].filter(Boolean).join(", ");
-    const rows = [
-      ["Story shape", `${g.shape === "kishotenketsu" ? "Kishōtenketsu" : "Conflict"}, ${STAGE_WORDS[g.stage] ?? g.stage}`],
-      ["Story threads", `${plural(g.threads.open, "open thread")}${speeds ? ` (${speeds})` : ""}${g.threads.closed ? `, ${g.threads.closed} finished` : ""}`],
-      ["Next development", g.dueNow ? `${plural(g.dueNow, "development")} ready now` : g.nextInReplies === null ? "Nothing planned yet" : `within about ${plural(g.nextInReplies, "reply", "replies")}, sooner if story time moves`],
-      ["Breadcrumbs", `${g.seeds.planted} planted, ${g.seeds.waiting} waiting, ${g.seeds.paid} paid off${g.seeds.echo ? `, ${g.seeds.echo} still out in the world` : ""}`],
-      ["Planned moments", `${g.moments.possible} possible (${g.moments.big} big)${g.moments.happened ? `, ${g.moments.happened} happened` : ""}`],
-      ["People", `${g.people.total}, ${g.people.met} met so far`]
-    ];
-    const list = el("ul", "gm-fields");
-    for (const [label, value] of rows) {
-      const li = el("li");
-      li.append(el("span", "", label), el("span", "gm-dot", value));
-      list.append(li);
-    }
-    d.body.append(list, el("p", "gm-hint", "Only shapes and counts: no names, no plans."));
-    return d.root;
-  }
   function renderSpoilers(view) {
     const d = details("Show the notebook · spoilers");
     if (!view.notebook)
@@ -686,32 +709,14 @@ function setup(ctx) {
     if (job)
       body.append(job);
     if (view.needsCheck && view.enabled && view.job?.status !== "running")
-      body.append(el("p", "gm-notice", `${view.needsCheck} An update will run after the next reply, or choose Check now.`));
+      body.append(el("p", "gm-notice", `${view.needsCheck} An update will run after the next reply, or choose Check now under More.`));
     else if (view.behind && view.enabled)
       body.append(el("p", "gm-hint", "You went back in the chat, so Grimoire is using its notebook from before that point. Nothing from the removed replies counts."));
     if (view.reworking && view.enabled)
       body.append(el("p", "gm-hint", "The story changed direction. Grimoire is reworking its plans to fit, and holds older plans back meanwhile. Nothing it already set up is forgotten."));
     if (view.skipOffer && view.enabled)
       body.append(renderSkipOffer(view));
-    body.append(renderClock(view), renderPace(view), renderActions(view), renderMoving(view), renderTalk(view), renderTracker(view), renderGlance(view));
-    if (snapshot?.settings.quick.enabled || view.quickLog?.length)
-      body.append(renderQuickLog(view));
-    body.append(renderSpoilers(view));
-    const remove = button(confirmDelete ? "Tap again to delete this notebook" : "Delete this notebook", async () => {
-      if (!confirmDelete) {
-        confirmDelete = true;
-        render();
-        setTimeout(() => {
-          confirmDelete = false;
-          render();
-        }, 5000);
-        return;
-      }
-      confirmDelete = false;
-      await act("remove", { chatId: view.chatId });
-      notify("Notebook deleted for this chat.");
-    }, "danger");
-    body.append(remove);
+    body.append(renderNow(view), renderSteer(view), renderBehind(view), renderSpoilers(view), renderMore(view));
   }
   function renderSettings() {
     const settings = { ...snapshot?.settings ?? { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto", quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true } };
