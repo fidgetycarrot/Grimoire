@@ -1,6 +1,7 @@
 import type { SpindleAPI, LlmMessageDTO, InterceptorContextDTO, InterceptorResultDTO } from 'lumiverse-spindle-types';
 import { absoluteHours, advanceClock, describeClock, durationHours, type StoryClock } from './clock';
-import { conversation, fingerprints, newestMatching, covers, planHistory, readable, type Piece, type Turn } from './history';
+import { conversation, fingerprints, newestMatching, covers, planHistory, readable, storyReplies, told, type Piece, type Turn } from './history';
+import { splitOoc } from './ooc';
 import { askJson, askModel, ModelError, type Ask } from './model';
 import { buildNote, liveClock, paceLine, type ClockSources } from './note';
 import { dueThreads, fillReplies, keepTimes, mergeRevision, NotebookError, stamp, validateNotebook, waitsFor, withoutTimes, type Moment, type Pace, type Preferences } from './notebook';
@@ -10,7 +11,7 @@ import { plain, plainBlock, tidyNotebook } from './tidy';
 import { applyQuick, quickError, quickQuestions, quickState } from './quick';
 import { glance, skipOffer } from './skip';
 import type { DecisionResult } from 'lumiverse-spindle-types';
-import { checkRecipe, guessRecipe, readTracker, trackerText, validateRecipe, type FieldType, type Recipe } from './tracker';
+import { checkRecipe, guessRecipe, readField, readTracker, trackerText, validateRecipe, type FieldType, type Recipe } from './tracker';
 import { DEFAULT_PREFERENCES, DEFAULT_SETTINGS, MAX_VERSIONS, QUICK_LOG, TALK_LIMITS, type QuickRecord, VERSION, type ChatState, type PlayerNote, type TalkLine, type ChatView, type Job, type Settings, type Snapshot, type StoryListing, type Version } from './types';
 
 const record = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
@@ -147,10 +148,15 @@ export class NotebookController {
     return { name: chat.name, supported: true, reason: '', characterId: chat.character_id };
   }
 
+  /** The chat's turns. A reply to out-of-character talk that carries the preset's tracker is a story reply after all. */
+  private turns(recipe: Recipe, messages: Messages, exclude?: string): Turn[] {
+    const fields = recipe.fields.filter(f => f.source.kind !== 'variable');
+    return conversation(messages, exclude, fields.length ? reply => fields.some(f => readField(f, reply, {}) !== undefined) : undefined);
+  }
   /** Everything the note and the panel need, read fresh from the chat. */
   private async live(state: ChatState, messages: Messages, exclude?: string): Promise<Live | null> {
     if (!state.versions.length) return null;
-    const turns = conversation(messages, exclude), prints = await fingerprints(turns);
+    const turns = this.turns(state.recipe, messages, exclude), prints = await fingerprints(turns);
     let index = newestMatching(state.versions, prints);
     // The first version describes the chat as it was when the notebook began;
     // an edit before that point still leaves it as the base, with a check due.
@@ -158,8 +164,8 @@ export class NotebookController {
     if (index < 0) index = 0;
     const version = state.versions[index];
     // Older notebooks have no reply counts: count from the reply the version was made at.
-    version.notebook = fillReplies(version.notebook, turns.slice(0, version.covered.length).filter(t => t.role === 'assistant').length);
-    const replies = turns.filter(t => t.role === 'assistant').map(t => t.content).reverse();
+    version.notebook = fillReplies(version.notebook, storyReplies(turns.slice(0, version.covered.length)).length);
+    const replies = storyReplies(turns).map(t => t.content).reverse();
     let variables: Record<string, string> = {};
     if (state.recipe.fields.some(f => f.source.kind === 'variable')) { try { variables = await this.api.variables.chat.list(state.chatId); } catch { /* unavailable */ } }
     const checks = checkRecipe(state.recipe, replies, variables);
@@ -179,7 +185,7 @@ export class NotebookController {
   }
   /** Replies to learn a tracker from, newest first. An opening message seldom has one, so it doesn't count. */
   private trackerSamples(turns: Turn[]): string[] {
-    return turns.filter((t, i) => t.role === 'assistant' && !(i === 0)).map(t => t.content).reverse();
+    return turns.filter((t, i) => t.role === 'assistant' && !t.ooc && !(i === 0)).map(t => t.content).reverse();
   }
   /** Try to find the tracker in code, for free. Returns true if one was found. */
   private learnTracker(state: ChatState, turns: Turn[]): boolean {
@@ -194,7 +200,7 @@ export class NotebookController {
     state.recipe = { fields: [...kept, ...extra], note: state.recipe.note || found.note };
     return true;
   }
-  private repliesSince(live: Live) { return live.turns.slice(this.fullVersion(live).covered.length).filter(t => t.role === 'assistant').length; }
+  private repliesSince(live: Live) { return storyReplies(live.turns.slice(this.fullVersion(live).covered.length)).length; }
 
   async view(chatId: string | null): Promise<ChatView | null> {
     if (!chatId) return null;
@@ -282,7 +288,7 @@ export class NotebookController {
     let variables: Record<string, string> = {};
     try { variables = Object.fromEntries(Object.entries(await this.api.variables.chat.list(chatId)).slice(0, 40).map(([k, v]) => [k, String(v).slice(0, 500)])); } catch { /* none */ }
     return { character: { name: character.name, description: character.description.slice(0, 12_000), personality: character.personality.slice(0, 4000), scenario: character.scenario.slice(0, 4000), firstMessage: character.first_mes.slice(0, 6000) },
-      persona, lore, storySoFar, chat: recent, replies: turns.filter(t => t.role === 'assistant').slice(-3).map(t => t.content.slice(0, 20_000)), variables };
+      persona, lore, storySoFar, chat: recent, replies: storyReplies(turns).slice(-3).map(t => t.content.slice(0, 20_000)), variables };
   }
   private startJob(state: ChatState, kind: Job['kind'], label: string): { job: Job; signal: AbortSignal } {
     if (this.running.has(state.chatId)) throw new Error('The notebook is already being updated. Wait for it to finish.');
@@ -340,16 +346,16 @@ export class NotebookController {
             if (current.job?.id !== job.id) return;
             current.recipe = result.recipe;
             const after = await this.api.chat.getMessages(chatId);
-            const turns = conversation(after), prints = await fingerprints(turns);
+            const turns = this.turns(current.recipe, after), prints = await fingerprints(turns);
             this.learnTracker(current, turns);
             const learned = current.recipe;
-            const replies = turns.filter(t => t.role === 'assistant').map(t => t.content).reverse();
+            const replies = storyReplies(turns).map(t => t.content).reverse();
             let variables: Record<string, string> = {};
             try { variables = await this.api.variables.chat.list(chatId); } catch { /* none */ }
             const checks = checkRecipe(learned, replies, variables), values = readTracker(learned, checks, replies, variables);
             const types = Object.fromEntries(learned.fields.map(f => [f.name, f.type])) as Record<string, FieldType>;
             const { clock } = liveClock(result.notebook.clock, values, types);
-            const notebook = stamp({ ...result.notebook, clock }, { hours: absoluteHours(clock), reply: conversation(messages).filter(t => t.role === 'assistant').length });
+            const notebook = stamp({ ...result.notebook, clock }, { hours: absoluteHours(clock), reply: storyReplies(this.turns(current.recipe, messages)).length });
             // Covers only what the model actually read, so a reply that arrived meanwhile is picked up by the next check-up.
             const covered = await fingerprints(conversation(messages));
             current.versions = [{ notebook, covered, at: Date.now(), reason: 'Notebook written', ...(values.location ? { location: values.location } : {}) }];
@@ -400,7 +406,7 @@ export class NotebookController {
     const base = live.version, read = live.prints.slice();
     // Words, not markup: preset panels and styling can be most of a reply.
     // From the last full check-up: quick checks don't read the story for the notebook.
-    const chat = live.turns.slice(Math.max(0, this.fullVersion(live).covered.length - 4)).slice(-60).map(t => ({ role: t.role, content: readable(t.content, 8000) }));
+    const chat = live.turns.slice(Math.max(0, this.fullVersion(live).covered.length - 4)).slice(-60).map(t => ({ role: t.role, content: told(t, 8000) }));
     // The raw replies, only while a tracker still has to be learned or fixed.
     const learning = !state.recipe.fields.length || live.state.checks.some(c => c.status === 'unavailable');
     const input = {
@@ -471,7 +477,7 @@ export class NotebookController {
       const pinning = open.some(line => line.from === 'you' && line.keep);
       const input = {
         notebook: base.notebook, preferences: state.preferences, storyTime: describeClock(live.clock),
-        chat: live.turns.slice(-12).map(t => ({ role: t.role, content: readable(t.content, 4000) })),
+        chat: live.turns.slice(-12).map(t => ({ role: t.role, content: told(t, 4000) })),
         earlier: earlier.map(l => ({ from: l.from, text: l.text })), exchange: open.map(l => ({ from: l.from, text: l.text })),
         notes: state.notes.map(n => n.text), keep: pinning,
       };
@@ -597,7 +603,7 @@ export class NotebookController {
     return this.serial(chatId, async () => {
       const state = await this.load(chatId);
       if (!state?.versions.length) return;
-      state.skipDismissedAt = conversation(await this.api.chat.getMessages(chatId)).filter(t => t.role === 'assistant').length;
+      state.skipDismissedAt = storyReplies(this.turns(state.recipe, await this.api.chat.getMessages(chatId))).length;
       await this.save(state);
     });
   }
@@ -627,6 +633,8 @@ export class NotebookController {
       if (!state?.enabled || !state.versions.length) return '';
       const live = await this.live(state, await this.api.chat.getMessages(chatId), exclude);
       if (!live) return '';
+      // The narrator is answering out-of-character talk: no story guidance, and nothing from the notebook to repeat.
+      if (live.turns.at(-1)?.role === 'user' && live.turns.at(-1)?.ooc) return '';
       const recent = live.turns.slice(-2).map(t => t.content).join('\n');
       const clockMayLag = (live.sources.day !== 'tracker' || live.sources.hour !== 'tracker') && this.repliesSince(live) > 0;
       return buildNote({ notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map(n => n.text) });
@@ -670,6 +678,8 @@ export class NotebookController {
       if (!live) return null;
       // The skip has been told once a new reply exists after it.
       if (state.skipHours && live.turns.length > (state.skipTurn ?? 0) && live.turns.at(-1)?.role === 'assistant' && (generationType ?? 'normal') !== 'continue') { state.skipHours = 0; state.skipTurn = 0; }
+      // Out-of-character talk isn't story: nothing to check, nothing counted.
+      if (live.turns.at(-1)?.ooc) { await this.save(state); return null; }
       const settings = await this.settings();
       // The quick check runs outside the chat's queue so the next reply's note never waits on it.
       if (settings.quick.enabled && this.decisionsReady() && !this.quickRunning.has(chatId) && live.turns.at(-1)?.role === 'assistant') { await this.save(state); return { live, settings }; }
@@ -726,7 +736,7 @@ export class NotebookController {
       try {
         result = await this.api.decisions.evaluate({
           ...(settings.quick.connectionId ? { connection_id: settings.quick.connectionId } : {}), ...(settings.quick.model ? { model: settings.quick.model } : {}),
-          state: quickState(live.version.notebook, live.clock, readable(player?.content ?? '', 2000), readable(reply.content, 8000)), questions: plan.questions,
+          state: quickState(live.version.notebook, live.clock, readable(splitOoc(player?.content ?? '').story, 2000), readable(reply.content, 8000)), questions: plan.questions,
           ...(this.userId ? { userId: this.userId } : {}),
         }, { signal: AbortSignal.timeout(35_000) });
       } catch (e) { error = quickError(e); }

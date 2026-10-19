@@ -7,18 +7,36 @@
  * the newest version that still does is used instead. Fingerprints use text,
  * not message ids, so a forked chat matches its shared history.
  */
-export interface Turn { id: string; role: 'user' | 'assistant'; content: string }
+import { splitOoc, storyText } from './ooc';
+
+/** ooc: a whole out-of-character message, or the narrator's answer to one. Not part of the story. */
+export interface Turn { id: string; role: 'user' | 'assistant'; content: string; ooc?: true }
 type Message = { id: string; role: string; content: string; index_in_chat: number };
 
 export async function fingerprint(turn: Pick<Turn, 'role' | 'content'>): Promise<string> {
   const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${turn.role}\u0000${turn.content}`));
   return Array.from(new Uint8Array(bytes).slice(0, 12), b => b.toString(16).padStart(2, '0')).join('');
 }
-/** The conversation as the narrator sees it: user and assistant turns, in order, optionally without one message. */
-export function conversation(messages: Message[], exclude?: string): Turn[] {
-  return messages.filter(m => (m.role === 'user' || m.role === 'assistant') && m.id !== exclude)
+/** The conversation as the narrator sees it: user and assistant turns, in order, optionally without one message. Out-of-character exchanges are marked. */
+export function conversation(messages: Message[], exclude?: string, isStory?: (reply: string) => boolean): Turn[] {
+  const turns: Turn[] = messages.filter(m => (m.role === 'user' || m.role === 'assistant') && m.id !== exclude)
     .sort((a, b) => a.index_in_chat - b.index_in_chat)
     .map(m => ({ id: m.id, role: m.role as Turn['role'], content: m.content }));
+  // A whole out-of-character message, and the narrator's answer right after it, are outside the story.
+  let outside = false;
+  for (const turn of turns) {
+    if (turn.role === 'user') { outside = splitOoc(turn.content).whole; if (outside) turn.ooc = true; }
+    // "[ooc]: continue the story" gets a story reply; a reply carrying the preset's tracker is one.
+    else if (outside) { if (!isStory?.(turn.content)) turn.ooc = true; outside = false; }
+  }
+  return turns;
+}
+/** The narrator's story replies: out-of-character answers don't count. */
+export const storyReplies = (turns: Turn[]) => turns.filter(t => t.role === 'assistant' && !t.ooc);
+/** A turn as words for a model, with out-of-character talk labeled so it is never taken as story events. */
+export function told(turn: Turn, max: number): string {
+  if (turn.role === 'user') return readable(storyText(turn.content), max);
+  return turn.ooc ? `[Out of character, not part of the story] ${readable(turn.content, max)}` : readable(turn.content, max);
 }
 export async function fingerprints(turns: Turn[]): Promise<string[]> { return Promise.all(turns.map(fingerprint)); }
 export function covers(covered: string[], current: string[]): boolean {
@@ -67,13 +85,13 @@ export function readable(text: string, max: number): string {
 export function planHistory(turns: Turn[]): { recent: Piece[]; earlier: Piece[][] } {
   const recent: Piece[] = []; let room: number = RECENT.chars, start = turns.length;
   for (let i = turns.length - 1; i >= 0; i--) {
-    const piece = readable(turns[i].content, RECENT.perTurn);
+    const piece = told(turns[i], RECENT.perTurn);
     if (piece.length > room || recent.length >= RECENT.turns) break;
     recent.unshift({ role: turns[i].role, content: piece }); room -= piece.length; start = i;
   }
   const before = turns.slice(0, start);
   if (!before.length) return { recent, earlier: [] };
-  const clean = before.map(t => ({ role: t.role, content: readable(t.content, EARLIER.perTurn) }));
+  const clean = before.map(t => ({ role: t.role, content: told(t, EARLIER.perTurn) }));
   const total = clean.reduce((sum, t) => sum + t.content.length, 0);
   let size = Math.min(Math.max(EARLIER.part, Math.ceil(total / EARLIER.maxParts)), EARLIER.maxPart), perTurn: number = EARLIER.perTurn;
   const split = () => {

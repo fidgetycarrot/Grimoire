@@ -835,3 +835,28 @@ describe('talking to Grimoire', () => {
     expect(m.calls.filter(x => x.task === 'grimoire-talk-v1')).toHaveLength(0);
   });
 });
+
+describe('out-of-character talk in the chat', () => {
+  test('gets no story note, no quick check, and does not count as a story reply', async () => {
+    const decide = (input: any) => ({ model: 'jev', answers: Object.fromEntries(Object.keys(input.questions).map(k => [k, input.questions[k].type === 'noul' ? { type: 'noul', noul: 0.1 } : { type: 'choice', choice: 'calm', probabilities: { calm: 0.9 }, confidence: 0.9 }])) });
+    const h = host({ decide });
+    const { c } = await ready(h);
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 3, quick: { enabled: true, connectionId: '', model: '' } }, {});
+    const before = (await c.view('chat-1'))!.repliesSinceCheck;
+    h.add('user', '[ooc]: is the pacing ok?');
+    expect(await c.noteFor('chat-1')).toBe('');
+    const prompt = [{ role: 'user' as const, content: '[ooc]: is the pacing ok?' }];
+    expect(await c.intercept(prompt, { chatId: 'chat-1', generationType: 'normal' })).toBe(prompt);
+    h.add('assistant', 'Sure, it is fine.');
+    await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+    expect(h.decisionCalls).toHaveLength(0);
+    expect((await c.view('chat-1'))!.repliesSinceCheck).toBe(before);
+    // A story message with an aside is a story message.
+    h.add('user', 'I wave. (ooc: thanks)');
+    expect(await c.noteFor('chat-1')).toContain('Grimoire: private story guidance');
+    h.add('assistant', `Mira waves back.${tracker('Day 1, 18:30', 'The ferry')}`);
+    await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+    expect(h.decisionCalls).toHaveLength(1);
+    expect(h.decisionCalls[0].state.playerMessage).toBe('I wave.');
+  });
+});

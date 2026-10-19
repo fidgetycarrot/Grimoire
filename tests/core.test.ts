@@ -609,3 +609,35 @@ describe('odd space characters', () => {
     expect(readable('a​b c', 50)).toBe('ab c');
   });
 });
+
+import { splitOoc, storyText } from '../src/ooc';
+import { conversation as talkTurns, storyReplies, told } from '../src/history';
+describe('out-of-character talk', () => {
+  test('a whole OOC message is recognized in the usual ways', () => {
+    for (const text of ['[ooc]: the phone thing is giving away too much', '[OOC] brb', '(OOC: is this too fast?)', '((sorry, typo above))', 'OOC: can we slow down', '// quick question', "(OOC): I'm afraid of this path", '[ooc]: first point.\n\nSecond point, still talking to you.']) expect(splitOoc(text).whole).toBe(true);
+  });
+  test('an aside inside a story message is split off, and the story part stays', () => {
+    const a = splitOoc('I lean on the railing and watch the ferry. (OOC: make Mira a bit warmer)');
+    expect(a).toEqual({ story: 'I lean on the railing and watch the ferry.', asides: ['make Mira a bit warmer'], whole: false });
+    const b = splitOoc('I nod and follow her inside.\n\n[ooc]: loving this so far');
+    expect(b.whole).toBe(false); expect(b.story).toBe('I nod and follow her inside.'); expect(b.asides).toEqual(['loving this so far']);
+    expect(storyText('I wave. ((keep it light))')).toBe('I wave.\n[Out-of-character note from the player, not part of the story: keep it light]');
+  });
+  test('ordinary story text is left alone', () => {
+    for (const text of ['I look at the cocoon (it twitches) and step back.', 'She says "OOC" is a weird word.', 'I check my phone: 3 missed calls.']) {
+      expect(splitOoc(text)).toMatchObject({ asides: [], whole: false });
+      expect(storyText(text)).toBe(text);
+    }
+  });
+  test('an OOC message and the answer to it are outside the story', () => {
+    const m = (id: string, role: string, content: string, i: number) => ({ id, role, content, index_in_chat: i });
+    const turns = talkTurns([m('a', 'assistant', 'The bell rings.', 0), m('b', 'user', 'I board.', 1), m('c', 'assistant', 'Mira nods.', 2), m('d', 'user', '[ooc]: too fast?', 3), m('e', 'assistant', 'Sure, I can slow down.', 4), m('f', 'user', 'I sit. (ooc: thanks)', 5), m('g', 'assistant', 'The ferry moves.', 6)]);
+    expect(turns.map(t => !!t.ooc)).toEqual([false, false, false, true, true, false, false]);
+    expect(storyReplies(turns).map(t => t.id)).toEqual(['a', 'c', 'g']);
+    expect(told(turns[4], 100)).toBe('[Out of character, not part of the story] Sure, I can slow down.');
+    expect(told(turns[5], 100)).toContain('Out-of-character note from the player');
+    // "[ooc]: continue the story" gets a story reply, recognized by the preset's tracker.
+    const again = talkTurns([m('a', 'user', '[OOC]: Perfect. Continue the story.', 0), m('b', 'assistant', 'The ferry moves.<status>Time: 9</status>', 1)], undefined, reply => reply.includes('<status>'));
+    expect(again.map(t => !!t.ooc)).toEqual([true, false]);
+  });
+});
