@@ -407,7 +407,7 @@ describe('the quick check', () => {
     h.add('user', 'I look at the sky.'); h.add('assistant', `<div style="color:red">Shutters bang all along the street.</div>${tracker('Day 1, 18:10', 'The ferry')}`);
     await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
     const sent = h.decisionCalls[0];
-    expect(Object.keys(sent.questions)).toEqual(['due_1', 'moment_1', 'moment_2', 'detail_mentioned', 'fits_1', 'story_shift', 'rhythm', 'new_turn']);
+    expect(Object.keys(sent.questions)).toEqual(['due_1', 'moment_1', 'moment_2', 'detail_mentioned', 'fits_1', 'truth_1', 'story_shift', 'rhythm', 'new_turn']);
     expect(sent.questions.due_1.instructions).toContain('Shutters bang');
     expect(sent.state.latestReply).toContain('Shutters bang all along the street.');
     expect(sent.state.latestReply).not.toContain('style');
@@ -932,5 +932,18 @@ describe('getting a stalled story moving', () => {
     const view = (await c.view('chat-1'))!;
     expect(view.talk.at(-1)!.text).toBe('Something is in motion. Watch for it over the next few replies.');
     expect(view.notebook!.threads[0].speed).toBe('urgent');
+  });
+});
+
+describe('secrets that came out, in the chat', () => {
+  test('a check-up moves it out, the spoiler notebook shows when, and the secret button won’t pick from it', async () => {
+    const truth = 'The harbor master took the ring to pay a gambling debt.';
+    const { h, c } = await ready(host(), model({ create: created, checkup: input => ({ notebook: { ...input.notebook, story: { ...input.notebook.story, hiddenTruth: [], cameOut: [truth] }, seeds: input.notebook.seeds.map((s: any) => ({ ...s, status: 'paid' })) }, tracker: null }) }));
+    h.add('user', 'I show Mira the debt letter.'); h.add('assistant', `Mira reads it twice.${tracker('Day 1, 18:40', 'The ferry')}`);
+    await c.checkup('chat-1', 'You asked for a check-up'); await c.waitForJobs();
+    const view = (await c.view('chat-1'))!;
+    expect(view.notebook!.story.hiddenTruth).toEqual([]);
+    expect(view.notebook!.story.cameOut).toEqual([{ text: truth, atReply: 3 }]);
+    await expect(c.push('chat-1', 'secret')).rejects.toThrow('Every secret in this story has already come out');
   });
 });

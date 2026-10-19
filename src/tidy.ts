@@ -167,10 +167,14 @@ export function tidyNotebook(value: unknown, previous?: Notebook): unknown {
   const clock = { day: Number.isFinite(day) && day >= 0 && day <= 10_000_000 ? day : previous?.clock.day ?? 1, hour: given ?? readTime(label)?.hour ?? null, label };
 
   const question = plain(story.question) || plain(story.direction) || plain(story.stakes) || previous?.story.question || '';
+  // Truths that came out: written as plain lines, no repeats, and no longer listed as hidden.
+  const cameOut: Array<{ text: string }> = [];
+  for (const item of array(story.cameOut)) { const t = plain(typeof item === 'string' ? item : record(item).text); if (t && cameOut.length < LIMITS.truths && !cameOut.some(r => r.text.toLowerCase() === t.toLowerCase())) cameOut.push({ text: t }); }
+  const hiddenTruth = array(story.hiddenTruth).map(x => plain(x)).filter(t => t && !cameOut.some(r => r.text.toLowerCase() === t.toLowerCase())).slice(0, LIMITS.truths);
   return {
     version: 1,
     story: { question, stakes: plain(story.stakes), direction: plain(story.direction),
-      hiddenTruth: array(story.hiddenTruth).map(x => plain(x)).filter(Boolean).slice(0, LIMITS.truths), twist: plain(story.twist) },
+      hiddenTruth, twist: cameOut.some(r => r.text.toLowerCase() === plain(story.twist).toLowerCase()) ? '' : plain(story.twist), cameOut },
     arc, people, threads, beats, seeds, events, clock,
     rhythm: pick(input.rhythm, ['calm', 'rising', 'peak', 'aftermath', 'stalled'] as const, RHYTHM, 'calm'),
     summary: plain(input.summary, LIMITS.short),

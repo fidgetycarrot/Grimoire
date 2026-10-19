@@ -231,7 +231,7 @@ export function setup(ctx: SpindleFrontendContext) {
       el('div', 'gm-sub'), skipRow, skip, el('div', 'gm-sub'), remove);
     return d.root;
   }
-  const QUICK_WORDS: Array<[RegExp, string]> = [[/^due_/, 'Planned development shown'], [/^moment_/, 'Possible moment happened'], [/^detail_mentioned$/, 'Breadcrumb mentioned'], [/^echo_heard$/, 'Echo heard'], [/^callback_/, 'Breadcrumb paid off'], [/^fits_/, 'Storyline still fits'], [/^story_shift$/, 'Change of direction'], [/^new_turn$/, 'Something new']];
+  const QUICK_WORDS: Array<[RegExp, string]> = [[/^due_/, 'Planned development shown'], [/^moment_/, 'Possible moment happened'], [/^detail_mentioned$/, 'Breadcrumb mentioned'], [/^echo_heard$/, 'Echo heard'], [/^callback_/, 'Breadcrumb paid off'], [/^fits_/, 'Storyline still fits'], [/^truth_/, 'Secret came out'], [/^story_shift$/, 'Change of direction'], [/^new_turn$/, 'Something new']];
   const RHYTHM_WORDS: Record<string, string> = { calm: 'calm', rising: 'building', peak: 'big moment', aftermath: 'aftermath', stalled: 'stalled' };
   const STAGE_WORDS: Record<string, string> = { setup: 'setup', rising: 'rising action', climax: 'climax', resolution: 'resolution', ki: 'introduction', sho: 'development', ten: 'the turn', ketsu: 'bringing it together' };
   const part = (title: string) => { const s = el('section', 'gm-stack gm-part'); s.append(el('h4', '', title)); return s; };
@@ -299,6 +299,7 @@ export function setup(ctx: SpindleFrontendContext) {
     if (notebook.story.stakes) about.append(el('p', 'gm-meta', `At stake: ${notebook.story.stakes}`));
     if (notebook.story.direction) about.append(el('p', 'gm-meta', `Could end: ${notebook.story.direction}`));
     if (notebook.story.hiddenTruth.length || notebook.story.twist) { const s = section('What is really going on'), ul = el('ul'); for (const t of notebook.story.hiddenTruth) ul.append(el('li', '', t)); if (notebook.story.twist) ul.append(el('li', '', `Twist: ${notebook.story.twist}`)); s.append(ul); }
+    if (notebook.story.cameOut?.length) { const s = section('What has come out'), ul = el('ul'); for (const r of notebook.story.cameOut) ul.append(el('li', '', `${r.text}${r.atReply !== undefined ? ` (reply ${r.atReply})` : ''}`)); s.append(ul); }
     const STAGE_WORDS: Record<string, string> = { setup: 'Setup', rising: 'Rising action', climax: 'Climax', resolution: 'Resolution', ki: 'Introduction', sho: 'Development', ten: 'The turn', ketsu: 'Bringing it together' };
     const arc = section('Shape of this part');
     arc.append(el('p', '', `${notebook.arc.shape === 'kishotenketsu' ? 'Kishōtenketsu' : 'Conflict'}: ${STAGE_WORDS[notebook.arc.stage] ?? notebook.arc.stage}`));

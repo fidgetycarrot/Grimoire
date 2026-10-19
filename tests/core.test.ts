@@ -304,7 +304,7 @@ describe('quick check answers', () => {
     nb.threads[1].steps[0].afterHours = 0;
     nb.beats[1].status = 'dropped';
     const plan = quickQuestions(nb, absoluteHours({ day: 1, hour: 18 }));
-    expect(Object.keys(plan.questions)).toEqual(['due_1', 'moment_1', 'detail_mentioned', 'fits_1', 'story_shift', 'rhythm', 'new_turn']);
+    expect(Object.keys(plan.questions)).toEqual(['due_1', 'moment_1', 'detail_mentioned', 'fits_1', 'truth_1', 'story_shift', 'rhythm', 'new_turn']);
     const out = applyQuick(nb, plan, { model: 'm', answers: { due_1: { type: 'noul', noul: 0.9 }, moment_1: { type: 'noul', noul: 0.69 }, rhythm: { type: 'choice', choice: 'nonsense', probabilities: {}, confidence: 1 }, new_turn: { type: 'noul', noul: 0.2 } } }, 99);
     expect(out.notebook.threads[1].steps[0]).toMatchObject({ status: 'shown', at: 99 });
     expect(out.notebook.beats[0].status).toBe('possible');
@@ -639,5 +639,42 @@ describe('out-of-character talk', () => {
     // "[ooc]: continue the story" gets a story reply, recognized by the preset's tracker.
     const again = talkTurns([m('a', 'user', '[OOC]: Perfect. Continue the story.', 0), m('b', 'assistant', 'The ferry moves.<status>Time: 9</status>', 1)], undefined, reply => reply.includes('<status>'));
     expect(again.map(t => !!t.ooc)).toEqual([true, false]);
+  });
+});
+
+import { tidyNotebook as tidyTruths } from '../src/tidy';
+import { applyQuick as quickApply, quickQuestions as quickAsk } from '../src/quick';
+import { secretsLeft } from '../src/push';
+describe('secrets that came out', () => {
+  const truth = 'The harbor master took the ring to pay a gambling debt.';
+  test('older notebooks start with none, and a truth that came out leaves the hidden list', () => {
+    const old: any = sampleNotebook(); delete old.story.cameOut;
+    expect(validateNotebook(old).story.cameOut).toEqual([]);
+    const raw: any = sampleNotebook(); raw.story.cameOut = [truth]; raw.story.twist = truth;
+    const tidy = validateNotebook(tidyTruths(raw));
+    expect(tidy.story.hiddenTruth).toEqual([]);
+    expect(tidy.story.twist).toBe('');
+    expect(tidy.story.cameOut).toEqual([{ text: truth }]);
+  });
+  test('code records when it came out, and it can never go back to being secret', () => {
+    const before = stamp(validateNotebook(sampleNotebook()), { hours: 40, reply: 3 });
+    const out = validateNotebook(tidyTruths({ ...structuredClone(before), story: { ...before.story, hiddenTruth: [], cameOut: [truth] } }));
+    const merged = mergeRevision(before, out, { hours: 41, reply: 7 });
+    expect(merged.story.cameOut).toEqual([{ text: truth, atReply: 7 }]);
+    // A later revision that forgets it gets it back, with its reply.
+    const forgot = validateNotebook({ ...structuredClone(merged), story: { ...merged.story, cameOut: [] } });
+    expect(mergeRevision(merged, forgot, { hours: 42, reply: 9 }).story.cameOut).toEqual([{ text: truth, atReply: 7 }]);
+  });
+  test('the quick check asks for a check-up when one comes out, without marking anything itself', () => {
+    const nb = validateNotebook(sampleNotebook());
+    const plan = quickAsk(nb, 40);
+    expect(plan.questions.truth_1.instructions).toContain(truth);
+    const out = quickApply(nb, plan, { model: 'm', answers: { truth_1: { type: 'noul', noul: 0.9 } } } as any, 40);
+    expect(out).toMatchObject({ needsCheckup: true, marked: 0, changed: false });
+  });
+  test('a secret push needs something left to surface', () => {
+    const nb = validateNotebook(sampleNotebook());
+    expect(secretsLeft(nb)).toBe(true);
+    expect(secretsLeft({ ...nb, story: { ...nb.story, hiddenTruth: [], twist: '' }, seeds: nb.seeds.map(s => ({ ...s, status: 'paid' as const })) })).toBe(false);
   });
 });

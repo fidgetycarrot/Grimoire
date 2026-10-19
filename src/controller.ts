@@ -7,7 +7,7 @@ import { buildNote, liveClock, paceLine, type ClockSources } from './note';
 import { dueThreads, fillReplies, keepTimes, mergeRevision, NotebookError, stamp, validateNotebook, waitsFor, withoutTimes, type Moment, type Notebook, type Pace, type Preferences } from './notebook';
 import { checkupMessages, creationMessages, digestMessages, talkMessages, type Material } from './prompts';
 import { describeChanges, openExchange } from './talk';
-import { checkPush, launchPush, PUSH_KINDS, type PushKind } from './push';
+import { checkPush, launchPush, PUSH_KINDS, secretsLeft, type PushKind } from './push';
 import { plain, plainBlock, tidyNotebook } from './tidy';
 import { applyQuick, quickError, quickQuestions, quickState } from './quick';
 import { glance, skipOffer } from './skip';
@@ -476,6 +476,11 @@ export class NotebookController {
   /** The buttons: get a stalled story moving, or start a new chapter. One model request. */
   async push(chatId: string, kind: unknown): Promise<Job> {
     if (!PUSH_KINDS.includes(kind as PushKind)) throw new Error('Pick how to get things moving.');
+    if (kind === 'secret') {
+      const state = await this.serial(chatId, () => this.load(chatId));
+      const notebook = state?.versions.at(-1)?.notebook;
+      if (notebook && !secretsLeft(notebook)) throw new Error('Every secret in this story has already come out. Try another kind.');
+    }
     return this.startTalk(chatId, PUSH_LABELS[kind as PushKind], false, kind as PushKind);
   }
   private startTalk(chatId: string, message: string, keep: boolean, push: PushKind | null): Promise<Job> {

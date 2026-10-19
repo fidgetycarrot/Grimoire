@@ -60,7 +60,7 @@ export function describeChanges(before: Notebook, after: Notebook): string[] {
   if (replayed) out.push(`Changed what ${count(replayed, 'person', 'people')} ${replayed === 1 ? 'wants or how they act' : 'want or how they act'}`);
 
   if (before.story.question !== after.story.question || before.story.direction !== after.story.direction || before.story.stakes !== after.story.stakes) out.push('Changed where the story is heading');
-  if (!same(before.story.hiddenTruth, after.story.hiddenTruth) || before.story.twist !== after.story.twist || before.arc.turn !== after.arc.turn) out.push('Changed what is really going on');
+  if (!same(before.story.hiddenTruth, after.story.hiddenTruth) || before.story.twist !== after.story.twist || before.arc.turn !== after.arc.turn || before.story.cameOut.length !== after.story.cameOut.length) out.push('Changed what is really going on');
   if (before.arc.shape !== after.arc.shape) out.push('Changed the shape of this part of the story');
   return out;
 }

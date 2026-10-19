@@ -17,7 +17,7 @@ import { seedPlan } from './note';
  * The answers are probabilities. Only confident ones change anything, and they
  * only ever move the story forward: nothing is un-marked here.
  */
-export const QUICK = { yes: 0.7, no: 0.3, rhythm: 0.6, maxBeats: 6, maxFits: 6, soon: 5 } as const;
+export const QUICK = { yes: 0.7, no: 0.3, rhythm: 0.6, maxBeats: 6, maxFits: 6, maxTruths: 4, soon: 5 } as const;
 
 const RHYTHMS: Record<Rhythm, string> = {
   calm: 'Calm: ordinary time, nothing pressing in the scene.',
@@ -30,7 +30,7 @@ const RHYTHMS: Record<Rhythm, string> = {
 export interface QuickPlan {
   questions: Record<string, DecisionQuestion>;
   /** Question key → what a "yes" marks. */
-  marks: Record<string, { kind: 'step'; thread: string; step: string } | { kind: 'beat'; beat: string } | { kind: 'seed'; seed: string; to: 'planted' | 'paid' } | { kind: 'fits'; thread: string }>;
+  marks: Record<string, { kind: 'step'; thread: string; step: string } | { kind: 'beat'; beat: string } | { kind: 'seed'; seed: string; to: 'planted' | 'paid' } | { kind: 'fits'; thread: string } | { kind: 'truth' }>;
 }
 
 export function quickQuestions(notebook: Notebook, now: number | Moment): QuickPlan {
@@ -74,6 +74,13 @@ export function quickQuestions(notebook: Notebook, now: number | Moment): QuickP
       criteria: { true: 'Yes, it can still reach them (it could follow them, call them, or wait nearby).', false: 'No, the player has left it behind and it no longer fits for now.' } };
     marks[key] = { kind: 'fits', thread: thread.id };
   });
+  // A secret that came out needs a check-up: people's notes were written to keep it.
+  notebook.story.hiddenTruth.slice(0, QUICK.maxTruths).forEach((truth, i) => {
+    const key = `truth_${i + 1}`;
+    questions[key] = { type: 'noul', instructions: `In the latest exchange, does the player learn this, or does it come out where they can see? A hint or a suspicion does not count. Hidden truth: ${truth}`,
+      criteria: { true: 'The player now knows it, or it plainly came out in front of them.', false: 'It stays hidden, or is only hinted at.' } };
+    marks[key] = { kind: 'truth' };
+  });
   questions.story_shift = { type: 'noul', instructions: 'Did the latest exchange take the story somewhere the story notes no longer fit: the player left the setting for good, walked away from the main situation, or changed what they are after?',
     criteria: { true: 'Yes, the story has changed direction and the notes need reworking.', false: 'No, the story is still on the same ground, even if something new happened.' } };
   questions.rhythm = { type: 'choice', instructions: 'Which best describes the scene at the end of the latest reply?', criteria: RHYTHMS };
@@ -106,7 +113,7 @@ export function applyQuick(current: Notebook, plan: QuickPlan, result: DecisionR
   const notebook = structuredClone(current);
   let marked = 0;
   for (const [key, mark] of Object.entries(plan.marks)) {
-    if (mark.kind === 'fits' || !yes(answers[key])) continue;
+    if (mark.kind === 'fits' || mark.kind === 'truth' || !yes(answers[key])) continue;
     if (mark.kind === 'step') {
       const step = notebook.threads.find(t => t.id === mark.thread)?.steps.find(s => s.id === mark.step);
       if (step?.status === 'waiting') { step.status = 'shown'; step.at = hours; if (reply !== undefined) step.atReply = reply; step.quick = true; marked++; }
@@ -123,7 +130,8 @@ export function applyQuick(current: Notebook, plan: QuickPlan, result: DecisionR
   let changed = marked > 0;
   if (rhythm?.type === 'choice' && rhythm.confidence >= QUICK.rhythm && rhythm.choice in RHYTHMS && rhythm.choice !== notebook.rhythm) { notebook.rhythm = rhythm.choice as Rhythm; changed = true; }
   const held = Object.entries(plan.marks).flatMap(([key, mark]) => mark.kind === 'fits' && answers[key]?.type === 'noul' && (answers[key] as { noul: number }).noul <= QUICK.no ? [mark.thread] : []);
-  return { notebook, changed, marked, needsCheckup: yes(answers.new_turn) || held.length > 0, shifted: yes(answers.story_shift), held };
+  const cameOut = Object.entries(plan.marks).some(([key, mark]) => mark.kind === 'truth' && yes(answers[key]));
+  return { notebook, changed, marked, needsCheckup: yes(answers.new_turn) || held.length > 0 || cameOut, shifted: yes(answers.story_shift), held };
 }
 
 /** Fixed wording only: provider errors can echo what was sent. */

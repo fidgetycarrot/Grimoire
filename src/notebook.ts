@@ -18,7 +18,9 @@ export interface Thread {
 }
 export interface Person { id: string; name: string; aliases: string[]; role: string; wants: string; doing: string; hint: string; met: boolean; status: 'active' | 'gone' }
 export interface Beat { id: string; text: string; purpose: string; conditions: string; thread: string; intensity: 'low' | 'high'; status: 'possible' | 'happened' | 'dropped'; quick?: true }
-export interface Story { question: string; stakes: string; direction: string; hiddenTruth: string[]; twist: string }
+/** A hidden truth the player has since learned. atReply is code-owned: the reply it came out at. */
+export interface Revealed { text: string; atReply?: number }
+export interface Story { question: string; stakes: string; direction: string; hiddenTruth: string[]; twist: string; /** Truths that came out: established now, no longer secret. */ cameOut: Revealed[] }
 /**
  * The shape of the current arc. Conflict: setup, rising action, climax,
  * resolution. Kishōtenketsu: introduction (ki), development (shō), a turn
@@ -177,7 +179,12 @@ export function validateNotebook(value: unknown): Notebook {
     arc: { shape, stage: stage as string, turn: text(arcInput.turn, 'arc.turn') },
     seeds,
     story: { question: text(story.question, 'story.question', LIMITS.text, false), stakes: text(story.stakes, 'story.stakes'), direction: text(story.direction, 'story.direction'),
-      hiddenTruth: list(story.hiddenTruth, 'story.hiddenTruth', LIMITS.truths).map((x, i) => text(x, `story.hiddenTruth[${i}]`, LIMITS.text, false)), twist: text(story.twist, 'story.twist') },
+      hiddenTruth: list(story.hiddenTruth, 'story.hiddenTruth', LIMITS.truths).map((x, i) => text(x, `story.hiddenTruth[${i}]`, LIMITS.text, false)), twist: text(story.twist, 'story.twist'),
+      // Older notebooks have none.
+      cameOut: (story.cameOut === undefined ? [] : list(story.cameOut, 'story.cameOut', LIMITS.truths)).map((x, i): Revealed => {
+        const r = typeof x === 'string' ? { text: x } : record(x);
+        return { text: text(r.text, `story.cameOut[${i}].text`, LIMITS.text, false), ...(count(r.atReply) !== undefined ? { atReply: count(r.atReply) } : {}) };
+      }) },
     people, threads, beats,
     events: list(input.events, 'events', LIMITS.events).map((x, i) => text(typeof x === 'string' ? x : record(x).text, `events[${i}]`, LIMITS.text, false)),
     clock: clock(input.clock), rhythm: choice(input.rhythm, ['calm', 'rising', 'peak', 'aftermath', 'stalled'] as const, 'rhythm', 'calm'),
@@ -211,7 +218,10 @@ export function mergeRevision(previous: Notebook, revised: Notebook, now: number
     if (seed.status !== 'waiting' && next!.status === 'waiting' && !seed.quick) failMerge(`Seed "${seed.id}" was already planted and can't go back to waiting.`);
   }
   const fresh = withoutTimes(holdTurn(previous, revised));
-  return stamp({ ...fresh, seeds: carrySeedTimes(previous, fresh.seeds), threads: fresh.threads.map(thread => {
+  // Something that came out can't go back to being secret.
+  const lost = previous.story.cameOut.filter(r => !fresh.story.cameOut.some(x => sameText(x.text, r.text)));
+  const story = { ...fresh.story, cameOut: carryRevealed(previous, [...fresh.story.cameOut, ...lost.map(({ text }) => ({ text }))]) };
+  return stamp({ ...fresh, story, seeds: carrySeedTimes(previous, fresh.seeds), threads: fresh.threads.map(thread => {
     const old = previous.threads.find(t => t.id === thread.id);
     return { ...thread, ...(old?.startAt !== undefined ? { startAt: old.startAt } : {}), ...(old?.startReply !== undefined ? { startReply: old.startReply } : {}), steps: thread.steps.map(step => {
       const before = old?.steps.find(s => s.id === step.id);
@@ -223,7 +233,7 @@ export function mergeRevision(previous: Notebook, revised: Notebook, now: number
 /** For edits made by the player: anything may change, but recorded times stay with their ids. */
 export function keepTimes(previous: Notebook, edited: Notebook, now: number | Moment): Notebook {
   const fresh = withoutTimes(edited);
-  return stamp({ ...fresh, seeds: carrySeedTimes(previous, fresh.seeds), threads: fresh.threads.map(thread => {
+  return stamp({ ...fresh, story: { ...fresh.story, cameOut: carryRevealed(previous, fresh.story.cameOut) }, seeds: carrySeedTimes(previous, fresh.seeds), threads: fresh.threads.map(thread => {
     const old = previous.threads.find(t => t.id === thread.id);
     return { ...thread, ...(old?.startAt !== undefined ? { startAt: old.startAt } : {}), ...(old?.startReply !== undefined ? { startReply: old.startReply } : {}), steps: thread.steps.map(step => {
       const before = old?.steps.find(s => s.id === step.id);
@@ -234,7 +244,7 @@ export function keepTimes(previous: Notebook, edited: Notebook, now: number | Mo
 /** Drop any times a model wrote. Only code records when things began or happened. */
 export function withoutTimes(notebook: Notebook): Notebook {
   // Quick-check flags go too: a check-up or an edit has the final say.
-  return { ...notebook, seeds: notebook.seeds.map(({ plantedAt: _p, paidAt: _q, echoAt: _e, quick: _k, ...seed }) => seed), beats: notebook.beats.map(({ quick: _k, ...beat }) => beat),
+  return { ...notebook, story: { ...notebook.story, cameOut: notebook.story.cameOut.map(({ text }) => ({ text })) }, seeds: notebook.seeds.map(({ plantedAt: _p, paidAt: _q, echoAt: _e, quick: _k, ...seed }) => seed), beats: notebook.beats.map(({ quick: _k, ...beat }) => beat),
     threads: notebook.threads.map(({ startAt: _start, startReply: _reply, ...thread }) => ({ ...thread, steps: thread.steps.map(({ at: _at, atReply: _atReply, quick: _k, ...step }) => step) })) };
 }
 /** Fill in code-owned times: when a thread began, when a step happened. */
@@ -243,16 +253,22 @@ export function stamp(notebook: Notebook, now: number | Moment): Notebook {
   const seeds = reply === undefined ? notebook.seeds : notebook.seeds.map(seed => ({ ...seed,
     ...((seed.status === 'planted' || seed.status === 'paid') && seed.plantedAt === undefined ? { plantedAt: reply } : {}), ...(seed.status === 'paid' && seed.paidAt === undefined ? { paidAt: reply } : {}),
     ...(seed.status === 'echo' && seed.echoAt === undefined ? { echoAt: reply } : {}) }));
-  return { ...notebook, seeds, threads: notebook.threads.map(thread => ({ ...thread, startAt: thread.startAt ?? m.hours,
+  const story = reply === undefined ? notebook.story : { ...notebook.story, cameOut: notebook.story.cameOut.map(r => r.atReply === undefined ? { ...r, atReply: reply } : r) };
+  return { ...notebook, story, seeds, threads: notebook.threads.map(thread => ({ ...thread, startAt: thread.startAt ?? m.hours,
     ...(thread.startReply === undefined && reply !== undefined ? { startReply: reply } : {}),
     steps: thread.steps.map(step => step.status === 'waiting' ? step : { ...step, at: step.at ?? m.hours, ...(step.atReply === undefined && reply !== undefined ? { atReply: reply } : {}) }) })) };
 }
 /** Older notebooks have no reply counts: count from the reply the version was made at. */
 export function fillReplies(notebook: Notebook, reply: number): Notebook {
-  return { ...notebook, seeds: notebook.seeds.map(seed => (seed.status === 'planted' || seed.status === 'paid') && seed.plantedAt === undefined ? { ...seed, plantedAt: reply } : seed.status === 'echo' && seed.echoAt === undefined ? { ...seed, echoAt: reply } : seed), threads: notebook.threads.map(thread => ({ ...thread, startReply: thread.startReply ?? reply,
+  return { ...notebook, story: { ...notebook.story, cameOut: notebook.story.cameOut.map(r => r.atReply === undefined ? { ...r, atReply: reply } : r) }, seeds: notebook.seeds.map(seed => (seed.status === 'planted' || seed.status === 'paid') && seed.plantedAt === undefined ? { ...seed, plantedAt: reply } : seed.status === 'echo' && seed.echoAt === undefined ? { ...seed, echoAt: reply } : seed), threads: notebook.threads.map(thread => ({ ...thread, startReply: thread.startReply ?? reply,
     steps: thread.steps.map(step => step.status === 'waiting' || step.atReply !== undefined ? step : { ...step, atReply: reply }) })) };
 }
 
+const sameText = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+/** A truth that came out keeps the reply it came out at. */
+function carryRevealed(previous: Notebook, list: Revealed[]): Revealed[] {
+  return list.map(r => { const old = previous.story.cameOut.find(x => sameText(x.text, r.text)); return old?.atReply !== undefined ? { ...r, atReply: old.atReply } : r; });
+}
 /** Seeds keep the reply counts code recorded for them. */
 function carrySeedTimes(previous: Notebook, seeds: Seed[]): Seed[] {
   return seeds.map(seed => {
