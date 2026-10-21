@@ -73,9 +73,9 @@ export function tidyNotebook(value: unknown, previous?: Notebook): unknown {
 
   // People first, so threads can name them by id, name, or alias.
   let people = ids(array(input.people).map(raw => {
-    const p = record(raw), name = plain(p.name, 80) || human(slug(p.id));
-    return { id: slug(p.id) || slug(name), name, aliases: [...new Set(array(p.aliases).map(a => plain(a, 80)).filter(Boolean))].slice(0, 8),
-      role: plain(p.role, LIMITS.short), wants: plain(p.wants), doing: plain(p.doing), hint: plain(p.hint), met: truthy(p.met),
+    const p = record(raw), name = plain(p.name, 80) || human(slug(p.id)), id = slug(p.id) || slug(name);
+    return { id, name, aliases: [...new Set(array(p.aliases).map(a => plain(a, 80)).filter(Boolean))].slice(0, 8),
+      role: plain(p.role, LIMITS.short), wants: plain(p.wants), doing: plain(p.doing), hint: plain(p.hint), voice: plain(p.voice, 300) || (previous?.people.find(x => x.id === id)?.voice ?? ''), met: truthy(p.met),
       status: pick(p.status, ['active', 'gone'] as const, PERSON, 'active') };
   }).filter(p => p.name), 'person');
   if (previous) for (const old of previous.people) if (!people.some(p => p.id === old.id)) people.push(structuredClone(old));

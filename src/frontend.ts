@@ -325,7 +325,7 @@ export function setup(ctx: SpindleFrontendContext) {
     arc.append(el('p', '', `${notebook.arc.shape === 'kishotenketsu' ? 'Kishōtenketsu' : 'Conflict'}: ${STAGE_WORDS[notebook.arc.stage] ?? notebook.arc.stage}`));
     if (notebook.arc.turn) arc.append(el('p', 'gm-meta', `The turn: ${notebook.arc.turn}`));
     const people = section('People');
-    for (const p of notebook.people) { const e = el('div', 'gm-entry'); const name = el('p'); name.append(el('strong', '', p.name), ...(p.role ? [document.createTextNode(`, ${p.role}`)] : [])); if (!p.met) name.append(el('span', 'gm-chip', 'not met')); if (p.status === 'gone') name.append(el('span', 'gm-chip', 'gone')); e.append(name, el('p', 'gm-small', `Wants ${p.wants}`), ...(p.doing ? [el('p', 'gm-meta', `Doing: ${p.doing}`)] : [])); people.append(e); }
+    for (const p of notebook.people) { const e = el('div', 'gm-entry'); const name = el('p'); name.append(el('strong', '', p.name), ...(p.role ? [document.createTextNode(`, ${p.role}`)] : [])); if (!p.met) name.append(el('span', 'gm-chip', 'not met')); if (p.status === 'gone') name.append(el('span', 'gm-chip', 'gone')); e.append(name, el('p', 'gm-small', `Wants ${p.wants}`), ...(p.doing ? [el('p', 'gm-meta', `Doing: ${p.doing}`)] : []), ...(p.voice ? [el('p', 'gm-meta', `Voice: ${p.voice}`)] : [])); people.append(e); }
     const threads = section('Threads');
     for (const t of notebook.threads) {
       const e = el('div', 'gm-entry'), title = el('p'); title.append(el('strong', '', t.title), el('span', 'gm-chip', t.status === 'open' ? t.speed : t.status));

@@ -16,7 +16,7 @@ export interface Thread {
   status: 'open' | 'paused' | 'closed'; closedReason: string; ifFollowed: string; ifIgnored: string;
   steps: Step[]; startAt?: number; /** Code-owned: how many replies the chat had when the thread began. */ startReply?: number;
 }
-export interface Person { id: string; name: string; aliases: string[]; role: string; wants: string; doing: string; hint: string; met: boolean; status: 'active' | 'gone' }
+export interface Person { id: string; name: string; aliases: string[]; role: string; wants: string; doing: string; hint: string; /** How they talk, so the narrator gives each person a voice of their own. */ voice: string; met: boolean; status: 'active' | 'gone' }
 export interface Beat { id: string; text: string; purpose: string; conditions: string; thread: string; intensity: 'low' | 'high'; status: 'possible' | 'happened' | 'dropped'; quick?: true }
 /** A hidden truth the player has since learned. atReply is code-owned: the reply it came out at. */
 export interface Revealed { text: string; atReply?: number }
@@ -136,7 +136,7 @@ export function validateNotebook(value: unknown): Notebook {
       id: id(p.id, `${path}.id`), name: text(p.name, `${path}.name`, 80, false),
       aliases: list(p.aliases, `${path}.aliases`, 8).map((a, j) => text(a, `${path}.aliases[${j}]`, 80, false)),
       role: text(p.role, `${path}.role`, LIMITS.short), wants: text(p.wants, `${path}.wants`), doing: text(p.doing, `${path}.doing`),
-      hint: text(p.hint, `${path}.hint`), met: p.met === true, status: choice(p.status, ['active', 'gone'] as const, `${path}.status`, 'active'),
+      hint: text(p.hint, `${path}.hint`), voice: text(p.voice, `${path}.voice`, 300), met: p.met === true, status: choice(p.status, ['active', 'gone'] as const, `${path}.status`, 'active'),
     };
   }), 'people');
   const personIds = new Set(people.map(p => p.id));

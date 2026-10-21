@@ -55,7 +55,7 @@ export function describeChanges(before: Notebook, after: Notebook): string[] {
 
   const people = new Map(before.people.map(p => [p.id, p]));
   const newPeople = after.people.filter(p => !people.has(p.id)).length;
-  const replayed = after.people.filter(p => { const w = people.get(p.id); return !!w && (w.wants !== p.wants || w.hint !== p.hint || w.doing !== p.doing || w.status !== p.status); }).length;
+  const replayed = after.people.filter(p => { const w = people.get(p.id); return !!w && (w.wants !== p.wants || w.hint !== p.hint || w.voice !== p.voice || w.doing !== p.doing || w.status !== p.status); }).length;
   if (newPeople) out.push(`Added ${count(newPeople, 'person', 'people')}`);
   if (replayed) out.push(`Changed what ${count(replayed, 'person', 'people')} ${replayed === 1 ? 'wants or how they act' : 'want or how they act'}`);
 

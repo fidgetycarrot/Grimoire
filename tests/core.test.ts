@@ -738,3 +738,16 @@ describe('quick check errors', () => {
     expect(quickWords(new Error('HTTP 502 from provider'))).toBe('The decision model request failed (code 502).');
   });
 });
+
+describe('voices', () => {
+  test('a person in the scene comes with their voice, and a revision that forgets it keeps the old one', () => {
+    const nb = validateNotebook(sampleNotebook());
+    const note = buildNote({ notebook: nb, pace: 'auto', clock: nb.clock, now: 40, recent: 'Mira looks up from the chain.' });
+    expect(note).toContain('give each one their own voice');
+    expect(note).toContain('Voice: Short, flat sentences');
+    const raw: any = structuredClone(nb); raw.people[0].voice = '';
+    expect(validateNotebook(tidyTruths(raw, nb)).people[0].voice).toContain('Short, flat sentences');
+    const old: any = sampleNotebook(); delete old.people[0].voice;
+    expect(validateNotebook(old).people[0].voice).toBe('');
+  });
+});

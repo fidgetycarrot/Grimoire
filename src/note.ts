@@ -148,8 +148,8 @@ export function buildNote(input: NoteInput): string {
     for (const thread of nearby) lines.push(`- ${thread.title}: ${thread.hint || thread.why}`);
   }
   if (present.length) {
-    lines.push('People here and what drives them:');
-    for (const person of present.slice(0, 4)) lines.push(`- ${person.name}${person.role ? ` (${person.role})` : ''}: wants ${end(person.wants || 'nothing stated yet')}${person.doing ? ` Currently: ${end(person.doing)}` : ''}${person.hint ? ` Play them as: ${end(person.hint)}` : ''}`);
+    lines.push('People here and what drives them (give each one their own voice; nobody should sound like anyone else):');
+    for (const person of present.slice(0, 4)) lines.push(`- ${person.name}${person.role ? ` (${person.role})` : ''}: wants ${end(person.wants || 'nothing stated yet')}${person.doing ? ` Currently: ${end(person.doing)}` : ''}${person.hint ? ` Play them as: ${end(person.hint)}` : ''}${person.voice ? ` Voice: ${end(person.voice)}` : ''}`);
   }
   // A possible beat, matched to the pace. Quiet keeps only gentle ones.
   const beat = quiet ? undefined : notebook.beats.find(b => b.status === 'possible' && !held.has(b.thread) && (!quietTime || b.intensity === 'low') && (!b.thread || notebook.threads.find(t => t.id === b.thread)?.status === 'open'));

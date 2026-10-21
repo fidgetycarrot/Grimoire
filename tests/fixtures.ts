@@ -10,9 +10,9 @@ export function sampleNotebook(): Notebook {
     ],
     story: { question: 'Will the stolen ring be returned before its owner finds out who took it?', stakes: 'The player\'s standing in Low Water.', direction: 'A return, a bargain, or a reckoning.', hiddenTruth: ['The harbor master took the ring to pay a gambling debt.'], twist: '', cameOut: [] },
     people: [
-      { id: 'mira', name: 'Mira', aliases: ['the ferrywoman'], role: 'ferry keeper', wants: 'to keep the ferry running', doing: 'patching the chain', hint: 'dry humor, watches everyone', met: true, status: 'active' },
-      { id: 'cole', name: 'Cole', aliases: [], role: 'traveling barbarian', wants: 'work that pays in silver', doing: 'looking for the ring\'s owner to sell information', hint: 'loud, honest about money', met: false, status: 'active' },
-      { id: 'harbor-master', name: 'Oswin', aliases: ['the harbor master'], role: 'harbor master', wants: 'the ring sold before anyone notices', doing: 'arranging a buyer in the next town', hint: 'polite, avoids questions about money', met: true, status: 'active' },
+      { id: 'mira', name: 'Mira', aliases: ['the ferrywoman'], role: 'ferry keeper', wants: 'to keep the ferry running', doing: 'patching the chain', hint: 'dry humor, watches everyone', voice: 'Short, flat sentences; ferry terms; never asks a question she can answer herself. "Coin first. Then talk."', met: true, status: 'active' },
+      { id: 'cole', name: 'Cole', aliases: [], role: 'traveling barbarian', wants: 'work that pays in silver', doing: 'looking for the ring\'s owner to sell information', hint: 'loud, honest about money', voice: '', met: false, status: 'active' },
+      { id: 'harbor-master', name: 'Oswin', aliases: ['the harbor master'], role: 'harbor master', wants: 'the ring sold before anyone notices', doing: 'arranging a buyer in the next town', hint: 'polite, avoids questions about money', voice: '', met: true, status: 'active' },
     ],
     threads: [
       { id: 'stolen-ring', title: 'The stolen ring', speed: 'steady', why: 'Oswin stole it; its owner will search.', hint: 'the owner is starting to look for it', people: ['harbor-master', 'cole'], status: 'open', closedReason: '', ifFollowed: 'leads to Oswin', ifIgnored: 'the owner\'s search reaches the player',
