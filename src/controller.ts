@@ -316,7 +316,11 @@ export class NotebookController {
     return error instanceof Error && error.message.length < 300 ? error.message : 'Something went wrong. Your notebook was not changed.';
   }
 
-  async create(chatId: string, preferencesInput: unknown): Promise<Job> {
+  async create(chatId: string, preferencesInput: unknown, ideasInput: unknown = '', keepIdeas: unknown = false): Promise<Job> {
+    // Your ideas for the story, if any: the first notebook is built around them.
+    const ideas = typeof ideasInput === 'string' ? ideasInput.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim() : '';
+    if (ideas.length > TALK_LIMITS.message) throw new Error(`Keep your ideas under ${TALK_LIMITS.message} characters.`);
+    const pin = keepIdeas === true && !!ideas;
     return this.serial(chatId, async () => {
       const info = await this.chatInfo(chatId);
       if (!info.supported) throw new Error(info.reason);
@@ -346,9 +350,10 @@ export class NotebookController {
             await this.progress(chatId, job, 'Writing the notebook');
           }
           const material = await this.material(chatId, info.characterId, messages, plan.recent, storySoFar);
-          const result = await askJson(ask, creationMessages(material, state.preferences), value => {
+          const result = await askJson(ask, creationMessages(material, state.preferences, ideas, pin), value => {
             const output = record(value);
-            return { notebook: withoutTimes(validateNotebook(tidyNotebook(output.notebook))), recipe: validateRecipe(output.tracker).recipe };
+            const notes = pin ? (Array.isArray(output.notes) ? output.notes : []).map(n => plain(n, TALK_LIMITS.note)).filter(Boolean).slice(0, 4) : [];
+            return { notebook: withoutTimes(validateNotebook(tidyNotebook(output.notebook))), recipe: validateRecipe(output.tracker).recipe, notes };
           }, signal);
           await this.serial(chatId, async () => {
             const current = await this.load(chatId) ?? state;
@@ -368,6 +373,8 @@ export class NotebookController {
             // Covers only what the model actually read, so a reply that arrived meanwhile is picked up by the next check-up.
             const covered = await fingerprints(conversation(messages));
             current.versions = [{ notebook, covered, at: Date.now(), reason: 'Notebook written', ...(values.location ? { location: values.location } : {}) }];
+            // Ideas you asked to keep become pinned notes, in the model's short form or your own words.
+            if (pin) { const texts = result.notes.length ? result.notes : [plain(ideas, TALK_LIMITS.note)]; current.notes = [...current.notes, ...texts.map(text => ({ id: crypto.randomUUID(), text, at: Date.now() }))].slice(-TALK_LIMITS.notes); }
             current.checks = checks; current.enabled = true; current.needsCheck = covers(covered, prints) ? '' : 'The chat changed while the notebook was being written.';
             current.job = { ...job, status: 'complete', label: 'Notebook ready' };
             await this.save(current);

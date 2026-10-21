@@ -114,7 +114,7 @@ describe('the panel', () => {
   test('a chat without a notebook offers to write one, and needs a connection first', async () => {
     const h = harness({ hasNotebook: false, notebook: null }); await tick();
     h.button('Write the notebook')!.click(); await tick();
-    expect(h.requests.find(r => r.action === 'create')!.input).toEqual({ chatId: 'chat-1', preferences: { tone: 'balanced', twist: true } });
+    expect(h.requests.find(r => r.action === 'create')!.input).toEqual({ chatId: 'chat-1', preferences: { tone: 'balanced', twist: true }, ideas: '', keepIdeas: false });
     const none = harness({ hasNotebook: false, notebook: null }, { connectionId: '' }); await tick();
     expect(none.button('Write the notebook')!.disabled).toBe(true);
     expect(none.root.textContent).toContain('Choose a model connection in Settings first.');

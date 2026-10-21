@@ -99,10 +99,14 @@ export function setup(ctx: SpindleFrontendContext) {
     const twist = el('input'); twist.type = 'checkbox'; twist.checked = view.preferences.twist; twist.style.width = 'auto';
     const twistRow = el('label', 'gm-row gm-small'); twistRow.append(twist, document.createTextNode('A twist is allowed, if one fits'));
     const grid = el('div', 'gm-stack'); grid.append(labeled('Tone', tone, 'The story keeps going as long as you play: when its threads wrap up, a check-up starts the next part from what happened.'));
+    const ideas = el('textarea', 'gm-talk-input'); ideas.rows = 3; ideas.maxLength = 1000; ideas.placeholder = 'Like “a slow-burn romance, trouble with old friends, a trip that goes sideways”';
+    const keepIdeas = el('input'); keepIdeas.type = 'checkbox'; keepIdeas.style.width = 'auto';
+    const keepRow = el('label', 'gm-row gm-small'); keepRow.append(keepIdeas, document.createTextNode('Keep these as lasting notes'));
+    grid.append(labeled('Anything you’d like in this story? (optional)', ideas, 'Grimoire builds the story around your ideas and paces them in over time. It won’t tell you how.'), keepRow);
     const noConnection = !snapshot?.settings.connectionId;
     const parts = view.earlierParts ?? 0;
     const write = button('Write the notebook', async () => {
-      await act('create', { chatId: view.chatId, preferences: { tone: tone.value, twist: twist.checked } });
+      await act('create', { chatId: view.chatId, preferences: { tone: tone.value, twist: twist.checked }, ideas: ideas.value.trim(), keepIdeas: keepIdeas.checked });
       notify(parts ? `Reading the chat, then writing the notebook. This uses ${parts + 1} model requests and can take a few minutes.` : 'Writing the notebook. This uses one model request and can take a minute.');
     }, 'primary');
     write.classList.add('gm-wide'); write.disabled = noConnection || view.job?.status === 'running';
@@ -156,7 +160,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const card = el('section', 'gm-card gm-stack gm-talk');
     if (draftChat !== view.chatId) { draft = ''; draftKeep = false; draftChat = view.chatId; }
     const busy = view.job?.status === 'running', offline = !snapshot?.settings.connectionId;
-    card.append(el('h4', '', 'Talk to Grimoire'), el('p', 'gm-hint', 'Tell Grimoire what you’d like from the story. It changes its plans without telling you what they are, and only asks back if it isn’t sure what you mean.'));
+    card.append(el('h4', '', 'Talk to Grimoire'), el('p', 'gm-hint', 'Tell Grimoire what you’d like from the story, or share an idea. It changes its plans without telling you what they are. Stuck for ideas? Ask it for some.'));
     if (view.notes.length) {
       const notes = el('div', 'gm-stack gm-notes'); notes.append(el('p', 'gm-label', 'Your notes'));
       for (const note of view.notes) {
@@ -183,7 +187,7 @@ export function setup(ctx: SpindleFrontendContext) {
       actions.append(button('Clear conversation', async () => { await act('clear-talk', { chatId: view.chatId }); }));
       card.append(log, actions);
     }
-    const box = el('textarea', 'gm-talk-input'); box.rows = 3; box.maxLength = 1000; box.value = draft; box.placeholder = 'Like “This is moving too fast” or “Give the side characters more to do”';
+    const box = el('textarea', 'gm-talk-input'); box.rows = 3; box.maxLength = 1000; box.value = draft; box.placeholder = 'Like “This is moving too fast”, “I’d love a road trip someday”, or “Any ideas for Sam?”';
     box.setAttribute('aria-label', 'Message to Grimoire');
     box.addEventListener('input', () => { draft = box.value; });
     const keep = el('input'); keep.type = 'checkbox'; keep.checked = draftKeep; keep.style.width = 'auto';

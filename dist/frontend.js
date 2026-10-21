@@ -27,7 +27,7 @@ var styles = `
 .gm-home{margin:14px 0;font:13px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--lumiverse-text,inherit)}.gm-home[hidden]{display:none!important}.gm-home-title{display:flex;align-items:center;gap:7px;font-weight:650;font-size:12px;letter-spacing:.5px;text-transform:uppercase;opacity:.75;margin-bottom:8px}.gm-home-title svg{width:15px;height:15px}
 .gm-home-list,.gm-story-list{display:flex;gap:8px;flex-wrap:wrap}.gm-story-list{flex-direction:column}
 .gm-story{display:flex;flex-direction:column;align-items:flex-start;gap:1px;text-align:left;border:1px solid var(--lumiverse-border,rgba(127,127,127,.28));border-radius:10px;background:var(--lumiverse-bg-secondary,rgba(127,127,127,.08));color:inherit;padding:8px 12px;cursor:pointer;max-width:260px;min-width:0;font:inherit}.gm-story:hover{border-color:var(--lumiverse-primary,#8fb3d9)}.gm-story-name{font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}.gm-story-meta{font-size:11.5px;opacity:.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}.gm-story-list .gm-story{max-width:none;width:100%}
-.gm-talk textarea.gm-talk-input{min-height:72px;font:13px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}.gm-note{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;border-left:2px solid var(--gm-accent);padding:2px 0 2px 10px}.gm-note .gm-button{flex:none;padding:3px 9px;font-size:11.5px}
+.gm-app textarea.gm-talk-input{min-height:72px;font:13px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}.gm-note{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;border-left:2px solid var(--gm-accent);padding:2px 0 2px 10px}.gm-note .gm-button{flex:none;padding:3px 9px;font-size:11.5px}
 .gm-talk-log{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--gm-rule);padding-top:10px}.gm-line{display:flex;flex-direction:column;gap:2px;padding:7px 10px;border-radius:9px;background:color-mix(in srgb,var(--gm-ink) 4%,transparent)}.gm-line-you{align-self:flex-end;max-width:88%;background:color-mix(in srgb,var(--gm-accent) 12%,transparent)}.gm-line-grimoire{align-self:flex-start;max-width:94%}.gm-line-who{font-size:10.5px;font-weight:650;letter-spacing:.5px;text-transform:uppercase;color:var(--gm-muted)}.gm-changes{margin:3px 0 0;padding-left:16px;font-size:11.5px;color:var(--gm-muted)}
 .gm-sub{border-top:1px solid var(--gm-rule);padding-top:12px}.gm-part{border-top:1px solid var(--gm-rule);padding-top:12px}.gm-part:first-child{border:0;padding-top:0}
 .gm-chips{display:flex;flex-wrap:wrap;gap:6px}.gm-chips .gm-button{padding:6px 11px;font-size:12px;border-radius:999px}
@@ -53,7 +53,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.8.2";
+var VERSION = "0.9.0";
 
 // src/frontend.ts
 var ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8 3v18"/><path d="M12 8h3M12 12h3"/></svg>';
@@ -235,10 +235,20 @@ function setup(ctx) {
     twistRow.append(twist, document.createTextNode("A twist is allowed, if one fits"));
     const grid = el("div", "gm-stack");
     grid.append(labeled("Tone", tone, "The story keeps going as long as you play: when its threads wrap up, a check-up starts the next part from what happened."));
+    const ideas = el("textarea", "gm-talk-input");
+    ideas.rows = 3;
+    ideas.maxLength = 1000;
+    ideas.placeholder = "Like “a slow-burn romance, trouble with old friends, a trip that goes sideways”";
+    const keepIdeas = el("input");
+    keepIdeas.type = "checkbox";
+    keepIdeas.style.width = "auto";
+    const keepRow = el("label", "gm-row gm-small");
+    keepRow.append(keepIdeas, document.createTextNode("Keep these as lasting notes"));
+    grid.append(labeled("Anything you’d like in this story? (optional)", ideas, "Grimoire builds the story around your ideas and paces them in over time. It won’t tell you how."), keepRow);
     const noConnection = !snapshot?.settings.connectionId;
     const parts = view.earlierParts ?? 0;
     const write = button("Write the notebook", async () => {
-      await act("create", { chatId: view.chatId, preferences: { tone: tone.value, twist: twist.checked } });
+      await act("create", { chatId: view.chatId, preferences: { tone: tone.value, twist: twist.checked }, ideas: ideas.value.trim(), keepIdeas: keepIdeas.checked });
       notify(parts ? `Reading the chat, then writing the notebook. This uses ${parts + 1} model requests and can take a few minutes.` : "Writing the notebook. This uses one model request and can take a minute.");
     }, "primary");
     write.classList.add("gm-wide");
@@ -312,7 +322,7 @@ function setup(ctx) {
       draftChat = view.chatId;
     }
     const busy = view.job?.status === "running", offline = !snapshot?.settings.connectionId;
-    card.append(el("h4", "", "Talk to Grimoire"), el("p", "gm-hint", "Tell Grimoire what you’d like from the story. It changes its plans without telling you what they are, and only asks back if it isn’t sure what you mean."));
+    card.append(el("h4", "", "Talk to Grimoire"), el("p", "gm-hint", "Tell Grimoire what you’d like from the story, or share an idea. It changes its plans without telling you what they are. Stuck for ideas? Ask it for some."));
     if (view.notes.length) {
       const notes = el("div", "gm-stack gm-notes");
       notes.append(el("p", "gm-label", "Your notes"));
@@ -361,7 +371,7 @@ function setup(ctx) {
     box.rows = 3;
     box.maxLength = 1000;
     box.value = draft;
-    box.placeholder = "Like “This is moving too fast” or “Give the side characters more to do”";
+    box.placeholder = "Like “This is moving too fast”, “I’d love a road trip someday”, or “Any ideas for Sam?”";
     box.setAttribute("aria-label", "Message to Grimoire");
     box.addEventListener("input", () => {
       draft = box.value;

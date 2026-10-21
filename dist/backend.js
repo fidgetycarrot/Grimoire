@@ -956,19 +956,20 @@ Return {"record": "..."}: the story so far, rewritten to include this part. Keep
     { role: "user", content: JSON.stringify({ task: "grimoire-digest-v1", ...input }) }
   ];
 }
-function creationMessages(material, preferences) {
+function creationMessages(material, preferences, ideas = "", keep = false) {
   const twist = preferences.twist ? 'A twist is allowed. If it fits, hide one in "hiddenTruth" and "twist" (or arc.turn for kishotenketsu), and prepare it with seeds. It is optional, not the point.' : 'Do not plan a twist. Leave "twist" empty; a kishotenketsu turn should then be a gentle change of view rather than a reveal.';
   return [
     { role: "system", content: `${SAFETY}
 You write a private story notebook for an ongoing roleplay chat. It gives the narrator a story of its own: where it is going, why, and how fast. The player must not see it.
-Return {"notebook": ${SHAPE}, "tracker": {"fields": [], "note": ""}}.
+Return {"notebook": ${SHAPE}, "tracker": {"fields": [], "note": ""}${keep ? ', "notes": ["\u2026"]' : ""}}.
 ${CRAFT}
-Tone: ${preferences.tone}. ${twist}
+Tone: ${preferences.tone}. ${twist}${ideas ? `
+The player, who co-writes this story, shared ideas for it in "ideas". Build the notebook around them where they fit the card: give them threads, people, beats, or breadcrumbs, paced like everything else, so they arrive in time rather than all at once. They are wishes for where the story can go, not events that already happened.${keep ? ` Also return "notes": one to four short standing instructions in plain words that keep these wishes in force, as close to the player's own words as you can, with no spoilers.` : ""}` : ""}
 If the chat already has messages, start from what has happened: record it under events, mark people met, and set the clock to now. A long chat comes with "storySoFar", a record of everything before the messages in "chat"; treat it as part of the chat. Keep events compact: at most about 30 short lines, merging older ones. Threads and people the chat already started come first; plan new ones around them.
 
 Tracker: many presets make the narrator write a status block in each reply (time, place, who is present). Look at the sample replies and saved variables. For each of these fields that is reliably present, describe where it lives: "datetime" or "date" and "time" (the story date and time), "location", "present" (who is in the scene). Use only these methods:
 ${TRACKER_METHODS}Each field: {"name": "datetime|date|time|location|present", "type": "datetime|date|time|text|list", "source": {...}}. If there is no tracker, return an empty fields list. Never guess a format you cannot see.` },
-    { role: "user", content: JSON.stringify({ task: "grimoire-create-v1", preferences, ...material }) }
+    { role: "user", content: JSON.stringify({ task: "grimoire-create-v1", preferences, ...ideas ? { ideas } : {}, ...material }) }
   ];
 }
 function checkupMessages(input) {
@@ -1008,7 +1009,8 @@ ${PUSH_RULES}
 ` : ""}How to answer:
 - If you understand what they want well enough to act on it, act. Revise the notebook so the story goes their way, set "ask" to false, and in "reply" say in one or two short sentences what you will do, in their terms. If nothing needs to change, return "notebook": null and say so.
 - Only if their message is unclear, or could mean very different changes, set "ask" to true, return "notebook": null, and put one short question in "reply". Once they have answered, act. Never ask more than you need.
-- Keep it brief and end there. Do not ask how they feel about it, offer more ideas, or invite them to keep talking.
+- Keep it brief and end there. Do not ask how they feel about it, offer ideas they didn't ask for, or invite them to keep talking.
+- Only when they ask for ideas ("help me think of something", "any ideas for\u2026"): offer two or three short pitches in "reply", one line each, numbered. Each is an open direction, not a plan ("someone from your past turns up"), built on what the player has seen and met. Never pitch the notebook's secrets, its planned events, or anything that would give them away. Set "ask" to true and "notebook" to null, so they can pick one or riff on it; then act on their choice.
 - The reply must contain no spoilers. The player has not seen the notebook. Name only people, places, and events they have mentioned or met in the chat, and secrets in story.cameOut, which they already know. Never mention secrets, twists, planned events, breadcrumbs, or anything else they don't know.
 - Their character is theirs to play. If they ask you to make their character do or feel something, say that part is theirs, and change the world around it instead.
 - What already happened in the chat stays happened. Change what comes next: threads (their speed, steps, and whether they stay open), planned moments, breadcrumbs, people's wants and how they are played, and where the story is heading. Close threads with a reason and mark beats or seeds dropped instead of removing them. Keep every person, thread, step, beat, and seed id that exists.
@@ -1818,7 +1820,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.8.2";
+var VERSION = "0.9.0";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, lines: 40, notes: 8, note: 200 };
@@ -2248,7 +2250,11 @@ class NotebookController {
       return error.message;
     return error instanceof Error && error.message.length < 300 ? error.message : "Something went wrong. Your notebook was not changed.";
   }
-  async create(chatId, preferencesInput) {
+  async create(chatId, preferencesInput, ideasInput = "", keepIdeas = false) {
+    const ideas = typeof ideasInput === "string" ? ideasInput.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "").trim() : "";
+    if (ideas.length > TALK_LIMITS.message)
+      throw new Error(`Keep your ideas under ${TALK_LIMITS.message} characters.`);
+    const pin = keepIdeas === true && !!ideas;
     return this.serial(chatId, async () => {
       const info = await this.chatInfo(chatId);
       if (!info.supported)
@@ -2280,9 +2286,10 @@ class NotebookController {
             await this.progress(chatId, job, "Writing the notebook");
           }
           const material = await this.material(chatId, info.characterId, messages, plan.recent, storySoFar);
-          const result = await askJson(ask, creationMessages(material, state.preferences), (value) => {
+          const result = await askJson(ask, creationMessages(material, state.preferences, ideas, pin), (value) => {
             const output = record6(value);
-            return { notebook: withoutTimes(validateNotebook(tidyNotebook(output.notebook))), recipe: validateRecipe(output.tracker).recipe };
+            const notes = pin ? (Array.isArray(output.notes) ? output.notes : []).map((n) => plain(n, TALK_LIMITS.note)).filter(Boolean).slice(0, 4) : [];
+            return { notebook: withoutTimes(validateNotebook(tidyNotebook(output.notebook))), recipe: validateRecipe(output.tracker).recipe, notes };
           }, signal);
           await this.serial(chatId, async () => {
             const current = await this.load(chatId) ?? state;
@@ -2304,6 +2311,10 @@ class NotebookController {
             const notebook = stamp({ ...result.notebook, clock }, { hours: absoluteHours(clock), reply: storyReplies(this.turns(current.recipe, messages)).length });
             const covered = await fingerprints(conversation(messages));
             current.versions = [{ notebook, covered, at: Date.now(), reason: "Notebook written", ...values.location ? { location: values.location } : {} }];
+            if (pin) {
+              const texts = result.notes.length ? result.notes : [plain(ideas, TALK_LIMITS.note)];
+              current.notes = [...current.notes, ...texts.map((text) => ({ id: crypto.randomUUID(), text, at: Date.now() }))].slice(-TALK_LIMITS.notes);
+            }
             current.checks = checks;
             current.enabled = true;
             current.needsCheck = covers(covered, prints) ? "" : "The chat changed while the notebook was being written.";
@@ -2873,7 +2884,7 @@ async function handle(controller, action, input) {
     case "snapshot":
       return controller.snapshot(typeof data.chatId === "string" ? data.chatId : null);
     case "create":
-      return controller.create(string(data.chatId, "Chat"), data.preferences);
+      return controller.create(string(data.chatId, "Chat"), data.preferences, data.ideas, data.keepIdeas);
     case "checkup": {
       const job = await controller.checkup(string(data.chatId, "Chat"), "You asked for a check-up");
       if (!job)

@@ -947,3 +947,36 @@ describe('secrets that came out, in the chat', () => {
     await expect(c.push('chat-1', 'secret')).rejects.toThrow('Every secret in this story has already come out');
   });
 });
+
+describe('your ideas for the story', () => {
+  test('ideas at the start shape the first notebook, and kept ones become pinned notes', async () => {
+    const h = host();
+    h.add('assistant', `The ferry bell rings.${tracker('Day 1, 18:00', 'The ferry')}`);
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 3 }, {});
+    const m = model({ create: input => ({ ...created(), notes: input.ideas ? ['Keep a slow-burn romance with Mira.'] : [] }) });
+    const c = new NotebookController(h.api, undefined, () => {}, m.ask);
+    await c.create('chat-1', {}, 'slow burn with Mira, and a storm that strands us', true); await c.waitForJobs();
+    const sent = m.calls[0];
+    expect(sent.input.ideas).toBe('slow burn with Mira, and a storm that strands us');
+    expect(sent.messages[0].content).toContain('shared ideas for it in "ideas"');
+    expect(sent.messages[0].content).toContain('"notes"');
+    expect((await c.view('chat-1'))!.notes.map(n => n.text)).toEqual(['Keep a slow-burn romance with Mira.']);
+  });
+  test('without ideas nothing changes, and ideas without keep pin nothing', async () => {
+    const { m, c } = await ready();
+    expect(m.calls[0].input.ideas).toBeUndefined();
+    expect(m.calls[0].messages[0].content).not.toContain('"ideas"');
+    expect((await c.view('chat-1'))!.notes).toEqual([]);
+  });
+  test('asking for ideas gets pitches and keeps the conversation open for your pick', async () => {
+    let turn = 0;
+    const { m, c } = await ready(host(), model({ create: created, talk: input => turn++ === 0
+      ? { ask: true, reply: '1. Someone from your past turns up. 2. The ferry gets a strange passenger. 3. Mira asks a favor.', notebook: null }
+      : { ask: false, reply: 'Going with the favor.', notebook: input.notebook } }));
+    await c.talk('chat-1', 'Any ideas for Mira?', false); await c.waitForJobs();
+    expect(m.calls.find(x => x.task === 'grimoire-talk-v1')!.messages[0].content).toContain('Only when they ask for ideas');
+    expect((await c.view('chat-1'))!.talk.at(-1)).toMatchObject({ from: 'grimoire', asked: true });
+    await c.talk('chat-1', 'The third one.', false); await c.waitForJobs();
+    expect(m.calls.filter(x => x.task === 'grimoire-talk-v1')[1].input.exchange).toHaveLength(3);
+  });
+});
