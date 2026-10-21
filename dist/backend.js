@@ -1034,7 +1034,7 @@ ${input.notes.length ? NOTES : ""}${input.replan ? REPLAN : ""}${input.resync ? 
 - Revise future beats and plans when the player's choices change what makes sense. Keep the pacing rules below: if waiting steps are packed too tightly (several threads peaking on the same night, steady steps hours apart), spread them out by raising afterHours on waiting steps. Change how the story gets somewhere, not why, unless the player has made the old why impossible. Do not force the player back onto an old plan.
 - Entries with "quick": true were marked after a reply by a fast reader. Confirm them by keeping them, or correct them if the chat does not support them (a step back to waiting, a beat back to possible, a seed back to waiting or planted).
 - Secrets that came out: once the chat shows the player has learned a hidden truth (or the twist), or it came out where they could see, move it word for word to story.cameOut and out of hiddenTruth (empty twist if it was the twist). From then on it is an established fact: rewrite people's "hint" and "doing", thread hints, and beats so nobody keeps acting as if it were still secret, and plan no more clues or reveal moments for it; build on it instead. A suspicion or a guess is not learning it. Never move anything back out of cameOut.
-- Voices: keep each person's "voice" true to how they have actually spoken in the chat, and fill it in for anyone who has none. If two people have started to sound alike, sharpen the difference.
+- Voices: fill in "voice" for anyone who has none, and keep each one steady once set. Base it on who the person is (age, background, job, temperament, the card) and the moments where they sounded most like themselves, not on how the narrator has been writing everyone lately: narrators drift into one shared voice, and the notebook is how to pull them back out. If several people have started to sound alike, give each a clearly different voice.
 - Seeds: mark a seed "planted" once the chat has mentioned its detail, and "paid" once it came back with its meaning. When a thread ends where the player can't see, or a seed's story is left behind, consider an "echo" (as above in shape: detail is how the player could hear of it) so it can surface later; that makes the world feel alive. Never move a seed back to waiting. When the narrator mentions a striking detail in passing that isn't a seed, consider making it one and planning where it pays off; that is how the story stays cohesive.
 - Arc stage: move it on when the story has: ki to sho once people and place are established; sho to ten only after development has had room and the turn's seeds are planted; ten to ketsu once the turn has landed; for conflict, setup to rising to climax to resolution the same way.
 - When most threads have closed or the story question has been answered, open the next arc: a new story question if needed, and new threads that grow from what has happened and from what people now want. The story goes on as long as the player plays.
@@ -1987,7 +1987,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.13.0";
+var VERSION = "0.13.1";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, lines: 40, notes: 8, note: 200 };
