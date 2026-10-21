@@ -64,7 +64,9 @@ export function launchPush(notebook: Notebook, push: Push): Notebook {
   return { ...notebook, threads: notebook.threads.map(thread => {
     if (thread.id !== push.thread) return thread;
     let first = true;
-    return { ...thread, speed: 'urgent', steps: thread.steps.map(step => {
+    // One emergency at a time: with another urgent storyline open, the push builds at a steady pace; its sign still comes now.
+    const busy = notebook.threads.some(t => t.id !== thread.id && t.status === 'open' && t.speed === 'urgent');
+    return { ...thread, speed: busy ? (thread.speed === 'urgent' ? 'steady' : thread.speed === 'slow' ? 'steady' : thread.speed) : 'urgent', steps: thread.steps.map(step => {
       if (step.status !== 'waiting' || !first) return step;
       first = false;
       return { ...step, afterHours: 0 };

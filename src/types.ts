@@ -6,7 +6,7 @@ import type { FieldCheck, Recipe } from './tracker';
 import type { Glance, SkipOffer } from './skip';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.9.0';
+export const VERSION = '0.10.0';
 export const MAX_VERSIONS = 16;
 
 /** One saved state of the notebook and the chat history it describes. */
@@ -33,6 +33,12 @@ export interface ChatState {
   resync: number | null;
   /** The quick check's recent answers as plain numbers, for checking how it judges. No story text. */
   quickLog: QuickRecord[];
+  /** Replies where the story ran ahead of its plan (a step happened before it was offered, or the quick check saw rushing). */
+  paceSignals: number[];
+  /** A re-plan of this part's timing is due at the next check-up. */
+  replan: boolean;
+  /** The reply of the last re-plan, so they stay rare. */
+  replannedAt: number;
   /** Talking to Grimoire: the recent conversation, newest last. */
   talk: TalkLine[];
   /** Standing wishes the player pinned. They steer every check-up and the narrator note. */

@@ -235,7 +235,7 @@ export function setup(ctx: SpindleFrontendContext) {
       el('div', 'gm-sub'), skipRow, skip, el('div', 'gm-sub'), remove);
     return d.root;
   }
-  const QUICK_WORDS: Array<[RegExp, string]> = [[/^due_/, 'Planned development shown'], [/^moment_/, 'Possible moment happened'], [/^detail_mentioned$/, 'Breadcrumb mentioned'], [/^echo_heard$/, 'Echo heard'], [/^callback_/, 'Breadcrumb paid off'], [/^fits_/, 'Storyline still fits'], [/^truth_/, 'Secret came out'], [/^story_shift$/, 'Change of direction'], [/^new_turn$/, 'Something new']];
+  const QUICK_WORDS: Array<[RegExp, string]> = [[/^due_/, 'Planned development shown'], [/^moment_/, 'Possible moment happened'], [/^detail_mentioned$/, 'Breadcrumb mentioned'], [/^echo_heard$/, 'Echo heard'], [/^callback_/, 'Breadcrumb paid off'], [/^fits_/, 'Storyline still fits'], [/^truth_/, 'Secret came out'], [/^story_shift$/, 'Change of direction'], [/^rushing$/, 'Rushing'], [/^new_turn$/, 'Something new']];
   const RHYTHM_WORDS: Record<string, string> = { calm: 'calm', rising: 'building', peak: 'big moment', aftermath: 'aftermath', stalled: 'stalled' };
   const STAGE_WORDS: Record<string, string> = { setup: 'setup', rising: 'rising action', climax: 'climax', resolution: 'resolution', ki: 'introduction', sho: 'development', ten: 'the turn', ketsu: 'bringing it together' };
   const part = (title: string) => { const s = el('section', 'gm-stack gm-part'); s.append(el('h4', '', title)); return s; };
@@ -251,6 +251,7 @@ export function setup(ctx: SpindleFrontendContext) {
       ['Breadcrumbs', `${g.seeds.planted} planted, ${g.seeds.waiting} waiting, ${g.seeds.paid} paid off${g.seeds.echo ? `, ${g.seeds.echo} still out in the world` : ''}`],
       ['Planned moments', `${g.moments.possible} possible (${g.moments.big} big)${g.moments.happened ? `, ${g.moments.happened} happened` : ''}`],
       ['People', `${g.people.total}, ${g.people.met} met so far`],
+      ...(g.part ? [['This part of the story', `about ${g.part.elapsed} of roughly ${g.part.length} replies in`] as [string, string]] : []),
     ];
     const list = el('ul', 'gm-fields');
     for (const [label, value] of rows) { const li = el('li'); li.append(el('span', '', label), el('span', 'gm-dot', value)); list.append(li); }

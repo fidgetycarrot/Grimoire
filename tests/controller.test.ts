@@ -407,7 +407,7 @@ describe('the quick check', () => {
     h.add('user', 'I look at the sky.'); h.add('assistant', `<div style="color:red">Shutters bang all along the street.</div>${tracker('Day 1, 18:10', 'The ferry')}`);
     await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
     const sent = h.decisionCalls[0];
-    expect(Object.keys(sent.questions)).toEqual(['due_1', 'moment_1', 'moment_2', 'detail_mentioned', 'fits_1', 'truth_1', 'story_shift', 'rhythm', 'new_turn']);
+    expect(Object.keys(sent.questions)).toEqual(['due_1', 'moment_1', 'moment_2', 'detail_mentioned', 'fits_1', 'truth_1', 'story_shift', 'rushing', 'rhythm', 'new_turn']);
     expect(sent.questions.due_1.instructions).toContain('Shutters bang');
     expect(sent.state.latestReply).toContain('Shutters bang all along the street.');
     expect(sent.state.latestReply).not.toContain('style');
@@ -878,7 +878,8 @@ describe('getting a stalled story moving', () => {
     expect(sent.messages[0].content).toContain('Grow it out of something already established');
     const view = (await c.view('chat-1'))!;
     expect(view.talk.map(l => l.text)).toEqual(['Get things moving: someone makes a move', 'Something is in motion. Watch for it over the next few replies.']);
-    expect(view.notebook!.threads[0]).toMatchObject({ speed: 'urgent', steps: [{ afterHours: 0, status: 'waiting' }, {}, {}] });
+    // The storm is already urgent, so the push builds at a steady pace; its sign still comes now.
+    expect(view.notebook!.threads[0]).toMatchObject({ speed: 'steady', steps: [{ afterHours: 0, status: 'waiting' }, {}, {}] });
     expect(view.summary).toBe('Last update: You asked to get things moving');
     expect(await c.noteFor('chat-1')).toContain('A boy waits by the ferry');
     expect(view.canUndo).toBe(true);
@@ -931,7 +932,7 @@ describe('getting a stalled story moving', () => {
     await c.talk('chat-1', 'I am bored, this has stalled.', false); await c.waitForJobs();
     const view = (await c.view('chat-1'))!;
     expect(view.talk.at(-1)!.text).toBe('Something is in motion. Watch for it over the next few replies.');
-    expect(view.notebook!.threads[0].speed).toBe('urgent');
+    expect(view.notebook!.threads[0].steps[0].afterHours).toBe(0);
   });
 });
 
@@ -978,5 +979,34 @@ describe('your ideas for the story', () => {
     expect((await c.view('chat-1'))!.talk.at(-1)).toMatchObject({ from: 'grimoire', asked: true });
     await c.talk('chat-1', 'The third one.', false); await c.waitForJobs();
     expect(m.calls.filter(x => x.task === 'grimoire-talk-v1')[1].input.exchange).toHaveLength(3);
+  });
+});
+
+describe('pacing that stays on plan', () => {
+  test('a second emergency is sent back once, then slowed by code if it comes back', async () => {
+    const { h, m, c } = await ready(host(), model({ create: created, checkup: input => ({ notebook: { ...input.notebook, threads: input.notebook.threads.map((t: any) => t.id === 'stolen-ring' ? { ...t, speed: 'urgent' } : t) }, tracker: null }) }));
+    h.add('user', 'I wait.'); h.add('assistant', `Mira waits.${tracker('Day 1, 18:30', 'The ferry')}`);
+    await c.checkup('chat-1', 'You asked for a check-up'); await c.waitForJobs();
+    const tries = m.calls.filter(x => x.task === 'grimoire-checkup-v1');
+    expect(tries.at(-1)!.messages.at(-1)!.content).toContain('Only one storyline may be urgent');
+    const view = (await c.view('chat-1'))!;
+    expect(view.job).toMatchObject({ status: 'complete' });
+    expect(view.notebook!.threads.map(t => t.speed)).toEqual(['steady', 'urgent']);
+  });
+  test('running ahead three times asks for a re-plan, which the next check-up carries out', async () => {
+    let early = true;
+    const { h, m, c } = await ready(host(), model({ create: created, checkup: input => ({ notebook: early ? { ...input.notebook, threads: input.notebook.threads.map((t: any) => t.id === 'stolen-ring' ? { ...t, steps: t.steps.map((s: any) => ({ ...s, status: 'shown' })) } : t) } : input.notebook, tracker: null }) }));
+    h.add('user', 'I wait.'); h.add('assistant', `Mira waits.${tracker('Day 1, 18:30', 'The ferry')}`);
+    await c.checkup('chat-1', 'You asked for a check-up'); await c.waitForJobs();
+    early = false;
+    h.add('user', 'I wait more.'); h.add('assistant', `Still waiting.${tracker('Day 1, 18:40', 'The ferry')}`);
+    await c.checkup('chat-1', 'You asked for a check-up'); await c.waitForJobs();
+    const last = m.calls.filter(x => x.task === 'grimoire-checkup-v1').at(-1)!;
+    expect(last.input.replan).toBe(true);
+    expect(last.messages[0].content).toContain('running ahead of its plan');
+    expect(last.input.part).toMatchObject({ length: 60 });
+    h.add('user', 'Again.'); h.add('assistant', `Again.${tracker('Day 1, 18:50', 'The ferry')}`);
+    await c.checkup('chat-1', 'You asked for a check-up'); await c.waitForJobs();
+    expect(m.calls.filter(x => x.task === 'grimoire-checkup-v1').at(-1)!.input.replan).toBe(false);
   });
 });

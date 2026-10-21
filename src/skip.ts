@@ -1,5 +1,5 @@
 import { describeDuration, type StoryClock } from './clock';
-import { dueThreads, type Moment, type Notebook } from './notebook';
+import { dueThreads, partProgress, type Moment, type Notebook } from './notebook';
 
 /**
  * Suggesting a time skip when a scene has gone quiet.
@@ -70,6 +70,8 @@ export interface Glance {
   /** Replies until the next planned development at the latest, if any is planned. */
   nextInReplies: number | null;
   dueNow: number;
+  /** How far into this part of the story, in replies, of its rough length. */
+  part: { elapsed: number; length: number } | null;
 }
 export function glance(notebook: Notebook, moment: Moment): Glance {
   const open = notebook.threads.filter(t => t.status === 'open');
@@ -88,6 +90,6 @@ export function glance(notebook: Notebook, moment: Moment): Glance {
     seeds: { waiting: notebook.seeds.filter(s => s.status === 'waiting').length, planted: notebook.seeds.filter(s => s.status === 'planted').length, paid: notebook.seeds.filter(s => s.status === 'paid').length, echo: notebook.seeds.filter(s => s.status === 'echo').length },
     moments: { possible: notebook.beats.filter(b => b.status === 'possible').length, big: notebook.beats.filter(b => b.status === 'possible' && b.intensity === 'high').length, happened: notebook.beats.filter(b => b.status === 'happened').length },
     people: { total: notebook.people.filter(p => p.status === 'active').length, met: notebook.people.filter(p => p.status === 'active' && p.met).length },
-    nextInReplies: next, dueNow: dueThreads(notebook, moment).length,
+    nextInReplies: next, dueNow: dueThreads(notebook, moment).length, part: partProgress(notebook, moment),
   };
 }

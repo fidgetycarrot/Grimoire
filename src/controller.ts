@@ -4,10 +4,11 @@ import { conversation, fingerprints, newestMatching, covers, planHistory, readab
 import { splitOoc } from './ooc';
 import { askJson, askModel, ModelError, type Ask } from './model';
 import { buildNote, liveClock, paceLine, type ClockSources } from './note';
-import { dueThreads, fillReplies, keepTimes, mergeRevision, NotebookError, stamp, validateNotebook, waitsFor, withoutTimes, type Moment, type Notebook, type Pace, type Preferences } from './notebook';
+import { dueThreads, fillReplies, keepTimes, mergeRevision, NotebookError, partProgress, stamp, validateNotebook, waitsFor, withoutTimes, type Moment, type Notebook, type Pace, type Preferences } from './notebook';
 import { checkupMessages, creationMessages, digestMessages, talkMessages, type Material } from './prompts';
 import { describeChanges, openExchange } from './talk';
 import { checkPush, launchPush, PUSH_KINDS, secretsLeft, type PushKind } from './push';
+import { earlySteps, enforcePace, fixPace } from './pacing';
 import { plain, plainBlock, tidyNotebook } from './tidy';
 import { applyQuick, quickError, quickQuestions, quickState } from './quick';
 import { glance, skipOffer } from './skip';
@@ -132,6 +133,7 @@ export class NotebookController {
         skipHours: Number(saved.skipHours) > 0 ? Number(saved.skipHours) : 0, skipTurn: Number(saved.skipTurn) > 0 ? Number(saved.skipTurn) : 0, needsCheck: typeof saved.needsCheck === 'string' ? saved.needsCheck : '', trackerTried: saved.trackerTried === true, skipDismissedAt: Number(saved.skipDismissedAt) > 0 ? Number(saved.skipDismissedAt) : 0,
         held: Array.isArray(saved.held) ? saved.held.filter((x): x is string => typeof x === 'string').slice(0, 12) : [], resync: Number.isInteger(saved.resync) ? Number(saved.resync) : null,
         talk: talkLines(saved.talk), notes: playerNotes(saved.notes), quickLog: quickLog(saved.quickLog),
+        paceSignals: Array.isArray(saved.paceSignals) ? saved.paceSignals.filter((x): x is number => Number.isInteger(x)).slice(-12) : [], replan: saved.replan === true, replannedAt: Number(saved.replannedAt) || 0,
         quick: saved.quick && typeof saved.quick === 'object' ? { at: Number(record(saved.quick).at) || 0, ok: record(saved.quick).ok === true, error: String(record(saved.quick).error ?? '').slice(0, 200) } : null,
         // A job cannot survive a restart; its request may or may not have finished.
         job: job && job.status === 'running' && !this.running.has(chatId) ? { ...job, status: 'failed', label: 'Stopped when Lumiverse restarted', error: 'Run it again when ready.' } : job,
@@ -147,7 +149,7 @@ export class NotebookController {
     await this.api.userStorage.setJson(this.path(state.chatId), state, { userId: this.userId });
   }
   private blank(chatId: string): ChatState {
-    return { version: 1, chatId, enabled: false, pace: 'auto', preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: '' }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: '', trackerTried: false, quick: null, skipDismissedAt: 0, held: [], resync: null, talk: [], notes: [], quickLog: [], job: null, updatedAt: 0 };
+    return { version: 1, chatId, enabled: false, pace: 'auto', preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: '' }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: '', trackerTried: false, quick: null, skipDismissedAt: 0, held: [], resync: null, talk: [], notes: [], quickLog: [], paceSignals: [], replan: false, replannedAt: 0, job: null, updatedAt: 0 };
   }
   private async chatInfo(chatId: string): Promise<{ name: string; supported: boolean; reason: string; characterId: string }> {
     const chat = await this.api.chats.get(chatId, this.userId);
@@ -350,10 +352,14 @@ export class NotebookController {
             await this.progress(chatId, job, 'Writing the notebook');
           }
           const material = await this.material(chatId, info.characterId, messages, plan.recent, storySoFar);
+          let round = 0;
           const result = await askJson(ask, creationMessages(material, state.preferences, ideas, pin), value => {
+            round++;
             const output = record(value);
+            const first = validateNotebook(tidyNotebook(output.notebook));
+            if (round === 1) enforcePace(null, first);
             const notes = pin ? (Array.isArray(output.notes) ? output.notes : []).map(n => plain(n, TALK_LIMITS.note)).filter(Boolean).slice(0, 4) : [];
-            return { notebook: withoutTimes(validateNotebook(tidyNotebook(output.notebook))), recipe: validateRecipe(output.tracker).recipe, notes };
+            return { notebook: withoutTimes(round === 1 ? first : fixPace(null, first)), recipe: validateRecipe(output.tracker).recipe, notes };
           }, signal);
           await this.serial(chatId, async () => {
             const current = await this.load(chatId) ?? state;
@@ -428,18 +434,23 @@ export class NotebookController {
     const input = {
       notebook: { ...base.notebook, clock: live.clock }, pace: state.pace, chat, trackerText: live.text, trackerValues: live.values, trackerChecks: live.state.checks, recipe: state.recipe,
       clockOwner: { day: live.sources.day, hour: live.sources.hour }, due: dueThreads(base.notebook, live.moment).map(d => ({ thread: d.thread.id, step: d.step.id })),
-      skipHours: state.skipHours, reason, preferences: state.preferences, resync: state.resync !== null, held: state.held, notes: state.notes.map(n => n.text), replies: learning ? this.trackerSamples(live.turns).slice(0, 2).map(r => r.slice(0, 20_000)) : [],
+      skipHours: state.skipHours, reason, preferences: state.preferences, resync: state.resync !== null, held: state.held, notes: state.notes.map(n => n.text), part: partProgress(base.notebook, live.moment), replan: state.replan, replies: learning ? this.trackerSamples(live.turns).slice(0, 2).map(r => r.slice(0, 20_000)) : [],
     };
     this.track((async () => {
       try {
+        let round = 0;
         const result = await askJson(ask, checkupMessages(input), value => {
+          round++;
           const output = record(value);
-          const revised = validateNotebook(tidyNotebook(output.notebook, base.notebook));
+          let revised = validateNotebook(tidyNotebook(output.notebook, base.notebook));
+          // Pacing rules: the first answer that breaks one is sent back; a second gets the plainest fix.
+          const rules = { speedUps: Object.fromEntries(Object.entries(record(output.speedUps)).map(([k, v]) => [k, typeof v === 'string' ? v : ''])) };
+          if (round === 1) enforcePace(base.notebook, revised, rules); else revised = fixPace(base.notebook, revised, rules);
           let merged = mergeRevision(base.notebook, revised, live.moment);
           // Time only moves forward. A clock that went back keeps the time from before the check-up;
           // tracker-owned parts are read again below either way.
           if (absoluteHours(liveClock(merged.clock, live.values, live.types).clock) < absoluteHours(live.clock)) merged = { ...merged, clock: live.clock };
-          return { notebook: merged, recipe: output.tracker ? validateRecipe(output.tracker).recipe : null };
+          return { notebook: merged, recipe: output.tracker ? validateRecipe(output.tracker).recipe : null, early: earlySteps(base.notebook, merged, live.moment) };
         }, signal);
         await this.serial(chatId, async () => {
           const current = await this.load(chatId);
@@ -460,6 +471,9 @@ export class NotebookController {
           const kept = current.versions.filter((v, i) => i === 0 || covers(v.covered, read));
           current.versions = prune([...kept, version].filter((v, i, all) => all.indexOf(v) === i));
           current.needsCheck = ''; current.held = []; current.resync = null;
+          // A re-plan done; otherwise steps that happened before they were offered count as running ahead.
+          if (input.replan) { current.replan = false; current.replannedAt = live.moment.reply ?? 0; current.paceSignals = []; }
+          else if (result.early) this.paceSignal(current, live.moment, result.early);
           current.job = { ...job, status: 'complete', label: 'Notebook updated' };
           await this.save(current);
         });
@@ -513,7 +527,9 @@ export class NotebookController {
       };
       this.track((async () => {
         try {
+          let round = 0;
           const result = await askJson(ask, talkMessages(input), value => {
+            round++;
             const output = record(value);
             const asked = !push && output.ask === true;
             const kind: PushKind | null = push ?? (!asked && output.push && PUSH_KINDS.includes(output.pushKind as PushKind) ? output.pushKind as PushKind : null);
@@ -524,6 +540,7 @@ export class NotebookController {
             if (!asked && output.notebook && typeof output.notebook === 'object') {
               let revised = validateNotebook(tidyNotebook(output.notebook, base.notebook));
               if (kind) revised = launchPush(revised, checkPush(base.notebook, revised, output.push, kind));
+              if (round === 1) enforcePace(base.notebook, revised, { playerAsked: true }); else revised = fixPace(base.notebook, revised, { playerAsked: true });
               // A new chapter may open after a jump in time. Only the parts of the clock Grimoire owns move; the narrator is told.
               if (kind === 'chapter') skip = Math.min(720, Math.max(0, Math.round(Number(output.skipHours) || 0)));
               if (skip) {
@@ -752,13 +769,24 @@ export class NotebookController {
     // An urgent development was offered: see whether it happened before offering it again, once per stretch.
     // The quick check answers this itself, so it is only needed without one.
     const urgent = !(settings.quick.enabled && this.decisionsReady()) && since >= 2 && full.reason !== 'Checking on an urgent development' && dueThreads(live.version.notebook, live.moment).some(d => d.thread.speed === 'urgent');
-    const reason = state.needsCheck ? (state.needsCheck.startsWith('The chat changed') ? 'Caught up after the chat changed' : state.needsCheck) : unmatched ? 'The chat changed before the notebook was written' : extra ? extra : moved ? 'The scene moved' : jumped ? 'Time moved on'
+    const reason = state.needsCheck ? (state.needsCheck.startsWith('The chat changed') ? 'Caught up after the chat changed' : state.needsCheck) : unmatched ? 'The chat changed before the notebook was written' : extra ? extra : state.replan ? 'The story ran ahead of its plan' : moved ? 'The scene moved' : jumped ? 'Time moved on'
       : findTracker ? 'Looking for your preset’s tracker' : urgent ? 'Checking on an urgent development' : since >= settings.every ? `${since} replies since the last update` : '';
     if (findTracker) state.trackerTried = true;
     await this.save(state);
     if (reason && settings.connectionId || reason && this.ask) await this.startCheckup(chatId, reason).catch(() => null);
   }
 
+  /**
+   * Running ahead of the plan, counted by reply. Three signs within ten replies
+   * ask for a re-plan of this part's timing, at most once per steady wait.
+   */
+  private paceSignal(state: ChatState, now: Moment, count: number) {
+    const reply = now.reply ?? 0;
+    state.paceSignals = [...state.paceSignals, ...Array.from({ length: Math.min(count, 3) }, () => reply)].slice(-12);
+    const recent = state.paceSignals.filter(r => r > reply - 10).length;
+    const gap = now.waits?.steady ?? 15;
+    if (!state.replan && recent >= 3 && (!state.replannedAt || reply - state.replannedAt >= gap)) state.replan = true;
+  }
   /** Hold mode lasts until the rework lands, or a few replies at most if it can't. */
   private reworking(state: ChatState, live: Live) { return state.resync !== null && (live.moment.reply ?? 0) - state.resync <= 6; }
 
@@ -803,6 +831,7 @@ export class NotebookController {
             now = (await this.live(state, messages))!;
           }
           if (outcome.needsCheckup) extra = 'Something new happened in the story';
+          if (outcome.rushing) this.paceSignal(state, now.moment, 1);
           if (outcome.held.length) state.held = [...new Set([...state.held, ...outcome.held])];
           // The story changed direction: hold old plans back and rework the notebook now.
           if (outcome.shifted) { state.resync = now.moment.reply ?? 0; extra = 'The story changed direction'; }

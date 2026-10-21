@@ -29,7 +29,7 @@ export interface Story { question: string; stakes: string; direction: string; hi
  */
 export type Shape = 'conflict' | 'kishotenketsu';
 export const STAGES: Record<Shape, readonly string[]> = { conflict: ['setup', 'rising', 'climax', 'resolution'], kishotenketsu: ['ki', 'sho', 'ten', 'ketsu'] };
-export interface Arc { shape: Shape; stage: string; /** Kishōtenketsu: what the turn is. Secret; the narrator learns it only at the turn. */ turn: string }
+export interface Arc { shape: Shape; stage: string; /** Kishōtenketsu: what the turn is. Secret; the narrator learns it only at the turn. */ turn: string; /** Code-owned: the reply this part of the story began at. */ startReply?: number }
 /**
  * A breadcrumb: an ordinary-looking detail mentioned in passing now and paid
  * off later. The narrator sees only the detail when planting it; what it
@@ -176,7 +176,7 @@ export function validateNotebook(value: unknown): Notebook {
   }), 'seeds');
   return {
     version: 1,
-    arc: { shape, stage: stage as string, turn: text(arcInput.turn, 'arc.turn') },
+    arc: { shape, stage: stage as string, turn: text(arcInput.turn, 'arc.turn'), ...(count(arcInput.startReply) !== undefined ? { startReply: count(arcInput.startReply) } : {}) },
     seeds,
     story: { question: text(story.question, 'story.question', LIMITS.text, false), stakes: text(story.stakes, 'story.stakes'), direction: text(story.direction, 'story.direction'),
       hiddenTruth: list(story.hiddenTruth, 'story.hiddenTruth', LIMITS.truths).map((x, i) => text(x, `story.hiddenTruth[${i}]`, LIMITS.text, false)), twist: text(story.twist, 'story.twist'),
@@ -217,11 +217,11 @@ export function mergeRevision(previous: Notebook, revised: Notebook, now: number
     if (!next) failMerge(`Keep seed "${seed.id}" (mark it dropped if it no longer fits).`);
     if (seed.status !== 'waiting' && next!.status === 'waiting' && !seed.quick) failMerge(`Seed "${seed.id}" was already planted and can't go back to waiting.`);
   }
-  const fresh = withoutTimes(holdTurn(previous, revised));
+  const fresh = withoutTimes(holdStage(previous, holdTurn(previous, revised), moment(now)));
   // Something that came out can't go back to being secret.
   const lost = previous.story.cameOut.filter(r => !fresh.story.cameOut.some(x => sameText(x.text, r.text)));
   const story = { ...fresh.story, cameOut: carryRevealed(previous, [...fresh.story.cameOut, ...lost.map(({ text }) => ({ text }))]) };
-  return stamp({ ...fresh, story, seeds: carrySeedTimes(previous, fresh.seeds), threads: fresh.threads.map(thread => {
+  return stamp({ ...fresh, story, arc: carryArc(previous, fresh.arc), seeds: carrySeedTimes(previous, fresh.seeds), threads: fresh.threads.map(thread => {
     const old = previous.threads.find(t => t.id === thread.id);
     return { ...thread, ...(old?.startAt !== undefined ? { startAt: old.startAt } : {}), ...(old?.startReply !== undefined ? { startReply: old.startReply } : {}), steps: thread.steps.map(step => {
       const before = old?.steps.find(s => s.id === step.id);
@@ -233,7 +233,7 @@ export function mergeRevision(previous: Notebook, revised: Notebook, now: number
 /** For edits made by the player: anything may change, but recorded times stay with their ids. */
 export function keepTimes(previous: Notebook, edited: Notebook, now: number | Moment): Notebook {
   const fresh = withoutTimes(edited);
-  return stamp({ ...fresh, story: { ...fresh.story, cameOut: carryRevealed(previous, fresh.story.cameOut) }, seeds: carrySeedTimes(previous, fresh.seeds), threads: fresh.threads.map(thread => {
+  return stamp({ ...fresh, story: { ...fresh.story, cameOut: carryRevealed(previous, fresh.story.cameOut) }, arc: carryArc(previous, fresh.arc), seeds: carrySeedTimes(previous, fresh.seeds), threads: fresh.threads.map(thread => {
     const old = previous.threads.find(t => t.id === thread.id);
     return { ...thread, ...(old?.startAt !== undefined ? { startAt: old.startAt } : {}), ...(old?.startReply !== undefined ? { startReply: old.startReply } : {}), steps: thread.steps.map(step => {
       const before = old?.steps.find(s => s.id === step.id);
@@ -244,7 +244,8 @@ export function keepTimes(previous: Notebook, edited: Notebook, now: number | Mo
 /** Drop any times a model wrote. Only code records when things began or happened. */
 export function withoutTimes(notebook: Notebook): Notebook {
   // Quick-check flags go too: a check-up or an edit has the final say.
-  return { ...notebook, story: { ...notebook.story, cameOut: notebook.story.cameOut.map(({ text }) => ({ text })) }, seeds: notebook.seeds.map(({ plantedAt: _p, paidAt: _q, echoAt: _e, quick: _k, ...seed }) => seed), beats: notebook.beats.map(({ quick: _k, ...beat }) => beat),
+  const { startReply: _arcStart, ...arc } = notebook.arc;
+  return { ...notebook, arc, story: { ...notebook.story, cameOut: notebook.story.cameOut.map(({ text }) => ({ text })) }, seeds: notebook.seeds.map(({ plantedAt: _p, paidAt: _q, echoAt: _e, quick: _k, ...seed }) => seed), beats: notebook.beats.map(({ quick: _k, ...beat }) => beat),
     threads: notebook.threads.map(({ startAt: _start, startReply: _reply, ...thread }) => ({ ...thread, steps: thread.steps.map(({ at: _at, atReply: _atReply, quick: _k, ...step }) => step) })) };
 }
 /** Fill in code-owned times: when a thread began, when a step happened. */
@@ -254,13 +255,16 @@ export function stamp(notebook: Notebook, now: number | Moment): Notebook {
     ...((seed.status === 'planted' || seed.status === 'paid') && seed.plantedAt === undefined ? { plantedAt: reply } : {}), ...(seed.status === 'paid' && seed.paidAt === undefined ? { paidAt: reply } : {}),
     ...(seed.status === 'echo' && seed.echoAt === undefined ? { echoAt: reply } : {}) }));
   const story = reply === undefined ? notebook.story : { ...notebook.story, cameOut: notebook.story.cameOut.map(r => r.atReply === undefined ? { ...r, atReply: reply } : r) };
-  return { ...notebook, story, seeds, threads: notebook.threads.map(thread => ({ ...thread, startAt: thread.startAt ?? m.hours,
+  return { ...notebook, story, ...(reply !== undefined && notebook.arc.startReply === undefined ? { arc: { ...notebook.arc, startReply: reply } } : {}), seeds, threads: notebook.threads.map(thread => ({ ...thread, startAt: thread.startAt ?? m.hours,
     ...(thread.startReply === undefined && reply !== undefined ? { startReply: reply } : {}),
     steps: thread.steps.map(step => step.status === 'waiting' ? step : { ...step, at: step.at ?? m.hours, ...(step.atReply === undefined && reply !== undefined ? { atReply: reply } : {}) }) })) };
 }
 /** Older notebooks have no reply counts: count from the reply the version was made at. */
 export function fillReplies(notebook: Notebook, reply: number): Notebook {
-  return { ...notebook, story: { ...notebook.story, cameOut: notebook.story.cameOut.map(r => r.atReply === undefined ? { ...r, atReply: reply } : r) }, seeds: notebook.seeds.map(seed => (seed.status === 'planted' || seed.status === 'paid') && seed.plantedAt === undefined ? { ...seed, plantedAt: reply } : seed.status === 'echo' && seed.echoAt === undefined ? { ...seed, echoAt: reply } : seed), threads: notebook.threads.map(thread => ({ ...thread, startReply: thread.startReply ?? reply,
+  // Older notebooks: this part of the story began when its earliest storyline did.
+  const starts = notebook.threads.map(t => t.startReply).filter((r): r is number => r !== undefined);
+  const arc = notebook.arc.startReply !== undefined ? notebook.arc : { ...notebook.arc, startReply: starts.length ? Math.min(...starts) : reply };
+  return { ...notebook, arc, story: { ...notebook.story, cameOut: notebook.story.cameOut.map(r => r.atReply === undefined ? { ...r, atReply: reply } : r) }, seeds: notebook.seeds.map(seed => (seed.status === 'planted' || seed.status === 'paid') && seed.plantedAt === undefined ? { ...seed, plantedAt: reply } : seed.status === 'echo' && seed.echoAt === undefined ? { ...seed, echoAt: reply } : seed), threads: notebook.threads.map(thread => ({ ...thread, startReply: thread.startReply ?? reply,
     steps: thread.steps.map(step => step.status === 'waiting' || step.atReply !== undefined ? step : { ...step, atReply: reply }) })) };
 }
 
@@ -289,6 +293,44 @@ export function holdTurn(previous: Notebook, revised: Notebook): Notebook {
   const planted = prepared.filter(s => s.status === 'planted' || s.status === 'paid').length;
   if (planted >= Math.min(2, prepared.length)) return revised;
   return { ...revised, arc: { ...revised.arc, stage: previous.arc.shape === 'kishotenketsu' ? previous.arc.stage : 'sho' } };
+}
+
+/**
+ * Each part of the story has a rough length in replies, set by how long
+ * storylines wait (so Fast pace makes parts shorter). Never chosen by the
+ * player; it keeps the climax from arriving at reply 40.
+ */
+export const PART_PER_STEADY = 4;
+export const STAGE_AT: Record<Shape, readonly number[]> = { conflict: [0, 0.1, 0.6, 0.8], kishotenketsu: [0, 0.15, 0.6, 0.8] };
+export function partLength(m: Moment): number | null { return m.waits ? m.waits.steady * PART_PER_STEADY : null; }
+/** How far into this part of the story we are, in replies. */
+export function partProgress(notebook: Notebook, m: Moment): { elapsed: number; length: number } | null {
+  const length = partLength(m);
+  if (length === null || m.reply === undefined || notebook.arc.startReply === undefined) return null;
+  return { elapsed: Math.max(0, m.reply - notebook.arc.startReply), length };
+}
+/** A new part of the story: a different shape, or back to the first stage. */
+export function isNewArc(previous: Notebook, revised: Notebook): boolean {
+  if (previous.arc.shape !== revised.arc.shape) return true;
+  const stages = STAGES[revised.arc.shape];
+  return stages.indexOf(revised.arc.stage) === 0 && stages.indexOf(previous.arc.stage) > 0;
+}
+/** The stage only moves on as far as the part's schedule allows. It never moves back, except into a new part. */
+export function holdStage(previous: Notebook, revised: Notebook, m: Moment): Notebook {
+  if (isNewArc(previous, revised)) return revised;
+  const progress = partProgress(previous, m);
+  if (!progress) return revised;
+  const stages = STAGES[revised.arc.shape], marks = STAGE_AT[revised.arc.shape];
+  const allowed = marks.reduce((best, mark, i) => progress.elapsed >= mark * progress.length ? i : best, 0);
+  const was = stages.indexOf(previous.arc.stage), wants = stages.indexOf(revised.arc.stage);
+  const stage = stages[Math.min(wants, Math.max(allowed, was))];
+  return stage === revised.arc.stage ? revised : { ...revised, arc: { ...revised.arc, stage } };
+}
+/** The part keeps the reply it began at, unless a new part began. */
+function carryArc(previous: Notebook, arc: Arc): Arc {
+  const { startReply: _s, ...rest } = arc;
+  if (previous.arc.shape !== arc.shape || (STAGES[arc.shape].indexOf(arc.stage) === 0 && STAGES[arc.shape].indexOf(previous.arc.stage) > 0)) return rest;
+  return previous.arc.startReply !== undefined ? { ...rest, startReply: previous.arc.startReply } : rest;
 }
 
 /** The next step of a thread, and whether enough story time, or enough replies, have passed for it. */

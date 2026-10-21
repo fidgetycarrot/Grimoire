@@ -304,7 +304,7 @@ describe('quick check answers', () => {
     nb.threads[1].steps[0].afterHours = 0;
     nb.beats[1].status = 'dropped';
     const plan = quickQuestions(nb, absoluteHours({ day: 1, hour: 18 }));
-    expect(Object.keys(plan.questions)).toEqual(['due_1', 'moment_1', 'detail_mentioned', 'fits_1', 'truth_1', 'story_shift', 'rhythm', 'new_turn']);
+    expect(Object.keys(plan.questions)).toEqual(['due_1', 'moment_1', 'detail_mentioned', 'fits_1', 'truth_1', 'story_shift', 'rushing', 'rhythm', 'new_turn']);
     const out = applyQuick(nb, plan, { model: 'm', answers: { due_1: { type: 'noul', noul: 0.9 }, moment_1: { type: 'noul', noul: 0.69 }, rhythm: { type: 'choice', choice: 'nonsense', probabilities: {}, confidence: 1 }, new_turn: { type: 'noul', noul: 0.2 } } }, 99);
     expect(out.notebook.threads[1].steps[0]).toMatchObject({ status: 'shown', at: 99 });
     expect(out.notebook.beats[0].status).toBe('possible');
@@ -511,7 +511,7 @@ describe('at a glance', () => {
     nb.threads[1].status = 'paused';
     const g = glance(nb, { hours: 42, reply: 13, waits: waitsFor('medium', 'auto') });
     expect(g).toEqual({ shape: 'conflict', stage: 'setup', threads: { open: 1, urgent: 0, steady: 1, slow: 0, closed: 0 }, seeds: { waiting: 1, planted: 0, paid: 0, echo: 0 },
-      moments: { possible: 2, big: 1, happened: 0 }, people: { total: 3, met: 2 }, nextInReplies: 12, dueNow: 0 });
+      moments: { possible: 2, big: 1, happened: 0 }, people: { total: 3, met: 2 }, nextInReplies: 12, dueNow: 0, part: { elapsed: 3, length: 60 } });
     expect(JSON.stringify(g)).not.toMatch(/ring|Oswin|Mira|wax/i);
   });
 });
@@ -676,5 +676,55 @@ describe('secrets that came out', () => {
     const nb = validateNotebook(sampleNotebook());
     expect(secretsLeft(nb)).toBe(true);
     expect(secretsLeft({ ...nb, story: { ...nb.story, hiddenTruth: [], twist: '' }, seeds: nb.seeds.map(s => ({ ...s, status: 'paid' as const })) })).toBe(false);
+  });
+});
+
+import { earlySteps, fixPace, paceProblems } from '../src/pacing';
+import { holdStage, waitsFor as paceWaits } from '../src/notebook';
+describe('keeping the pacing on plan', () => {
+  const two = () => { const nb = validateNotebook(sampleNotebook()); return { before: nb, after: { ...nb, threads: nb.threads.map(t => t.id === 'stolen-ring' ? { ...t, speed: 'urgent' as const } : t) } }; };
+  test('only one storyline may be urgent, and the one already urgent keeps its place', () => {
+    const { before, after } = two();
+    const problems = paceProblems(before, after);
+    expect(problems.join(' ')).toContain('Keep "storm" urgent');
+    expect(problems.join(' ')).toContain('"stolen-ring" got faster');
+    const fixed = fixPace(before, after);
+    expect(fixed.threads.map(t => t.speed)).toEqual(['steady', 'urgent']);
+  });
+  test('a speed-up with a reason stands, but still only one urgent storyline', () => {
+    const { before, after } = two();
+    const rules = { speedUps: { 'stolen-ring': 'The player showed the ring to the whole tavern.' } };
+    expect(paceProblems(before, after, rules).join(' ')).not.toContain('got faster');
+    const calm = { ...after, threads: after.threads.map(t => t.id === 'storm' ? { ...t, status: 'closed' as const, closedReason: 'It passed.' } : t) };
+    expect(paceProblems(before, calm, rules)).toEqual([]);
+    // Without a reason, the plainest fix puts the old speed back.
+    expect(fixPace(before, calm).threads[0].speed).toBe('steady');
+  });
+  test('an extra emergency slowed down by code gets room between its steps', () => {
+    const nb = validateNotebook(sampleNotebook());
+    const added = { ...nb, threads: [...nb.threads, { id: 'fire', title: 'Fire', speed: 'urgent' as const, why: '', hint: '', people: ['mira'], status: 'open' as const, closedReason: '', ifFollowed: '', ifIgnored: '', steps: [{ id: 'smoke', text: 'Smoke.', sign: 'Smoke.', afterHours: 1, status: 'waiting' as const }] }] };
+    const fixed = fixPace(nb, added).threads.find(t => t.id === 'fire')!;
+    expect(fixed).toMatchObject({ speed: 'steady', steps: [{ afterHours: 7 }] });
+  });
+  test('the climax waits for its part of the story, and a new part starts the clock over', () => {
+    const waits = paceWaits('medium', 'auto');
+    const before = stamp(validateNotebook({ ...sampleNotebook(), arc: { shape: 'conflict', stage: 'rising', turn: '' } }), { hours: 40, reply: 10 });
+    expect(before.arc.startReply).toBe(10);
+    const jump = { ...before, arc: { ...before.arc, stage: 'climax' } };
+    expect(holdStage(before, jump, { hours: 41, reply: 20, waits }).arc.stage).toBe('rising');
+    expect(holdStage(before, jump, { hours: 41, reply: 50, waits }).arc.stage).toBe('climax');
+    // Fast pace makes parts shorter.
+    expect(holdStage(before, jump, { hours: 41, reply: 30, waits: paceWaits('medium', 'fast') }).arc.stage).toBe('climax');
+    const fresh = mergeRevision(before, validateNotebook({ ...withoutTimes(before), arc: { shape: 'kishotenketsu', stage: 'ki', turn: '' } }), { hours: 42, reply: 25, waits });
+    expect(fresh.arc).toMatchObject({ stage: 'ki', startReply: 25 });
+    const same = mergeRevision(before, validateNotebook(withoutTimes(before)), { hours: 42, reply: 25, waits });
+    expect(same.arc.startReply).toBe(10);
+  });
+  test('steps that happened before they were offered count as running ahead', () => {
+    const before = stamp(validateNotebook(sampleNotebook()), { hours: 40, reply: 10 });
+    const after = { ...before, threads: before.threads.map(t => t.id === 'stolen-ring' ? { ...t, steps: t.steps.map((s, i) => i < 2 ? { ...s, status: 'shown' as const } : s) } : t) };
+    expect(earlySteps(before, after, { hours: 41, reply: 11, waits: paceWaits('medium', 'auto') })).toBe(2);
+    // The step that was due is on plan.
+    expect(earlySteps(before, { ...after, threads: after.threads.map(t => t.id === 'stolen-ring' ? { ...t, steps: t.steps.map((s, i) => i === 0 ? s : { ...s, status: 'waiting' as const }) } : t) }, { hours: 60, reply: 11, waits: paceWaits('medium', 'auto') })).toBe(0);
   });
 });

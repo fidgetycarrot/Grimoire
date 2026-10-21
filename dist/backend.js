@@ -526,7 +526,7 @@ function validateNotebook(value) {
   }), "seeds");
   return {
     version: 1,
-    arc: { shape, stage, turn: text(arcInput.turn, "arc.turn") },
+    arc: { shape, stage, turn: text(arcInput.turn, "arc.turn"), ...count(arcInput.startReply) !== undefined ? { startReply: count(arcInput.startReply) } : {} },
     seeds,
     story: {
       question: text(story.question, "story.question", LIMITS.text, false),
@@ -576,10 +576,10 @@ function mergeRevision(previous, revised, now) {
     if (seed.status !== "waiting" && next.status === "waiting" && !seed.quick)
       failMerge(`Seed "${seed.id}" was already planted and can't go back to waiting.`);
   }
-  const fresh = withoutTimes(holdTurn(previous, revised));
+  const fresh = withoutTimes(holdStage(previous, holdTurn(previous, revised), moment(now)));
   const lost = previous.story.cameOut.filter((r) => !fresh.story.cameOut.some((x) => sameText(x.text, r.text)));
   const story = { ...fresh.story, cameOut: carryRevealed(previous, [...fresh.story.cameOut, ...lost.map(({ text }) => ({ text }))]) };
-  return stamp({ ...fresh, story, seeds: carrySeedTimes(previous, fresh.seeds), threads: fresh.threads.map((thread) => {
+  return stamp({ ...fresh, story, arc: carryArc(previous, fresh.arc), seeds: carrySeedTimes(previous, fresh.seeds), threads: fresh.threads.map((thread) => {
     const old = previous.threads.find((t) => t.id === thread.id);
     return { ...thread, ...old?.startAt !== undefined ? { startAt: old.startAt } : {}, ...old?.startReply !== undefined ? { startReply: old.startReply } : {}, steps: thread.steps.map((step) => {
       const before = old?.steps.find((s) => s.id === step.id);
@@ -591,7 +591,7 @@ function mergeRevision(previous, revised, now) {
 }
 function keepTimes(previous, edited, now) {
   const fresh = withoutTimes(edited);
-  return stamp({ ...fresh, story: { ...fresh.story, cameOut: carryRevealed(previous, fresh.story.cameOut) }, seeds: carrySeedTimes(previous, fresh.seeds), threads: fresh.threads.map((thread) => {
+  return stamp({ ...fresh, story: { ...fresh.story, cameOut: carryRevealed(previous, fresh.story.cameOut) }, arc: carryArc(previous, fresh.arc), seeds: carrySeedTimes(previous, fresh.seeds), threads: fresh.threads.map((thread) => {
     const old = previous.threads.find((t) => t.id === thread.id);
     return { ...thread, ...old?.startAt !== undefined ? { startAt: old.startAt } : {}, ...old?.startReply !== undefined ? { startReply: old.startReply } : {}, steps: thread.steps.map((step) => {
       const before = old?.steps.find((s) => s.id === step.id);
@@ -600,8 +600,10 @@ function keepTimes(previous, edited, now) {
   }) }, now);
 }
 function withoutTimes(notebook) {
+  const { startReply: _arcStart, ...arc } = notebook.arc;
   return {
     ...notebook,
+    arc,
     story: { ...notebook.story, cameOut: notebook.story.cameOut.map(({ text }) => ({ text })) },
     seeds: notebook.seeds.map(({ plantedAt: _p, paidAt: _q, echoAt: _e, quick: _k, ...seed }) => seed),
     beats: notebook.beats.map(({ quick: _k, ...beat }) => beat),
@@ -617,7 +619,7 @@ function stamp(notebook, now) {
     ...seed.status === "echo" && seed.echoAt === undefined ? { echoAt: reply } : {}
   }));
   const story = reply === undefined ? notebook.story : { ...notebook.story, cameOut: notebook.story.cameOut.map((r) => r.atReply === undefined ? { ...r, atReply: reply } : r) };
-  return { ...notebook, story, seeds, threads: notebook.threads.map((thread) => ({
+  return { ...notebook, story, ...reply !== undefined && notebook.arc.startReply === undefined ? { arc: { ...notebook.arc, startReply: reply } } : {}, seeds, threads: notebook.threads.map((thread) => ({
     ...thread,
     startAt: thread.startAt ?? m.hours,
     ...thread.startReply === undefined && reply !== undefined ? { startReply: reply } : {},
@@ -625,7 +627,9 @@ function stamp(notebook, now) {
   })) };
 }
 function fillReplies(notebook, reply) {
-  return { ...notebook, story: { ...notebook.story, cameOut: notebook.story.cameOut.map((r) => r.atReply === undefined ? { ...r, atReply: reply } : r) }, seeds: notebook.seeds.map((seed) => (seed.status === "planted" || seed.status === "paid") && seed.plantedAt === undefined ? { ...seed, plantedAt: reply } : seed.status === "echo" && seed.echoAt === undefined ? { ...seed, echoAt: reply } : seed), threads: notebook.threads.map((thread) => ({
+  const starts = notebook.threads.map((t) => t.startReply).filter((r) => r !== undefined);
+  const arc = notebook.arc.startReply !== undefined ? notebook.arc : { ...notebook.arc, startReply: starts.length ? Math.min(...starts) : reply };
+  return { ...notebook, arc, story: { ...notebook.story, cameOut: notebook.story.cameOut.map((r) => r.atReply === undefined ? { ...r, atReply: reply } : r) }, seeds: notebook.seeds.map((seed) => (seed.status === "planted" || seed.status === "paid") && seed.plantedAt === undefined ? { ...seed, plantedAt: reply } : seed.status === "echo" && seed.echoAt === undefined ? { ...seed, echoAt: reply } : seed), threads: notebook.threads.map((thread) => ({
     ...thread,
     startReply: thread.startReply ?? reply,
     steps: thread.steps.map((step) => step.status === "waiting" || step.atReply !== undefined ? step : { ...step, atReply: reply })
@@ -654,6 +658,41 @@ function holdTurn(previous, revised) {
   if (planted >= Math.min(2, prepared.length))
     return revised;
   return { ...revised, arc: { ...revised.arc, stage: previous.arc.shape === "kishotenketsu" ? previous.arc.stage : "sho" } };
+}
+var PART_PER_STEADY = 4;
+var STAGE_AT = { conflict: [0, 0.1, 0.6, 0.8], kishotenketsu: [0, 0.15, 0.6, 0.8] };
+function partLength(m) {
+  return m.waits ? m.waits.steady * PART_PER_STEADY : null;
+}
+function partProgress(notebook, m) {
+  const length = partLength(m);
+  if (length === null || m.reply === undefined || notebook.arc.startReply === undefined)
+    return null;
+  return { elapsed: Math.max(0, m.reply - notebook.arc.startReply), length };
+}
+function isNewArc(previous, revised) {
+  if (previous.arc.shape !== revised.arc.shape)
+    return true;
+  const stages = STAGES[revised.arc.shape];
+  return stages.indexOf(revised.arc.stage) === 0 && stages.indexOf(previous.arc.stage) > 0;
+}
+function holdStage(previous, revised, m) {
+  if (isNewArc(previous, revised))
+    return revised;
+  const progress = partProgress(previous, m);
+  if (!progress)
+    return revised;
+  const stages = STAGES[revised.arc.shape], marks = STAGE_AT[revised.arc.shape];
+  const allowed = marks.reduce((best, mark, i) => progress.elapsed >= mark * progress.length ? i : best, 0);
+  const was = stages.indexOf(previous.arc.stage), wants = stages.indexOf(revised.arc.stage);
+  const stage = stages[Math.min(wants, Math.max(allowed, was))];
+  return stage === revised.arc.stage ? revised : { ...revised, arc: { ...revised.arc, stage } };
+}
+function carryArc(previous, arc) {
+  const { startReply: _s, ...rest } = arc;
+  if (previous.arc.shape !== arc.shape || STAGES[arc.shape].indexOf(arc.stage) === 0 && STAGES[arc.shape].indexOf(previous.arc.stage) > 0)
+    return rest;
+  return previous.arc.startReply !== undefined ? { ...rest, startReply: previous.arc.startReply } : rest;
 }
 function nextStep(thread, now) {
   if (thread.status !== "open")
@@ -891,7 +930,8 @@ function launchPush(notebook, push) {
     if (thread.id !== push.thread)
       return thread;
     let first = true;
-    return { ...thread, speed: "urgent", steps: thread.steps.map((step) => {
+    const busy = notebook.threads.some((t) => t.id !== thread.id && t.status === "open" && t.speed === "urgent");
+    return { ...thread, speed: busy ? thread.speed === "urgent" ? "steady" : thread.speed === "slow" ? "steady" : thread.speed : "urgent", steps: thread.steps.map((step) => {
       if (step.status !== "waiting" || !first)
         return step;
       first = false;
@@ -938,7 +978,7 @@ var CRAFT = [
   "3. Give each important person a want and a current plan. They act on it offscreen too.",
   "4. Plan a small supporting cast (about two to four people beyond the card's character) so the world is not just the main character. They have their own lives and are met when they fit.",
   "5. Threads are open problems or opportunities, one problem each: an unrelated subplot is its own thread. Each has a speed (urgent: minutes to hours; steady: a day to several days; slow: a week or more) and two to five steps toward its consequence. Most steps are signs the player could notice; only the last is the consequence itself. afterHours is story time after the previous step (or the thread's start) before the step becomes due.",
-  "5b. The story is open-ended: plan its first arc (the story question and two to four threads); later check-ups open new arcs as these resolve. Pacing is the shape of the arc, not just the next scene. Stagger the threads so they come to a head at different times, with room between them. Only the scene's immediate problem should come to a head soon; the others begin with small signs and build. Mix speeds: usually no more than one urgent thread, and at least one slow one. Keep story time realistic: Grimoire also moves a thread on after a number of replies, so never squeeze story time to keep things moving. If the card fixes an event at a certain time (a show tonight, a deadline), use it, but let only the threads that truly depend on it peak there.",
+  "5b. The story is open-ended: plan its first arc (the story question and two to four threads); later check-ups open new arcs as these resolve. Pacing is the shape of the arc, not just the next scene. Stagger the threads so they come to a head at different times, with room between them. Only the scene's immediate problem should come to a head soon; the others begin with small signs and build. Mix speeds: only one storyline may be urgent at a time (urgent means something bad happens within hours if nobody acts: a fire, a deadline, someone hunting you; feelings and relationships are almost never urgent), and at least one slow one. A later emergency can be prepared with a breadcrumb or two, never started early. Keep story time realistic: Grimoire also moves a thread on after a number of replies, so never squeeze story time to keep things moving. If the card fixes an event at a certain time (a show tonight, a deadline), use it, but let only the threads that truly depend on it peak there.",
   "6. Beats are possible moments, not a script. Each says what it sets up or pays off and what must be true first. Most should be low intensity; plan no more than two high-intensity moments at a time, so big moments stay big.",
   "6a. Arc shape. Choose the shape that fits this arc: conflict when the story runs on danger, rivalry, mystery, or a problem to beat (setup, rising, climax, resolution); kishotenketsu when it runs on people, closeness, comfort, desire, discovery, or everyday life (ki: introduce people, places, routines; sho: develop and deepen them without escalating; ten: a turn, something unexpected that casts what came before in a new light, which need not be a threat; ketsu: bring the turn and what came before together into a new understanding). In a kishotenketsu arc, threads are developments rather than problems: if one is left alone, life simply carries on; its steps are small changes that lead toward the turn. A small conflict can still live inside a kishotenketsu arc, and the next arc may take the other shape. Put the turn in arc.turn; it is the natural place for a twist.",
   "6b. Seeds are breadcrumbs: four to eight ordinary-looking details (an object, a habit, a name, a stray remark, a sound) the narrator can mention in passing now, each paid off later in a thread step, a beat, or the turn. The detail must look unremarkable and give nothing away on its own; the payoff says what it turns out to mean. A kishotenketsu turn needs at least two seeds that prepare it, so it feels earned rather than random. Use details the card and chat already contain when you can.",
@@ -972,13 +1012,17 @@ ${TRACKER_METHODS}Each field: {"name": "datetime|date|time|location|present", "t
     { role: "user", content: JSON.stringify({ task: "grimoire-create-v1", preferences, ...ideas ? { ideas } : {}, ...material }) }
   ];
 }
+var REPLAN = `- The story has been running ahead of its plan: things kept happening sooner than planned. Re-plan the rest of this part so it fills the replies left: spread waiting steps out (raise afterHours), move big moments later, keep at most one urgent storyline, and give quieter stretches room. Do not undo anything that happened, and do not slow down what the player is actively doing; this is about the plan's own timing.
+`;
 function checkupMessages(input) {
   return [
     { role: "system", content: `${SAFETY}
 You keep a private story notebook up to date while a roleplay chat goes on. You see the whole notebook and the chat since the last check-up.
-Return {"notebook": ${SHAPE}, "tracker": null or {"fields": [...], "note": ""}}.
+Return {"notebook": ${SHAPE}, "tracker": null or {"fields": [...], "note": ""}, "speedUps": {}}.
 Rules for the update:
-${input.notes.length ? NOTES : ""}${input.resync ? RESYNC(input.held) : ""}- The chat decides what actually happened. Record only what the messages establish. Lines marked out of character are the player talking to the narrator outside the story: never record them as events, but take what the player wants from them into account. "I try to return the ring" is an attempt, not a return.
+${input.notes.length ? NOTES : ""}${input.replan ? REPLAN : ""}${input.resync ? RESYNC(input.held) : ""}${input.part ? `- This part of the story is about ${input.part.elapsed} replies in, of roughly ${input.part.length}. Spread what is left across the rest of it: the climax and the biggest moments belong in the last third, and new storylines should fit the time that is left rather than pile on. If the player picks up the pace (Fast), parts are shorter. If everything resolves early anyway, open the next part as usual.
+` : ""}- Speed: never make an existing storyline faster unless something the player did made it more pressing; then say what in "speedUps": {"thread-id": "what the player did"}. Only one storyline may be urgent at a time.
+- The chat decides what actually happened. Record only what the messages establish. Lines marked out of character are the player talking to the narrator outside the story: never record them as events, but take what the player wants from them into account. "I try to return the ring" is an attempt, not a return.
 - Steps: mark "shown" when the player saw or heard the sign in the chat, "offscreen" when it happened where the player could not see, "skipped" when it no longer applies. A step that is merely due has not happened. Never mark shown something the chat does not show.
 - Keep every person and thread. Mark people "gone" and close threads with a closedReason instead of removing them. Something that happened cannot un-happen.
 - People invented in the chat: add them only if they matter (they act, recur, or tie into a thread). Mark people met once the player has met them.
@@ -1118,6 +1162,70 @@ function openExchange(lines) {
       start = i + 1;
   });
   return lines.slice(start);
+}
+
+// src/pacing.ts
+var RANK = { urgent: 0, steady: 1, slow: 2 };
+function keeper(previous, revised) {
+  const urgent = revised.threads.filter((t) => t.status === "open" && t.speed === "urgent");
+  return (urgent.find((t) => previous?.threads.some((p) => p.id === t.id && p.status === "open" && p.speed === "urgent")) ?? urgent[0])?.id;
+}
+function paceProblems(previous, revised, rules = {}) {
+  const problems = [];
+  const urgent = revised.threads.filter((t) => t.status === "open" && t.speed === "urgent");
+  if (urgent.length > 1) {
+    const keep = keeper(previous, revised), others = urgent.filter((t) => t.id !== keep).map((t) => `"${t.id}"`).join(", ");
+    problems.push(`Only one storyline may be urgent at a time. Keep "${keep}" urgent. Rethink ${others}: make it steady or slow and rewrite its waiting steps so it builds with small signs first (raise afterHours), or let it wait until "${keep}" ends. A later emergency can be prepared with a breadcrumb or two, not started early.`);
+  }
+  if (previous && !rules.playerAsked) {
+    for (const thread of revised.threads) {
+      const was = previous.threads.find((t) => t.id === thread.id);
+      if (!was || thread.status !== "open" || RANK[thread.speed] >= RANK[was.speed])
+        continue;
+      if (!(rules.speedUps?.[thread.id] ?? "").trim())
+        problems.push(`"${thread.id}" got faster (${was.speed} to ${thread.speed}). Only make a storyline faster when something the player did made it more pressing, and say what in "speedUps": {"${thread.id}": "what the player did"}. Otherwise keep it ${was.speed}.`);
+    }
+  }
+  return problems;
+}
+function enforcePace(previous, revised, rules = {}) {
+  const problems = paceProblems(previous, revised, rules);
+  if (problems.length)
+    throw new NotebookError(problems.join(" "), "The update broke a pacing rule, so it was sent back once.");
+}
+function fixPace(previous, revised, rules = {}) {
+  const keep = keeper(previous, revised);
+  return { ...revised, threads: revised.threads.map((thread) => {
+    const was = previous?.threads.find((t) => t.id === thread.id);
+    if (thread.status !== "open")
+      return thread;
+    if (was && !rules.playerAsked && RANK[thread.speed] < RANK[was.speed] && !(rules.speedUps?.[thread.id] ?? "").trim())
+      thread = { ...thread, speed: was.speed };
+    if (thread.speed === "urgent" && thread.id !== keep) {
+      thread = { ...thread, speed: "steady", steps: thread.steps.map((step) => step.status === "waiting" ? { ...step, afterHours: Math.max(step.afterHours * 4, step.afterHours + 6) } : step) };
+    }
+    return thread;
+  }) };
+}
+function earlySteps(previous, revised, now) {
+  let early = 0;
+  for (const thread of previous.threads) {
+    const next = nextStep(thread, now);
+    const after = revised.threads.find((t) => t.id === thread.id);
+    if (!after)
+      continue;
+    thread.steps.forEach((step, i) => {
+      if (step.status !== "waiting")
+        return;
+      const done = after.steps.find((s) => s.id === step.id);
+      if (!done || done.status !== "shown" && done.status !== "offscreen")
+        return;
+      const onPlan = next && next.step.id === step.id && next.due;
+      if (!onPlan && i >= 0)
+        early++;
+    });
+  }
+  return early;
 }
 
 // src/tidy.ts
@@ -1422,6 +1530,11 @@ function quickQuestions(notebook, now) {
     instructions: "Did the latest exchange take the story somewhere the story notes no longer fit: the player left the setting for good, walked away from the main situation, or changed what they are after?",
     criteria: { true: "Yes, the story has changed direction and the notes need reworking.", false: "No, the story is still on the same ground, even if something new happened." }
   };
+  questions.rushing = {
+    type: "noul",
+    instructions: "Did the latest reply rush the story: wrap up a problem, jump ahead, or move straight to the next big thing faster than the scene allowed, instead of letting it play out?",
+    criteria: { true: "Yes, it hurried past things that needed room.", false: "No, it took the time the scene needed, even if a lot happened." }
+  };
   questions.rhythm = { type: "choice", instructions: "Which best describes the scene at the end of the latest reply?", criteria: RHYTHMS };
   questions.new_turn = {
     type: "noul",
@@ -1492,7 +1605,7 @@ function applyQuick(current, plan, result, now) {
   }
   const held = Object.entries(plan.marks).flatMap(([key, mark]) => mark.kind === "fits" && answers[key]?.type === "noul" && answers[key].noul <= QUICK.no ? [mark.thread] : []);
   const cameOut = Object.entries(plan.marks).some(([key, mark]) => mark.kind === "truth" && yes(answers[key]));
-  return { notebook, changed, marked, needsCheckup: yes(answers.new_turn) || held.length > 0 || cameOut, shifted: yes(answers.story_shift), held };
+  return { notebook, changed, marked, needsCheckup: yes(answers.new_turn) || held.length > 0 || cameOut, rushing: yes(answers.rushing), shifted: yes(answers.story_shift), held };
 }
 function quickError(error) {
   const message = error instanceof Error ? error.message : String(error ?? "");
@@ -1585,7 +1698,8 @@ function glance(notebook, moment) {
     moments: { possible: notebook.beats.filter((b) => b.status === "possible").length, big: notebook.beats.filter((b) => b.status === "possible" && b.intensity === "high").length, happened: notebook.beats.filter((b) => b.status === "happened").length },
     people: { total: notebook.people.filter((p) => p.status === "active").length, met: notebook.people.filter((p) => p.status === "active" && p.met).length },
     nextInReplies: next,
-    dueNow: dueThreads(notebook, moment).length
+    dueNow: dueThreads(notebook, moment).length,
+    part: partProgress(notebook, moment)
   };
 }
 
@@ -1820,7 +1934,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.9.0";
+var VERSION = "0.10.0";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, lines: 40, notes: 8, note: 200 };
@@ -1992,6 +2106,9 @@ class NotebookController {
         talk: talkLines(saved.talk),
         notes: playerNotes(saved.notes),
         quickLog: quickLog(saved.quickLog),
+        paceSignals: Array.isArray(saved.paceSignals) ? saved.paceSignals.filter((x) => Number.isInteger(x)).slice(-12) : [],
+        replan: saved.replan === true,
+        replannedAt: Number(saved.replannedAt) || 0,
         quick: saved.quick && typeof saved.quick === "object" ? { at: Number(record6(saved.quick).at) || 0, ok: record6(saved.quick).ok === true, error: String(record6(saved.quick).error ?? "").slice(0, 200) } : null,
         job: job && job.status === "running" && !this.running.has(chatId) ? { ...job, status: "failed", label: "Stopped when Lumiverse restarted", error: "Run it again when ready." } : job,
         updatedAt: Number(saved.updatedAt) || 0
@@ -2006,7 +2123,7 @@ class NotebookController {
     await this.api.userStorage.setJson(this.path(state.chatId), state, { userId: this.userId });
   }
   blank(chatId) {
-    return { version: 1, chatId, enabled: false, pace: "auto", preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: "" }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: "", trackerTried: false, quick: null, skipDismissedAt: 0, held: [], resync: null, talk: [], notes: [], quickLog: [], job: null, updatedAt: 0 };
+    return { version: 1, chatId, enabled: false, pace: "auto", preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: "" }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: "", trackerTried: false, quick: null, skipDismissedAt: 0, held: [], resync: null, talk: [], notes: [], quickLog: [], paceSignals: [], replan: false, replannedAt: 0, job: null, updatedAt: 0 };
   }
   async chatInfo(chatId) {
     const chat = await this.api.chats.get(chatId, this.userId);
@@ -2286,10 +2403,15 @@ class NotebookController {
             await this.progress(chatId, job, "Writing the notebook");
           }
           const material = await this.material(chatId, info.characterId, messages, plan.recent, storySoFar);
+          let round = 0;
           const result = await askJson(ask, creationMessages(material, state.preferences, ideas, pin), (value) => {
+            round++;
             const output = record6(value);
+            const first = validateNotebook(tidyNotebook(output.notebook));
+            if (round === 1)
+              enforcePace(null, first);
             const notes = pin ? (Array.isArray(output.notes) ? output.notes : []).map((n) => plain(n, TALK_LIMITS.note)).filter(Boolean).slice(0, 4) : [];
-            return { notebook: withoutTimes(validateNotebook(tidyNotebook(output.notebook))), recipe: validateRecipe(output.tracker).recipe, notes };
+            return { notebook: withoutTimes(round === 1 ? first : fixPace(null, first)), recipe: validateRecipe(output.tracker).recipe, notes };
           }, signal);
           await this.serial(chatId, async () => {
             const current = await this.load(chatId) ?? state;
@@ -2389,17 +2511,26 @@ class NotebookController {
       resync: state.resync !== null,
       held: state.held,
       notes: state.notes.map((n) => n.text),
+      part: partProgress(base.notebook, live.moment),
+      replan: state.replan,
       replies: learning ? this.trackerSamples(live.turns).slice(0, 2).map((r) => r.slice(0, 20000)) : []
     };
     this.track((async () => {
       try {
+        let round = 0;
         const result = await askJson(ask, checkupMessages(input), (value) => {
+          round++;
           const output = record6(value);
-          const revised = validateNotebook(tidyNotebook(output.notebook, base.notebook));
+          let revised = validateNotebook(tidyNotebook(output.notebook, base.notebook));
+          const rules = { speedUps: Object.fromEntries(Object.entries(record6(output.speedUps)).map(([k, v]) => [k, typeof v === "string" ? v : ""])) };
+          if (round === 1)
+            enforcePace(base.notebook, revised, rules);
+          else
+            revised = fixPace(base.notebook, revised, rules);
           let merged = mergeRevision(base.notebook, revised, live.moment);
           if (absoluteHours(liveClock(merged.clock, live.values, live.types).clock) < absoluteHours(live.clock))
             merged = { ...merged, clock: live.clock };
-          return { notebook: merged, recipe: output.tracker ? validateRecipe(output.tracker).recipe : null };
+          return { notebook: merged, recipe: output.tracker ? validateRecipe(output.tracker).recipe : null, early: earlySteps(base.notebook, merged, live.moment) };
         }, signal);
         await this.serial(chatId, async () => {
           const current = await this.load(chatId);
@@ -2424,6 +2555,12 @@ class NotebookController {
           current.needsCheck = "";
           current.held = [];
           current.resync = null;
+          if (input.replan) {
+            current.replan = false;
+            current.replannedAt = live.moment.reply ?? 0;
+            current.paceSignals = [];
+          } else if (result.early)
+            this.paceSignal(current, live.moment, result.early);
           current.job = { ...job, status: "complete", label: "Notebook updated" };
           await this.save(current);
         });
@@ -2486,7 +2623,9 @@ class NotebookController {
       };
       this.track((async () => {
         try {
+          let round = 0;
           const result = await askJson(ask, talkMessages(input), (value) => {
+            round++;
             const output = record6(value);
             const asked = !push && output.ask === true;
             const kind = push ?? (!asked && output.push && PUSH_KINDS.includes(output.pushKind) ? output.pushKind : null);
@@ -2500,6 +2639,10 @@ class NotebookController {
               let revised = validateNotebook(tidyNotebook(output.notebook, base.notebook));
               if (kind)
                 revised = launchPush(revised, checkPush(base.notebook, revised, output.push, kind));
+              if (round === 1)
+                enforcePace(base.notebook, revised, { playerAsked: true });
+              else
+                revised = fixPace(base.notebook, revised, { playerAsked: true });
               if (kind === "chapter")
                 skip = Math.min(720, Math.max(0, Math.round(Number(output.skipHours) || 0)));
               if (skip) {
@@ -2779,12 +2922,20 @@ class NotebookController {
     }
     const findTracker = !state.recipe.fields.length && !state.trackerTried && since >= 1;
     const urgent = !(settings.quick.enabled && this.decisionsReady()) && since >= 2 && full.reason !== "Checking on an urgent development" && dueThreads(live.version.notebook, live.moment).some((d) => d.thread.speed === "urgent");
-    const reason = state.needsCheck ? state.needsCheck.startsWith("The chat changed") ? "Caught up after the chat changed" : state.needsCheck : unmatched ? "The chat changed before the notebook was written" : extra ? extra : moved ? "The scene moved" : jumped ? "Time moved on" : findTracker ? "Looking for your preset\u2019s tracker" : urgent ? "Checking on an urgent development" : since >= settings.every ? `${since} replies since the last update` : "";
+    const reason = state.needsCheck ? state.needsCheck.startsWith("The chat changed") ? "Caught up after the chat changed" : state.needsCheck : unmatched ? "The chat changed before the notebook was written" : extra ? extra : state.replan ? "The story ran ahead of its plan" : moved ? "The scene moved" : jumped ? "Time moved on" : findTracker ? "Looking for your preset\u2019s tracker" : urgent ? "Checking on an urgent development" : since >= settings.every ? `${since} replies since the last update` : "";
     if (findTracker)
       state.trackerTried = true;
     await this.save(state);
     if (reason && settings.connectionId || reason && this.ask)
       await this.startCheckup(chatId, reason).catch(() => null);
+  }
+  paceSignal(state, now, count) {
+    const reply = now.reply ?? 0;
+    state.paceSignals = [...state.paceSignals, ...Array.from({ length: Math.min(count, 3) }, () => reply)].slice(-12);
+    const recent = state.paceSignals.filter((r) => r > reply - 10).length;
+    const gap = now.waits?.steady ?? 15;
+    if (!state.replan && recent >= 3 && (!state.replannedAt || reply - state.replannedAt >= gap))
+      state.replan = true;
   }
   reworking(state, live) {
     return state.resync !== null && (live.moment.reply ?? 0) - state.resync <= 6;
@@ -2837,6 +2988,8 @@ class NotebookController {
           }
           if (outcome.needsCheckup)
             extra = "Something new happened in the story";
+          if (outcome.rushing)
+            this.paceSignal(state, now.moment, 1);
           if (outcome.held.length)
             state.held = [...new Set([...state.held, ...outcome.held])];
           if (outcome.shifted) {
