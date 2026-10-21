@@ -304,7 +304,7 @@ describe('quick check answers', () => {
     nb.threads[1].steps[0].afterHours = 0;
     nb.beats[1].status = 'dropped';
     const plan = quickQuestions(nb, absoluteHours({ day: 1, hour: 18 }));
-    expect(Object.keys(plan.questions)).toEqual(['due_1', 'moment_1', 'detail_mentioned', 'fits_1', 'truth_1', 'story_shift', 'rushing', 'rhythm', 'new_turn']);
+    expect(Object.keys(plan.questions)).toEqual(['due_1', 'moment_1', 'detail_mentioned', 'fits_1', 'truth_1', 'story_shift', 'rushing', 'intimate', 'rhythm', 'new_turn']);
     const out = applyQuick(nb, plan, { model: 'm', answers: { due_1: { type: 'noul', noul: 0.9 }, moment_1: { type: 'noul', noul: 0.69 }, rhythm: { type: 'choice', choice: 'nonsense', probabilities: {}, confidence: 1 }, new_turn: { type: 'noul', noul: 0.2 } } }, 99);
     expect(out.notebook.threads[1].steps[0]).toMatchObject({ status: 'shown', at: 99 });
     expect(out.notebook.beats[0].status).toBe('possible');

@@ -776,6 +776,7 @@ var STAGE = {
   ten: "Arc: the turn. Something unexpected casts what came before in a new light. It does not have to be a threat.",
   ketsu: "Arc: bringing it together. Let the turn and what came before settle into something new: an understanding, a choice, a changed bond."
 };
+var INTIMATE = "Pace: an intimate scene is under way. Let it play out at its own pace, for as long as the player wants. Nothing from outside interrupts it: planned developments wait until it is over.";
 var GUIDED = "The player gave guidance for this reply. It comes first: follow it, and where anything below disagrees, the guidance wins. No new developments this time.";
 var DEEPENING = "Pace: the scene is deepening. Let it grow through what people say and do; there is no need to escalate.";
 var PLANT_GAP = 4;
@@ -798,9 +799,11 @@ function buildNote(input) {
   lines.push("Grimoire: private story guidance for the narrator. Never mention, quote, or explain it.");
   lines.push(`${input.clockMayLag ? "Story time at the last check-up" : "Story time"}: ${describeClock(input.clock)}.${input.clockMayLag ? " Time may have moved on since; the chat decides what time it is now." : ""}${input.skipHours ? ` About ${describeDuration(input.skipHours)} have passed since the last message: open with that gap and what changed during it.` : ""}`);
   const gentle = notebook.arc.shape === "kishotenketsu" && notebook.rhythm === "rising";
-  const guided = !!input.guided;
+  const guided = !!input.guided, intimate = !!input.intimate;
   if (guided)
     lines.push(GUIDED);
+  else if (intimate)
+    lines.push(INTIMATE);
   else {
     lines.push(pace === "auto" ? gentle ? DEEPENING : RHYTHM[notebook.rhythm] : PACE[pace]);
     if (STAGE[notebook.arc.stage])
@@ -810,7 +813,7 @@ function buildNote(input) {
   const wishes = (input.notes ?? []).map((n) => n.trim()).filter(Boolean).slice(0, 8);
   if (wishes.length)
     lines.push(`The player's standing wishes for this story (they outrank the plans below): ${wishes.map(end).join(" ")}`.slice(0, 900));
-  const held = new Set(input.held ?? []), reworking = !!input.reworking, quiet = reworking || guided;
+  const held = new Set(input.held ?? []), reworking = !!input.reworking, quiet = reworking || guided || intimate;
   const seedsAll = seedPlan(notebook, now), used = new Set;
   const seeds = quiet ? { plant: null, ready: [], echo: null } : { plant: seedsAll.plant && !held.has(seedsAll.plant.pays) ? seedsAll.plant : null, ready: seedsAll.ready.filter((s) => !held.has(s.pays)), echo: seedsAll.echo };
   if (reworking)
@@ -819,7 +822,7 @@ function buildNote(input) {
     used.add(seed.id);
     return `Bring back something mentioned earlier: "${seed.detail}" (${seed.payoff.replace(/[.!?]+$/, "")}).`;
   };
-  if (!guided && notebook.arc.shape === "kishotenketsu" && notebook.arc.stage === "ten" && notebook.arc.turn) {
+  if (!guided && !intimate && notebook.arc.shape === "kishotenketsu" && notebook.arc.stage === "ten" && notebook.arc.turn) {
     lines.push(`The turn: ${end(notebook.arc.turn)} Let it land through what happens, then give people room to react.`);
     for (const seed of seeds.ready.filter((s) => s.pays === "turn").slice(0, 2))
       lines.push(`- ${callback(seed)}`);
@@ -1535,6 +1538,11 @@ function quickQuestions(notebook, now) {
     instructions: "Did the latest reply rush the story: wrap up a problem, jump ahead, or move straight to the next big thing faster than the scene allowed, instead of letting it play out?",
     criteria: { true: "Yes, it hurried past things that needed room.", false: "No, it took the time the scene needed, even if a lot happened." }
   };
+  questions.intimate = {
+    type: "noul",
+    instructions: "Is the latest reply an intimate or sexual scene that is still going on at the end of the reply?",
+    criteria: { true: "Yes, an intimate or sexual scene is under way and has not ended.", false: "No, or it has ended." }
+  };
   questions.rhythm = { type: "choice", instructions: "Which best describes the scene at the end of the latest reply?", criteria: RHYTHMS };
   questions.new_turn = {
     type: "noul",
@@ -1605,7 +1613,7 @@ function applyQuick(current, plan, result, now) {
   }
   const held = Object.entries(plan.marks).flatMap(([key, mark]) => mark.kind === "fits" && answers[key]?.type === "noul" && answers[key].noul <= QUICK.no ? [mark.thread] : []);
   const cameOut = Object.entries(plan.marks).some(([key, mark]) => mark.kind === "truth" && yes(answers[key]));
-  return { notebook, changed, marked, needsCheckup: yes(answers.new_turn) || held.length > 0 || cameOut, rushing: yes(answers.rushing), shifted: yes(answers.story_shift), held };
+  return { notebook, changed, marked, needsCheckup: yes(answers.new_turn) || held.length > 0 || cameOut, rushing: yes(answers.rushing), intimate: yes(answers.intimate), shifted: yes(answers.story_shift), held };
 }
 function quickError(error) {
   const message = error instanceof Error ? error.message : String(error ?? "");
@@ -1934,11 +1942,11 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.10.0";
+var VERSION = "0.11.0";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, lines: 40, notes: 8, note: 200 };
-var DEFAULT_SETTINGS = { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto", quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true };
+var DEFAULT_SETTINGS = { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto", quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true, intimate: "protect" };
 var DEFAULT_PREFERENCES = { tone: "balanced", twist: true };
 
 // src/controller.ts
@@ -2039,7 +2047,8 @@ function validSettings(value) {
     placement: v.placement === "macro" ? "macro" : "auto",
     quick: { enabled: quick.enabled === true, connectionId: plainSetting(quick.connectionId, 120), model: plainSetting(quick.model, 200) },
     wait: v.wait === "short" || v.wait === "long" ? v.wait : "medium",
-    homeList: v.homeList !== false
+    homeList: v.homeList !== false,
+    intimate: v.intimate === "allow" ? "allow" : "protect"
   };
 }
 
@@ -2106,6 +2115,8 @@ class NotebookController {
         talk: talkLines(saved.talk),
         notes: playerNotes(saved.notes),
         quickLog: quickLog(saved.quickLog),
+        intimate: Array.isArray(saved.intimate) ? saved.intimate.filter((x) => typeof x === "string").slice(-300) : [],
+        intimateNow: saved.intimateNow === true,
         paceSignals: Array.isArray(saved.paceSignals) ? saved.paceSignals.filter((x) => Number.isInteger(x)).slice(-12) : [],
         replan: saved.replan === true,
         replannedAt: Number(saved.replannedAt) || 0,
@@ -2123,7 +2134,7 @@ class NotebookController {
     await this.api.userStorage.setJson(this.path(state.chatId), state, { userId: this.userId });
   }
   blank(chatId) {
-    return { version: 1, chatId, enabled: false, pace: "auto", preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: "" }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: "", trackerTried: false, quick: null, skipDismissedAt: 0, held: [], resync: null, talk: [], notes: [], quickLog: [], paceSignals: [], replan: false, replannedAt: 0, job: null, updatedAt: 0 };
+    return { version: 1, chatId, enabled: false, pace: "auto", preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: "" }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: "", trackerTried: false, quick: null, skipDismissedAt: 0, held: [], resync: null, talk: [], notes: [], quickLog: [], paceSignals: [], replan: false, replannedAt: 0, intimate: [], intimateNow: false, job: null, updatedAt: 0 };
   }
   async chatInfo(chatId) {
     const chat = await this.api.chats.get(chatId, this.userId);
@@ -2161,7 +2172,9 @@ class NotebookController {
     const { clock, sources } = liveClock(version.notebook.clock, values, types);
     state.checks = checks;
     const now = absoluteHours(clock), settings = await this.settings();
-    const moment = { hours: now, reply: replies.length, waits: waitsFor(settings.wait, state.pace) };
+    const skipped = new Set(state.intimate);
+    const counted = turns.filter((t, i) => t.role === "assistant" && !t.ooc && !skipped.has(prints[i])).length;
+    const moment = { hours: now, reply: counted, waits: waitsFor(settings.wait, state.pace) };
     return { state, turns, prints, index, matched, version, replies, values, types, clock, sources, now, moment, text: replies[0] ? trackerText(state.recipe, replies[0]) : "" };
   }
   fullVersion(live) {
@@ -2188,7 +2201,8 @@ class NotebookController {
     return true;
   }
   repliesSince(live) {
-    return storyReplies(live.turns.slice(this.fullVersion(live).covered.length)).length;
+    const from = this.fullVersion(live).covered.length, skipped = new Set(live.state.intimate);
+    return live.turns.filter((t, i) => i >= from && t.role === "assistant" && !t.ooc && !skipped.has(live.prints[i])).length;
   }
   async view(chatId) {
     if (!chatId)
@@ -2231,7 +2245,7 @@ class NotebookController {
         notes: state.notes,
         quickLog: state.quickLog,
         canUndo: this.undoable(state) !== null,
-        skipOffer: live && state.enabled && state.job?.status !== "running" && !state.skipHours && !this.reworking(state, live) ? skipOffer(live.version.notebook, live.moment, live.clock, state.skipDismissedAt) : null
+        skipOffer: live && state.enabled && state.job?.status !== "running" && !state.skipHours && !state.intimateNow && !this.reworking(state, live) ? skipOffer(live.version.notebook, live.moment, live.clock, state.skipDismissedAt) : null
       };
     });
   }
@@ -2794,7 +2808,8 @@ class NotebookController {
       const state = await this.load(chatId);
       if (!state?.versions.length)
         return;
-      state.skipDismissedAt = storyReplies(this.turns(state.recipe, await this.api.chat.getMessages(chatId))).length;
+      const live = await this.live(state, await this.api.chat.getMessages(chatId));
+      state.skipDismissedAt = live?.moment.reply ?? 0;
       await this.save(state);
     });
   }
@@ -2839,7 +2854,9 @@ class NotebookController {
       const recent = live.turns.slice(-2).map((t) => t.content).join(`
 `);
       const clockMayLag = (live.sources.day !== "tracker" || live.sources.hour !== "tracker") && this.repliesSince(live) > 0;
-      return buildNote({ notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map((n) => n.text) });
+      const settings = await this.settings();
+      const intimate = state.intimateNow && settings.intimate === "protect" && live.turns.at(-1)?.role === "user";
+      return buildNote({ intimate, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map((n) => n.text) });
     });
   }
   async macro(name, chatId) {
@@ -2988,7 +3005,13 @@ class NotebookController {
           }
           if (outcome.needsCheckup)
             extra = "Something new happened in the story";
-          if (outcome.rushing)
+          const judged = live.prints.at(-1);
+          state.intimateNow = outcome.intimate;
+          if (outcome.intimate && judged && !state.intimate.includes(judged)) {
+            state.intimate = [...state.intimate, judged].slice(-300);
+            now = await this.live(state, messages);
+          }
+          if (outcome.rushing && !outcome.intimate)
             this.paceSignal(state, now.moment, 1);
           if (outcome.held.length)
             state.held = [...new Set([...state.held, ...outcome.held])];

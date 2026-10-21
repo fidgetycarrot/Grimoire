@@ -407,7 +407,7 @@ describe('the quick check', () => {
     h.add('user', 'I look at the sky.'); h.add('assistant', `<div style="color:red">Shutters bang all along the street.</div>${tracker('Day 1, 18:10', 'The ferry')}`);
     await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
     const sent = h.decisionCalls[0];
-    expect(Object.keys(sent.questions)).toEqual(['due_1', 'moment_1', 'moment_2', 'detail_mentioned', 'fits_1', 'truth_1', 'story_shift', 'rushing', 'rhythm', 'new_turn']);
+    expect(Object.keys(sent.questions)).toEqual(['due_1', 'moment_1', 'moment_2', 'detail_mentioned', 'fits_1', 'truth_1', 'story_shift', 'rushing', 'intimate', 'rhythm', 'new_turn']);
     expect(sent.questions.due_1.instructions).toContain('Shutters bang');
     expect(sent.state.latestReply).toContain('Shutters bang all along the street.');
     expect(sent.state.latestReply).not.toContain('style');
@@ -1008,5 +1008,45 @@ describe('pacing that stays on plan', () => {
     h.add('user', 'Again.'); h.add('assistant', `Again.${tracker('Day 1, 18:50', 'The ferry')}`);
     await c.checkup('chat-1', 'You asked for a check-up'); await c.waitForJobs();
     expect(m.calls.filter(x => x.task === 'grimoire-checkup-v1').at(-1)!.input.replan).toBe(false);
+  });
+});
+
+describe('intimate scenes', () => {
+  const noul = (p: number) => ({ type: 'noul', noul: p });
+  async function setup(intimate: () => number, settings: Record<string, unknown> = {}) {
+    const h = host({ decide: (input: any) => ({ model: 'jev', answers: Object.fromEntries(Object.keys(input.questions).map(k => [k, input.questions[k].type === 'noul' ? noul(k === 'intimate' ? intimate() : k.startsWith('fits_') ? 0.9 : 0.1) : { type: 'choice', choice: 'peak', probabilities: { peak: 0.9 }, confidence: 0.9 }])) }) });
+    h.add('assistant', `The ferry bell rings.${tracker('Day 1, 18:00', 'The ferry')}`);
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 50, quick: { enabled: true, connectionId: '', model: '' }, ...settings }, {});
+    const m = model({ create: created, checkup: input => ({ notebook: input.notebook, tracker: null }) });
+    const c = new NotebookController(h.api, undefined, () => {}, m.ask);
+    await c.create('chat-1', {}); await c.waitForJobs();
+    await c.setPace('chat-1', 'fast');
+    return { h, c };
+  }
+  const reply = async (h: any, c: any, n: number) => { h.add('user', `Move ${n}.`); h.add('assistant', `Reply ${n}.${tracker('Day 1, 18:01', 'The ferry')}`); await c.afterReply('chat-1', 'normal'); await c.waitForJobs(); };
+  test('keep the story out until they end, and their replies do not move storylines along', async () => {
+    let on = 0.9;
+    const { h, c } = await setup(() => on);
+    for (let i = 0; i < 4; i++) await reply(h, c, i);
+    h.add('user', 'Still going.');
+    const note = await c.noteFor('chat-1');
+    expect(note).toContain('an intimate scene is under way');
+    expect(note).not.toContain('Pace: fast');
+    expect(note).not.toContain('Developments that are due');
+    const view = (await c.view('chat-1'))!;
+    expect(view.skipOffer).toBeNull();
+    // Four replies went by, but none counted: the urgent storm (due after 2 replies on Fast) hasn't been pushed in by reply count.
+    expect(view.quickLog.slice(-4).map((q: any) => q.reply)).toEqual([2, 2, 2, 2]);
+    on = 0.1;
+    h.messages.pop();
+    await reply(h, c, 9);
+    h.add('user', 'After.');
+    expect(await c.noteFor('chat-1')).not.toContain('intimate scene');
+  });
+  test('can let urgent things in instead', async () => {
+    const { h, c } = await setup(() => 0.9, { intimate: 'allow' });
+    await reply(h, c, 1);
+    h.add('user', 'Still going.');
+    expect(await c.noteFor('chat-1')).not.toContain('intimate scene');
   });
 });

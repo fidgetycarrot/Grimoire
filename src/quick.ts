@@ -85,6 +85,8 @@ export function quickQuestions(notebook: Notebook, now: number | Moment): QuickP
     criteria: { true: 'Yes, the story has changed direction and the notes need reworking.', false: 'No, the story is still on the same ground, even if something new happened.' } };
   questions.rushing = { type: 'noul', instructions: 'Did the latest reply rush the story: wrap up a problem, jump ahead, or move straight to the next big thing faster than the scene allowed, instead of letting it play out?',
     criteria: { true: 'Yes, it hurried past things that needed room.', false: 'No, it took the time the scene needed, even if a lot happened.' } };
+  questions.intimate = { type: 'noul', instructions: 'Is the latest reply an intimate or sexual scene that is still going on at the end of the reply?',
+    criteria: { true: 'Yes, an intimate or sexual scene is under way and has not ended.', false: 'No, or it has ended.' } };
   questions.rhythm = { type: 'choice', instructions: 'Which best describes the scene at the end of the latest reply?', criteria: RHYTHMS };
   questions.new_turn = { type: 'noul', instructions: 'Did the latest exchange bring in something the story notes do not cover yet: a new named person who matters, a new problem or goal, a big change of place or time, or a choice that changes where the story is heading?',
     criteria: { true: 'Yes, something important is new.', false: 'No, it continues what the notes already cover.' } };
@@ -104,7 +106,7 @@ export function quickState(notebook: Notebook, clock: StoryClock, playerMessage:
 
 const yes = (answer: DecisionAnswer | undefined) => answer?.type === 'noul' && answer.noul >= QUICK.yes;
 
-export interface QuickOutcome { notebook: Notebook; changed: boolean; marked: number; needsCheckup: boolean; /** The reply hurried past things that needed room. */ rushing: boolean; /** The story changed direction: rework the notebook. */ shifted: boolean; /** Threads that clearly no longer fit for now. */ held: string[] }
+export interface QuickOutcome { notebook: Notebook; changed: boolean; marked: number; needsCheckup: boolean; /** The reply hurried past things that needed room. */ rushing: boolean; /** An intimate scene is under way. */ intimate: boolean; /** The story changed direction: rework the notebook. */ shifted: boolean; /** Threads that clearly no longer fit for now. */ held: string[] }
 /**
  * Apply answers onto the notebook as it is now (it may have changed while the
  * question was out). Only waiting steps and possible beats can be marked.
@@ -133,7 +135,7 @@ export function applyQuick(current: Notebook, plan: QuickPlan, result: DecisionR
   if (rhythm?.type === 'choice' && rhythm.confidence >= QUICK.rhythm && rhythm.choice in RHYTHMS && rhythm.choice !== notebook.rhythm) { notebook.rhythm = rhythm.choice as Rhythm; changed = true; }
   const held = Object.entries(plan.marks).flatMap(([key, mark]) => mark.kind === 'fits' && answers[key]?.type === 'noul' && (answers[key] as { noul: number }).noul <= QUICK.no ? [mark.thread] : []);
   const cameOut = Object.entries(plan.marks).some(([key, mark]) => mark.kind === 'truth' && yes(answers[key]));
-  return { notebook, changed, marked, needsCheckup: yes(answers.new_turn) || held.length > 0 || cameOut, rushing: yes(answers.rushing), shifted: yes(answers.story_shift), held };
+  return { notebook, changed, marked, needsCheckup: yes(answers.new_turn) || held.length > 0 || cameOut, rushing: yes(answers.rushing), intimate: yes(answers.intimate), shifted: yes(answers.story_shift), held };
 }
 
 /** Fixed wording only: provider errors can echo what was sent. */

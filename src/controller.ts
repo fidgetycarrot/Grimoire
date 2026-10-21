@@ -94,6 +94,7 @@ export function validSettings(value: unknown): Settings {
     quick: { enabled: quick.enabled === true, connectionId: plainSetting(quick.connectionId, 120), model: plainSetting(quick.model, 200) },
     wait: v.wait === 'short' || v.wait === 'long' ? v.wait : 'medium',
     homeList: v.homeList !== false,
+    intimate: v.intimate === 'allow' ? 'allow' : 'protect',
   };
 }
 
@@ -133,6 +134,7 @@ export class NotebookController {
         skipHours: Number(saved.skipHours) > 0 ? Number(saved.skipHours) : 0, skipTurn: Number(saved.skipTurn) > 0 ? Number(saved.skipTurn) : 0, needsCheck: typeof saved.needsCheck === 'string' ? saved.needsCheck : '', trackerTried: saved.trackerTried === true, skipDismissedAt: Number(saved.skipDismissedAt) > 0 ? Number(saved.skipDismissedAt) : 0,
         held: Array.isArray(saved.held) ? saved.held.filter((x): x is string => typeof x === 'string').slice(0, 12) : [], resync: Number.isInteger(saved.resync) ? Number(saved.resync) : null,
         talk: talkLines(saved.talk), notes: playerNotes(saved.notes), quickLog: quickLog(saved.quickLog),
+        intimate: Array.isArray(saved.intimate) ? saved.intimate.filter((x): x is string => typeof x === 'string').slice(-300) : [], intimateNow: saved.intimateNow === true,
         paceSignals: Array.isArray(saved.paceSignals) ? saved.paceSignals.filter((x): x is number => Number.isInteger(x)).slice(-12) : [], replan: saved.replan === true, replannedAt: Number(saved.replannedAt) || 0,
         quick: saved.quick && typeof saved.quick === 'object' ? { at: Number(record(saved.quick).at) || 0, ok: record(saved.quick).ok === true, error: String(record(saved.quick).error ?? '').slice(0, 200) } : null,
         // A job cannot survive a restart; its request may or may not have finished.
@@ -149,7 +151,7 @@ export class NotebookController {
     await this.api.userStorage.setJson(this.path(state.chatId), state, { userId: this.userId });
   }
   private blank(chatId: string): ChatState {
-    return { version: 1, chatId, enabled: false, pace: 'auto', preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: '' }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: '', trackerTried: false, quick: null, skipDismissedAt: 0, held: [], resync: null, talk: [], notes: [], quickLog: [], paceSignals: [], replan: false, replannedAt: 0, job: null, updatedAt: 0 };
+    return { version: 1, chatId, enabled: false, pace: 'auto', preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: '' }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: '', trackerTried: false, quick: null, skipDismissedAt: 0, held: [], resync: null, talk: [], notes: [], quickLog: [], paceSignals: [], replan: false, replannedAt: 0, intimate: [], intimateNow: false, job: null, updatedAt: 0 };
   }
   private async chatInfo(chatId: string): Promise<{ name: string; supported: boolean; reason: string; characterId: string }> {
     const chat = await this.api.chats.get(chatId, this.userId);
@@ -185,7 +187,10 @@ export class NotebookController {
     const { clock, sources } = liveClock(version.notebook.clock, values, types);
     state.checks = checks;
     const now = absoluteHours(clock), settings = await this.settings();
-    const moment: Moment = { hours: now, reply: replies.length, waits: waitsFor(settings.wait, state.pace) };
+    // Replies inside intimate scenes don't move storylines along, so nothing piles up while one plays out.
+    const skipped = new Set(state.intimate);
+    const counted = turns.filter((t, i) => t.role === 'assistant' && !t.ooc && !skipped.has(prints[i])).length;
+    const moment: Moment = { hours: now, reply: counted, waits: waitsFor(settings.wait, state.pace) };
     return { state, turns, prints, index, matched, version, replies, values, types, clock, sources, now, moment, text: replies[0] ? trackerText(state.recipe, replies[0]) : '' };
   }
   /** The newest full update at or before the version in use. Quick checks keep the notebook current, but don't count as a check-up. */
@@ -211,7 +216,7 @@ export class NotebookController {
     state.recipe = { fields: [...kept, ...extra], note: state.recipe.note || found.note };
     return true;
   }
-  private repliesSince(live: Live) { return storyReplies(live.turns.slice(this.fullVersion(live).covered.length)).length; }
+  private repliesSince(live: Live) { const from = this.fullVersion(live).covered.length, skipped = new Set(live.state.intimate); return live.turns.filter((t, i) => i >= from && t.role === 'assistant' && !t.ooc && !skipped.has(live.prints[i])).length; }
 
   async view(chatId: string | null): Promise<ChatView | null> {
     if (!chatId) return null;
@@ -232,7 +237,7 @@ export class NotebookController {
         job: state.job, updatedAt: state.updatedAt, repliesSinceCheck: live ? this.repliesSince(live) : 0, skipHours: state.skipHours, notebook, behind: !!live && live.index !== state.versions.length - 1, earlierParts, quick: state.quick, dueIds: live ? dueThreads(live.version.notebook, live.moment).map(d => d.thread.id) : [],
         glance: live ? glance(live.version.notebook, live.moment) : null, reworking: !!live && this.reworking(state, live),
         talk: state.talk, notes: state.notes, quickLog: state.quickLog, canUndo: this.undoable(state) !== null,
-        skipOffer: live && state.enabled && state.job?.status !== 'running' && !state.skipHours && !this.reworking(state, live) ? skipOffer(live.version.notebook, live.moment, live.clock, state.skipDismissedAt) : null,
+        skipOffer: live && state.enabled && state.job?.status !== 'running' && !state.skipHours && !state.intimateNow && !this.reworking(state, live) ? skipOffer(live.version.notebook, live.moment, live.clock, state.skipDismissedAt) : null,
       };
     });
   }
@@ -666,7 +671,8 @@ export class NotebookController {
     return this.serial(chatId, async () => {
       const state = await this.load(chatId);
       if (!state?.versions.length) return;
-      state.skipDismissedAt = storyReplies(this.turns(state.recipe, await this.api.chat.getMessages(chatId))).length;
+      const live = await this.live(state, await this.api.chat.getMessages(chatId));
+      state.skipDismissedAt = live?.moment.reply ?? 0;
       await this.save(state);
     });
   }
@@ -700,7 +706,9 @@ export class NotebookController {
       if (live.turns.at(-1)?.role === 'user' && live.turns.at(-1)?.ooc) return '';
       const recent = live.turns.slice(-2).map(t => t.content).join('\n');
       const clockMayLag = (live.sources.day !== 'tracker' || live.sources.hour !== 'tracker') && this.repliesSince(live) > 0;
-      return buildNote({ notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map(n => n.text) });
+      const settings = await this.settings();
+      const intimate = state.intimateNow && settings.intimate === 'protect' && live.turns.at(-1)?.role === 'user';
+      return buildNote({ intimate, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map(n => n.text) });
     });
   }
   async macro(name: 'note' | 'clock' | 'pace', chatId: string | undefined): Promise<string> {
@@ -831,7 +839,11 @@ export class NotebookController {
             now = (await this.live(state, messages))!;
           }
           if (outcome.needsCheckup) extra = 'Something new happened in the story';
-          if (outcome.rushing) this.paceSignal(state, now.moment, 1);
+          // An intimate scene: its replies don't count toward storyline waits, and hurrying is the scene's own business.
+          const judged = live.prints.at(-1);
+          state.intimateNow = outcome.intimate;
+          if (outcome.intimate && judged && !state.intimate.includes(judged)) { state.intimate = [...state.intimate, judged].slice(-300); now = (await this.live(state, messages))!; }
+          if (outcome.rushing && !outcome.intimate) this.paceSignal(state, now.moment, 1);
           if (outcome.held.length) state.held = [...new Set([...state.held, ...outcome.held])];
           // The story changed direction: hold old plans back and rework the notebook now.
           if (outcome.shifted) { state.resync = now.moment.reply ?? 0; extra = 'The story changed direction'; }

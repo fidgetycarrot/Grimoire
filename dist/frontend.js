@@ -53,7 +53,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.10.0";
+var VERSION = "0.11.0";
 
 // src/frontend.ts
 var ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8 3v18"/><path d="M12 8h3M12 12h3"/></svg>';
@@ -462,7 +462,7 @@ function setup(ctx) {
     d.body.append(check, el("p", "gm-hint", "Reads the latest chat and updates the plan. Check-ups also run on their own when a scene changes, time jumps, or enough replies pass."), el("div", "gm-sub"), skipRow, skip, el("div", "gm-sub"), remove);
     return d.root;
   }
-  const QUICK_WORDS = [[/^due_/, "Planned development shown"], [/^moment_/, "Possible moment happened"], [/^detail_mentioned$/, "Breadcrumb mentioned"], [/^echo_heard$/, "Echo heard"], [/^callback_/, "Breadcrumb paid off"], [/^fits_/, "Storyline still fits"], [/^truth_/, "Secret came out"], [/^story_shift$/, "Change of direction"], [/^rushing$/, "Rushing"], [/^new_turn$/, "Something new"]];
+  const QUICK_WORDS = [[/^due_/, "Planned development shown"], [/^moment_/, "Possible moment happened"], [/^detail_mentioned$/, "Breadcrumb mentioned"], [/^echo_heard$/, "Echo heard"], [/^callback_/, "Breadcrumb paid off"], [/^fits_/, "Storyline still fits"], [/^truth_/, "Secret came out"], [/^story_shift$/, "Change of direction"], [/^rushing$/, "Rushing"], [/^intimate$/, "Intimate scene"], [/^new_turn$/, "Something new"]];
   const RHYTHM_WORDS = { calm: "calm", rising: "building", peak: "big moment", aftermath: "aftermath", stalled: "stalled" };
   const STAGE_WORDS = { setup: "setup", rising: "rising action", climax: "climax", resolution: "resolution", ki: "introduction", sho: "development", ten: "the turn", ketsu: "bringing it together" };
   const part = (title) => {
@@ -736,7 +736,7 @@ function setup(ctx) {
     body.append(renderNow(view), renderSteer(view), renderBehind(view), renderSpoilers(view), renderMore(view));
   }
   function renderSettings() {
-    const settings = { ...snapshot?.settings ?? { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto", quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true } };
+    const settings = { ...snapshot?.settings ?? { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto", quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true, intimate: "protect" } };
     const card = el("section", "gm-card gm-stack");
     const connection = select([["", "Choose a connection"], ...(snapshot?.connections ?? []).map((c) => [c.id, `${c.name}${c.model ? ` · ${c.model}` : ""}`])], settings.connectionId);
     const every = el("input");
@@ -775,6 +775,8 @@ function setup(ctx) {
         quickCard.append(el("p", "gm-notice", "Add a decision connection in Lumiverse’s connection settings first (OpenRouter or TypeSafe)."));
       quickCard.append(labeled("Decision connection", decision), labeled("Model", model, "Any decision model works. To use a different one than the connection’s, type its exact ID. Pick one with a version in its name rather than one ending in “latest”, so it doesn’t change without you knowing."));
     }
+    const intimate = select([["protect", "Keep the story out until the scene ends"], ["allow", "Let urgent things interrupt"]], settings.intimate ?? "protect");
+    card.append(labeled("During intimate scenes", intimate, "The quick check notices these scenes. While one plays out, nothing planned interrupts it, and its replies don’t count toward moving storylines along, so nothing piles up for afterward. Needs the quick check."));
     const homeRow = el("label", "gm-row gm-small"), home = el("input");
     home.type = "checkbox";
     home.checked = settings.homeList !== false;
@@ -782,7 +784,7 @@ function setup(ctx) {
     homeRow.append(home, document.createTextNode("Show my stories on the home page"));
     card.append(homeRow);
     const save = button("Save settings", async () => {
-      await act("settings", { settings: { connectionId: connection.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, placement: placement.value, wait: wait.value, homeList: home.checked, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } });
+      await act("settings", { settings: { connectionId: connection.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, placement: placement.value, wait: wait.value, homeList: home.checked, intimate: intimate.value, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } });
       notify("Settings saved.");
     }, "primary");
     body.append(card, quickCard, save);
