@@ -148,7 +148,7 @@ export function buildNote(input: NoteInput): string {
     for (const thread of nearby) lines.push(`- ${thread.title}: ${thread.hint || thread.why}`);
   }
   if (present.length) {
-    lines.push('People here and what drives them (give each one their own voice; nobody should sound like anyone else):');
+    lines.push('People here and what drives them (give each one their own voice; nobody should sound like anyone else; a sample line shows how someone sounds, never repeat it word for word):');
     for (const person of present.slice(0, 4)) lines.push(`- ${person.name}${person.role ? ` (${person.role})` : ''}: wants ${end(person.wants || 'nothing stated yet')}${person.doing ? ` Currently: ${end(person.doing)}` : ''}${person.hint ? ` Play them as: ${end(person.hint)}` : ''}${person.voice ? ` Voice: ${end(person.voice)}` : ''}`);
   }
   // A possible beat, matched to the pace. Quiet keeps only gentle ones.
