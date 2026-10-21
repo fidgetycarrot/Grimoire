@@ -54,7 +54,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.12.0";
+var VERSION = "0.12.1";
 
 // src/frontend.ts
 var ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8 3v18"/><path d="M12 8h3M12 12h3"/></svg>';
@@ -343,7 +343,7 @@ function setup(ctx) {
       draftChat = view.chatId;
     }
     const busy = view.job?.status === "running", offline = !snapshot?.settings.connectionId;
-    card.append(el("h4", "", "Talk to Grimoire"), el("p", "gm-hint", "Tell Grimoire what you’d like from the story, or share an idea. It changes its plans without telling you what they are. Stuck for ideas? Ask it for some."));
+    card.append(el("h4", "", "Talk to Grimoire"), el("p", "gm-hint", "Tell Grimoire what you’d like from the story, or share an idea. If it’s open-ended, it asks what kind you mean; then it changes its plans without telling you what they are. Stuck for ideas? Ask it for some."));
     if (view.notes.length) {
       const notes = el("div", "gm-stack gm-notes");
       notes.append(el("p", "gm-label", "Your notes"));

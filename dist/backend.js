@@ -1055,8 +1055,9 @@ Return {"ask": false, "reply": "...", "changes": {...} or null, "note": "", "pus
 ${input.push ? `The player pressed a button: ${PUSH_ASKS[input.push]} Do it now: return "changes" and "push" (and "skipHours" for a new chapter). Do not ask anything; "reply" can be empty.
 ${PUSH_RULES}
 ` : ""}How to answer:
-- If you understand what they want well enough to act on it, act. Change the plans so the story goes their way, set "ask" to false, and in "reply" say in one or two short sentences what you will do, in their terms. If nothing needs to change, return "changes": null and say so.
-- Only if their message is unclear, or could mean very different changes, set "ask" to true, return "changes": null, and put one short question in "reply". Once they have answered, act. Never ask more than you need.
+- When the request is specific, so what to change is clear ("slow down", "more of Sam", "keep it light", "Tom should get his comeuppance"), act. Change the plans so the story goes their way, set "ask" to false, and in "reply" say in one or two short sentences what you will do, in their terms. If nothing needs to change, return "changes": null and say so.
+- When it is open-ended about what kind of thing they want ("add some conflict", "make it more exciting", "more romance", "I'm bored"), or their words could mean very different changes, ask first: set "ask" to true, return "changes": null, and in "reply" put one short question that offers two or three concrete kinds to choose from, built on what they have seen and met, plus "or something else" (like "What kind of conflict: trouble with your old friends, pressure from outside, or friction with Riley? Or something else?"). The options are directions, never the notebook's secrets or plans. Then act on their answer.
+- ${input.mustAct ? "You have already asked twice in this conversation. Do not ask again: act now on your best reading of everything they said." : "Ask at most twice in one conversation; after that, act on your best reading."}
 - Keep it brief and end there. Do not ask how they feel about it, offer ideas they didn't ask for, or invite them to keep talking.
 - Only when they ask for ideas ("help me think of something", "any ideas for\u2026"): offer two or three short pitches in "reply", one line each, numbered. Each is an open direction, not a plan ("someone from your past turns up"), built on what the player has seen and met. Never pitch the notebook's secrets, its planned events, or anything that would give them away. Set "ask" to true and "changes" to null, so they can pick one or riff on it; then act on their choice.
 - The reply must contain no spoilers. The player has not seen the notebook. Name only people, places, and events they have mentioned or met in the chat, and secrets in story.cameOut, which they already know. Never mention secrets, twists, planned events, breadcrumbs, or anything else they don't know.
@@ -1982,7 +1983,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.12.0";
+var VERSION = "0.12.1";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, lines: 40, notes: 8, note: 200 };
@@ -2674,7 +2675,8 @@ class NotebookController {
         exchange: open.map((l) => ({ from: l.from, text: l.text })),
         notes: state.notes.map((n) => n.text),
         keep: pinning,
-        push
+        push,
+        mustAct: open.filter((l) => l.from === "grimoire" && l.asked).length >= 2
       };
       this.track((async () => {
         try {
@@ -2682,7 +2684,7 @@ class NotebookController {
           const result = await askJson(ask, talkMessages(input), (value) => {
             round++;
             const output = record6(value);
-            const asked = !push && output.ask === true;
+            const asked = !push && output.ask === true && !input.mustAct;
             const kind = push ?? (!asked && output.push && PUSH_KINDS.includes(output.pushKind) ? output.pushKind : null);
             const reply = kind ? pushReply(kind, 0) : plainBlock(output.reply, 600);
             if (!reply)

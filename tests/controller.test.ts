@@ -1085,3 +1085,18 @@ describe('talk speed and stopping', () => {
     expect(view.notebook!.threads[1].speed).toBe('urgent');
   });
 });
+
+describe('talk asks what kind when a request is open-ended', () => {
+  test('the prompt asks for options on open requests, and after two questions it must act', async () => {
+    const { m, c } = await ready(host(), model({ create: created, talk: () => ({ ask: true, reply: 'What kind: A, B, or C? Or something else?', changes: null }) }));
+    await c.talk('chat-1', 'Add some conflict.', false); await c.waitForJobs();
+    expect(m.calls.find(x => x.task === 'grimoire-talk-v1')!.messages[0].content).toContain('offers two or three concrete kinds');
+    await c.talk('chat-1', 'Hmm, not sure.', false); await c.waitForJobs();
+    await c.talk('chat-1', 'Something with my friends.', false); await c.waitForJobs();
+    const third = m.calls.filter(x => x.task === 'grimoire-talk-v1')[2];
+    expect(third.input.mustAct).toBe(true);
+    expect(third.messages[0].content).toContain('Do not ask again');
+    // A third question is treated as an answer, so the conversation closes.
+    expect((await c.view('chat-1'))!.talk.at(-1)!.asked).toBeUndefined();
+  });
+});

@@ -168,7 +168,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const card = el('section', 'gm-card gm-stack gm-talk');
     if (draftChat !== view.chatId) { draft = ''; draftKeep = false; draftChat = view.chatId; }
     const busy = view.job?.status === 'running', offline = !snapshot?.settings.connectionId;
-    card.append(el('h4', '', 'Talk to Grimoire'), el('p', 'gm-hint', 'Tell Grimoire what you’d like from the story, or share an idea. It changes its plans without telling you what they are. Stuck for ideas? Ask it for some.'));
+    card.append(el('h4', '', 'Talk to Grimoire'), el('p', 'gm-hint', 'Tell Grimoire what you’d like from the story, or share an idea. If it’s open-ended, it asks what kind you mean; then it changes its plans without telling you what they are. Stuck for ideas? Ask it for some.'));
     if (view.notes.length) {
       const notes = el('div', 'gm-stack gm-notes'); notes.append(el('p', 'gm-label', 'Your notes'));
       for (const note of view.notes) {

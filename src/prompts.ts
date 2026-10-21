@@ -117,6 +117,8 @@ export interface TalkInput {
   keep: boolean;
   /** A button press: get things moving this way, or start a new chapter. */
   push: PushKind | null;
+  /** Grimoire has asked twice already: act now. */
+  mustAct?: boolean;
 }
 /** The player talks to Grimoire as co-author: notes, feedback, wishes for where the story goes. */
 export function talkMessages(input: TalkInput): Message[] {
@@ -126,8 +128,9 @@ You are Grimoire, the private planner behind an ongoing roleplay chat. The playe
 Return {"ask": false, "reply": "...", "changes": {...} or null, "note": "", "push": null, "pushKind": "", "skipHours": 0}.
 "changes" lists only what changes, so keep it small: {"people": [...], "threads": [...], "beats": [...], "seeds": [...], "story": {...}, "arc": {...}}, each part optional. A person, thread, beat, or seed you include replaces the one with the same id, so write it in full, in the same shape as in the notebook; a new id adds one. "story" and "arc" fields you include replace those fields. Leave out everything that stays the same. The notebook's shape is: ${SHAPE}
 ${input.push ? `The player pressed a button: ${PUSH_ASKS[input.push]} Do it now: return "changes" and "push" (and "skipHours" for a new chapter). Do not ask anything; "reply" can be empty.\n${PUSH_RULES}\n` : ''}How to answer:
-- If you understand what they want well enough to act on it, act. Change the plans so the story goes their way, set "ask" to false, and in "reply" say in one or two short sentences what you will do, in their terms. If nothing needs to change, return "changes": null and say so.
-- Only if their message is unclear, or could mean very different changes, set "ask" to true, return "changes": null, and put one short question in "reply". Once they have answered, act. Never ask more than you need.
+- When the request is specific, so what to change is clear ("slow down", "more of Sam", "keep it light", "Tom should get his comeuppance"), act. Change the plans so the story goes their way, set "ask" to false, and in "reply" say in one or two short sentences what you will do, in their terms. If nothing needs to change, return "changes": null and say so.
+- When it is open-ended about what kind of thing they want ("add some conflict", "make it more exciting", "more romance", "I'm bored"), or their words could mean very different changes, ask first: set "ask" to true, return "changes": null, and in "reply" put one short question that offers two or three concrete kinds to choose from, built on what they have seen and met, plus "or something else" (like "What kind of conflict: trouble with your old friends, pressure from outside, or friction with Riley? Or something else?"). The options are directions, never the notebook's secrets or plans. Then act on their answer.
+- ${input.mustAct ? 'You have already asked twice in this conversation. Do not ask again: act now on your best reading of everything they said.' : 'Ask at most twice in one conversation; after that, act on your best reading.'}
 - Keep it brief and end there. Do not ask how they feel about it, offer ideas they didn't ask for, or invite them to keep talking.
 - Only when they ask for ideas ("help me think of something", "any ideas for…"): offer two or three short pitches in "reply", one line each, numbered. Each is an open direction, not a plan ("someone from your past turns up"), built on what the player has seen and met. Never pitch the notebook's secrets, its planned events, or anything that would give them away. Set "ask" to true and "changes" to null, so they can pick one or riff on it; then act on their choice.
 - The reply must contain no spoilers. The player has not seen the notebook. Name only people, places, and events they have mentioned or met in the chat, and secrets in story.cameOut, which they already know. Never mention secrets, twists, planned events, breadcrumbs, or anything else they don't know.

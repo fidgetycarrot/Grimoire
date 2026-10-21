@@ -530,7 +530,7 @@ export class NotebookController {
         notebook: base.notebook, preferences: state.preferences, storyTime: describeClock(live.clock),
         chat: live.turns.slice(-12).map(t => ({ role: t.role, content: told(t, 4000) })),
         earlier: earlier.map(l => ({ from: l.from, text: l.text })), exchange: open.map(l => ({ from: l.from, text: l.text })),
-        notes: state.notes.map(n => n.text), keep: pinning, push,
+        notes: state.notes.map(n => n.text), keep: pinning, push, mustAct: open.filter(l => l.from === 'grimoire' && l.asked).length >= 2,
       };
       this.track((async () => {
         try {
@@ -538,7 +538,7 @@ export class NotebookController {
           const result = await askJson(ask, talkMessages(input), value => {
             round++;
             const output = record(value);
-            const asked = !push && output.ask === true;
+            const asked = !push && output.ask === true && !input.mustAct;
             const kind: PushKind | null = push ?? (!asked && output.push && PUSH_KINDS.includes(output.pushKind as PushKind) ? output.pushKind as PushKind : null);
             const reply = kind ? pushReply(kind, 0) : plainBlock(output.reply, 600);
             if (!reply) throw new NotebookError('"reply" is empty. Answer the player in one or two short sentences.');
