@@ -520,7 +520,7 @@ describe('the quick check', () => {
     for (let i = 0; i < 8; i++) { h.add('user', `Wait ${i}.`); h.add('assistant', `Time passes.${tracker('Day 1, 18:00', 'The ferry')}`); }
     await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
     const view = (await c.view('chat-1'))!;
-    expect(view.quick).toMatchObject({ ok: false, error: 'The decision model request failed.' });
+    expect(view.quick).toMatchObject({ ok: false, error: 'The decision model request failed (code 502).' });
     expect(m.calls.filter(x => x.task === 'grimoire-checkup-v1')).toHaveLength(1);
   });
   test('answers about a reply that was swiped away meanwhile are thrown out', async () => {
