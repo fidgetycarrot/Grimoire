@@ -45,6 +45,7 @@ export function createRpc(ctx: Rpc, onChanged: () => void, timeoutMs = 45_000) {
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text?: string): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag); if (className) node.className = className; if (text !== undefined) node.textContent = text; return node;
 }
+const elapsed = (from: number) => { const s = Math.max(0, Math.round((Date.now() - from) / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 const ago = (time: number) => { const s = Math.max(0, (Date.now() - time) / 1000), d = Math.round(s / 86400); return s < 60 ? 'just now' : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${d} ${d === 1 ? 'day' : 'days'} ago`; };
 const STATUS_WORDS = { verified: 'Read from your preset', waiting: 'Waiting for a reply to check', unavailable: 'Not found, Grimoire keeps this' } as const;
 const FIELD_WORDS: Record<string, string> = { datetime: 'Date and time', date: 'Date', time: 'Time', location: 'Place', present: 'Who is here' };
@@ -116,10 +117,17 @@ export function setup(ctx: SpindleFrontendContext) {
     if (noConnection) card.append(el('p', 'gm-notice', 'Choose a model connection in Settings first.'), button('Open settings', () => { page = 'settings'; render(); }));
     return card;
   }
+  /** A running clock next to work in progress, so you can see it is still going. */
+  function since(startedAt: number) { const t = el('span', 'gm-since'); t.dataset.gmSince = String(startedAt); t.textContent = elapsed(startedAt); return t; }
   function renderJob(view: ChatView) {
     if (!view.job || view.job.status === 'complete') return null;
-    const box = el('div', view.job.status === 'failed' ? 'gm-notice' : 'gm-card gm-small');
-    box.textContent = view.job.status === 'running' ? `${view.job.label}…` : `${view.job.label}. ${view.job.error ?? ''}`;
+    // Talking shows its progress in the conversation instead.
+    if (view.job.status === 'running' && view.job.kind === 'talk') return null;
+    const box = el('div', view.job.status === 'failed' ? 'gm-notice' : 'gm-card gm-small gm-row gm-spread');
+    if (view.job.status === 'running') {
+      const words = el('span'); words.append(document.createTextNode(`${view.job.label}… `), since(view.job.startedAt));
+      box.append(words, button('Stop', async () => { await act('cancel', { chatId: view.chatId }); notify('Stopped. Nothing was changed.'); }));
+    } else box.textContent = `${view.job.label}. ${view.job.error ?? ''}`;
     return box;
   }
   function renderSkipOffer(view: ChatView) {
@@ -182,7 +190,14 @@ export function setup(ctx: SpindleFrontendContext) {
         if (line.undone) item.append(el('p', 'gm-meta', 'Undone'));
         log.append(item);
       }
+      if (busy && view.job?.kind === 'talk') {
+        const wait = el('div', 'gm-line gm-line-grimoire gm-waiting');
+        const words = el('p', 'gm-small'); words.append(document.createTextNode(`${view.job.label}… `), since(view.job.startedAt));
+        wait.append(el('p', 'gm-line-who', 'Grimoire'), words, el('p', 'gm-meta', 'Changing the plans can take a minute or two.'));
+        log.append(wait);
+      }
       const actions = el('div', 'gm-row gm-quiet');
+      if (busy && view.job?.kind === 'talk') actions.append(button('Stop', async () => { await act('cancel', { chatId: view.chatId }); notify('Stopped. Nothing was changed.'); }));
       if (view.canUndo) actions.append(button('Undo the last change', async () => { await act('undo-talk', { chatId: view.chatId }); notify('The plans are back the way they were.'); }));
       actions.append(button('Clear conversation', async () => { await act('clear-talk', { chatId: view.chatId }); }));
       card.append(log, actions);
@@ -528,6 +543,9 @@ export function setup(ctx: SpindleFrontendContext) {
     return refreshing;
   }
   teardown.push(tab.onActivate(() => void refresh()), ctx.events.on('CHAT_CHANGED', () => { editing = false; void refresh(true); }), ctx.events.on('CHAT_SWITCHED', () => { editing = false; void refresh(true).then(refreshStories); }));
+  // Work-in-progress clocks tick without redrawing the panel.
+  const ticker = setInterval(() => { for (const node of app.querySelectorAll<HTMLElement>('[data-gm-since]')) node.textContent = elapsed(Number(node.dataset.gmSince)); }, 1000);
+  teardown.push(() => clearInterval(ticker));
   render(); ctx.ready(); void refresh(true).then(refreshStories);
   return () => { if (destroyed) return; destroyed = true; if (polling) clearInterval(polling); rpc.destroy(); for (const fn of teardown.reverse()) fn(); app.remove(); tab.destroy(); };
 }

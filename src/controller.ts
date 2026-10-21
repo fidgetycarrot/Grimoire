@@ -6,7 +6,7 @@ import { askJson, askModel, ModelError, type Ask } from './model';
 import { buildNote, liveClock, paceLine, type ClockSources } from './note';
 import { dueThreads, fillReplies, keepTimes, mergeRevision, NotebookError, partProgress, stamp, validateNotebook, waitsFor, withoutTimes, type Moment, type Notebook, type Pace, type Preferences } from './notebook';
 import { checkupMessages, creationMessages, digestMessages, talkMessages, type Material } from './prompts';
-import { describeChanges, openExchange } from './talk';
+import { applyChanges, describeChanges, openExchange } from './talk';
 import { checkPush, launchPush, PUSH_KINDS, secretsLeft, type PushKind } from './push';
 import { earlySteps, enforcePace, fixPace } from './pacing';
 import { plain, plainBlock, tidyNotebook } from './tidy';
@@ -411,7 +411,9 @@ export class NotebookController {
       if (!current || current.job?.id !== job.id) return;
       let turns: number | undefined;
       try { turns = conversation(await this.api.chat.getMessages(chatId)).length; } catch { /* unknown */ }
-      current.job = { ...job, status: 'failed', label: job.kind === 'create' ? 'The notebook could not be written' : job.kind === 'talk' ? 'Grimoire could not answer' : 'The check-up could not finish', error: this.explain(error), ...(turns !== undefined ? { failedAtTurn: turns } : {}) };
+      const stopped = error instanceof ModelError && error.code === 'CANCELLED';
+      current.job = stopped ? { ...job, status: 'failed', label: 'Stopped', error: 'Nothing was changed.' }
+        : { ...job, status: 'failed', label: job.kind === 'create' ? 'The notebook could not be written' : job.kind === 'talk' ? 'Grimoire could not answer' : 'The check-up could not finish', error: this.explain(error), ...(turns !== undefined ? { failedAtTurn: turns } : {}) };
       await this.save(current);
     }).catch(() => {});
   }
@@ -540,10 +542,12 @@ export class NotebookController {
             const kind: PushKind | null = push ?? (!asked && output.push && PUSH_KINDS.includes(output.pushKind as PushKind) ? output.pushKind as PushKind : null);
             const reply = kind ? pushReply(kind, 0) : plainBlock(output.reply, 600);
             if (!reply) throw new NotebookError('"reply" is empty. Answer the player in one or two short sentences.');
-            if (kind && !(output.notebook && typeof output.notebook === 'object')) throw new NotebookError('Return the revised notebook and "push".');
+            // Only what changes, laid over the notebook; a whole notebook still works.
+            const proposed = asked ? null : applyChanges(base.notebook, output.changes) ?? (output.notebook && typeof output.notebook === 'object' ? output.notebook : null);
+            if (kind && !proposed) throw new NotebookError('Return "changes" and "push".');
             let notebook: Notebook | null = null, skip = 0, moment = live.moment, clock = live.clock;
-            if (!asked && output.notebook && typeof output.notebook === 'object') {
-              let revised = validateNotebook(tidyNotebook(output.notebook, base.notebook));
+            if (proposed) {
+              let revised = validateNotebook(tidyNotebook(proposed, base.notebook));
               if (kind) revised = launchPush(revised, checkPush(base.notebook, revised, output.push, kind));
               if (round === 1) enforcePace(base.notebook, revised, { playerAsked: true }); else revised = fixPace(base.notebook, revised, { playerAsked: true });
               // A new chapter may open after a jump in time. Only the parts of the clock Grimoire owns move; the narrator is told.
@@ -616,6 +620,12 @@ export class NotebookController {
       state.talk = [...state.talk, { from: 'grimoire' as const, text: 'Undone. The plans are back the way they were.', at: Date.now(), changes: [] }].slice(-TALK_LIMITS.lines);
       await this.save(state);
     });
+  }
+  /** Stop what Grimoire is doing for this chat. The request is dropped; nothing changes. */
+  async cancel(chatId: string) {
+    const running = this.running.get(chatId);
+    if (!running) return;
+    running.abort(new DOMException('Stopped by you', 'AbortError'));
   }
   async unpin(chatId: string, noteId: unknown) {
     return this.serial(chatId, async () => {

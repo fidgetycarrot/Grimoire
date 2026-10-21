@@ -47,6 +47,12 @@ function harness(chat: Partial<NonNullable<Snapshot['chat']>> | null = {}, setti
 }
 
 describe('the panel', () => {
+  test('while Grimoire is thinking, the conversation shows it with a running clock and a Stop button', async () => {
+    const h = harness({ talk: [{ from: 'you', text: 'Slow down.', at: Date.now() }], job: { id: 'j', kind: 'talk', status: 'running', label: 'Grimoire is thinking', startedAt: Date.now() - 75_000 } }); await tick();
+    expect(h.root.textContent).toContain('Grimoire is thinking… 1:15');
+    h.button('Stop')!.click(); await tick();
+    expect(h.requests.find(r => r.action === 'cancel')!.input).toEqual({ chatId: 'chat-1' });
+  });
   test('the get-things-moving buttons send the kind of push, and nothing else', async () => {
     const h = harness(); await tick();
     expect(h.root.textContent).toContain('Story feeling stuck?');

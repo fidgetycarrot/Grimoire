@@ -71,3 +71,34 @@ export function openExchange(lines: TalkLine[]): TalkLine[] {
   lines.forEach((line, i) => { if (line.from === 'grimoire' && !line.asked) start = i + 1; });
   return lines.slice(start);
 }
+
+/**
+ * A talk answer lists only what changes, so the model writes a few objects
+ * instead of the whole notebook (much faster). Each person, thread, beat, or
+ * seed given replaces the one with the same id in full; new ids are added.
+ * story and arc fields given are replaced; events given are added.
+ */
+export function applyChanges(base: Notebook, changes: unknown): Record<string, unknown> | null {
+  if (!changes || typeof changes !== 'object' || Array.isArray(changes)) return null;
+  const c = changes as Record<string, unknown>;
+  const out: Record<string, unknown> = structuredClone(base) as unknown as Record<string, unknown>;
+  let touched = false;
+  for (const key of ['people', 'threads', 'beats', 'seeds'] as const) {
+    const items = c[key];
+    if (!Array.isArray(items) || !items.length) continue;
+    const list = [...(out[key] as Array<{ id: string }>)];
+    for (const item of items) {
+      if (!item || typeof item !== 'object' || typeof (item as { id?: unknown }).id !== 'string') continue;
+      const at = list.findIndex(x => x.id === (item as { id: string }).id);
+      if (at >= 0) list[at] = item as { id: string }; else list.push(item as { id: string });
+      touched = true;
+    }
+    out[key] = list;
+  }
+  for (const key of ['story', 'arc'] as const) {
+    const part = c[key];
+    if (part && typeof part === 'object' && !Array.isArray(part)) { out[key] = { ...(out[key] as object), ...(part as object) }; touched = true; }
+  }
+  if (Array.isArray(c.events) && c.events.length) { out.events = [...(out.events as unknown[]), ...c.events]; touched = true; }
+  return touched ? out : null;
+}

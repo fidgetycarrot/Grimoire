@@ -32,6 +32,7 @@ var styles = `
 .gm-sub{border-top:1px solid var(--gm-rule);padding-top:12px}.gm-part{border-top:1px solid var(--gm-rule);padding-top:12px}.gm-part:first-child{border:0;padding-top:0}
 .gm-chips{display:flex;flex-wrap:wrap;gap:6px}.gm-chips .gm-button{padding:6px 11px;font-size:12px;border-radius:999px}
 .gm-quiet .gm-button{border-color:transparent;color:var(--gm-muted);padding:4px 8px;font-size:11.5px}.gm-quiet .gm-button:hover:not(:disabled){color:var(--gm-ink)}
+.gm-since{font-variant-numeric:tabular-nums;color:var(--gm-muted)}.gm-waiting{opacity:.85;border:1px dashed var(--gm-line)}
 @media(prefers-color-scheme:light){.gm-app{--gm-bg:var(--lumiverse-bg,#faf8f3);--gm-card:var(--lumiverse-bg-secondary,#fffdf8);--gm-ink:var(--lumiverse-text,#25231e);--gm-muted:var(--lumiverse-text-muted,#6f6a60);--gm-accent:#2f6699;--gm-accent-ink:#f5f9fd;--gm-warn:#a06d10;--gm-good:#2f7a45;color-scheme:light}}
 @container(max-width:380px){.gm-grid{grid-template-columns:1fr}.gm-app h1{font-size:26px}}
 `;
@@ -53,7 +54,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.11.2";
+var VERSION = "0.12.0";
 
 // src/frontend.ts
 var ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8 3v18"/><path d="M12 8h3M12 12h3"/></svg>';
@@ -126,6 +127,10 @@ function el(tag, className = "", text) {
     node.textContent = text;
   return node;
 }
+var elapsed = (from) => {
+  const s = Math.max(0, Math.round((Date.now() - from) / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+};
 var ago = (time) => {
   const s = Math.max(0, (Date.now() - time) / 1000), d = Math.round(s / 86400);
   return s < 60 ? "just now" : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${d} ${d === 1 ? "day" : "days"} ago`;
@@ -264,11 +269,27 @@ function setup(ctx) {
       }));
     return card;
   }
+  function since(startedAt) {
+    const t = el("span", "gm-since");
+    t.dataset.gmSince = String(startedAt);
+    t.textContent = elapsed(startedAt);
+    return t;
+  }
   function renderJob(view) {
     if (!view.job || view.job.status === "complete")
       return null;
-    const box = el("div", view.job.status === "failed" ? "gm-notice" : "gm-card gm-small");
-    box.textContent = view.job.status === "running" ? `${view.job.label}…` : `${view.job.label}. ${view.job.error ?? ""}`;
+    if (view.job.status === "running" && view.job.kind === "talk")
+      return null;
+    const box = el("div", view.job.status === "failed" ? "gm-notice" : "gm-card gm-small gm-row gm-spread");
+    if (view.job.status === "running") {
+      const words = el("span");
+      words.append(document.createTextNode(`${view.job.label}… `), since(view.job.startedAt));
+      box.append(words, button("Stop", async () => {
+        await act("cancel", { chatId: view.chatId });
+        notify("Stopped. Nothing was changed.");
+      }));
+    } else
+      box.textContent = `${view.job.label}. ${view.job.error ?? ""}`;
     return box;
   }
   function renderSkipOffer(view) {
@@ -356,7 +377,19 @@ function setup(ctx) {
           item.append(el("p", "gm-meta", "Undone"));
         log.append(item);
       }
+      if (busy && view.job?.kind === "talk") {
+        const wait = el("div", "gm-line gm-line-grimoire gm-waiting");
+        const words = el("p", "gm-small");
+        words.append(document.createTextNode(`${view.job.label}… `), since(view.job.startedAt));
+        wait.append(el("p", "gm-line-who", "Grimoire"), words, el("p", "gm-meta", "Changing the plans can take a minute or two."));
+        log.append(wait);
+      }
       const actions = el("div", "gm-row gm-quiet");
+      if (busy && view.job?.kind === "talk")
+        actions.append(button("Stop", async () => {
+          await act("cancel", { chatId: view.chatId });
+          notify("Stopped. Nothing was changed.");
+        }));
       if (view.canUndo)
         actions.append(button("Undo the last change", async () => {
           await act("undo-talk", { chatId: view.chatId });
@@ -995,6 +1028,11 @@ function setup(ctx) {
     editing = false;
     refresh(true).then(refreshStories);
   }));
+  const ticker = setInterval(() => {
+    for (const node of app.querySelectorAll("[data-gm-since]"))
+      node.textContent = elapsed(Number(node.dataset.gmSince));
+  }, 1000);
+  teardown.push(() => clearInterval(ticker));
   render();
   ctx.ready();
   refresh(true).then(refreshStories);

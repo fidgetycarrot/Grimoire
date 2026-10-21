@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { SpindleAPI } from 'lumiverse-spindle-types';
 import { NotebookController } from '../src/controller';
-import type { Message } from '../src/model';
+import { ModelError, type Message } from '../src/model';
 import { sampleNotebook } from './fixtures';
 
 const tracker = (time: string, place: string) => `\n<status>\nTime: ${time}\nLocation: ${place}\nPresent: Mira\n</status>`;
@@ -1048,5 +1048,40 @@ describe('intimate scenes', () => {
     await reply(h, c, 1);
     h.add('user', 'Still going.');
     expect(await c.noteFor('chat-1')).not.toContain('intimate scene');
+  });
+});
+
+describe('talk speed and stopping', () => {
+  test('an answer listing only what changes is laid over the notebook', async () => {
+    const { c } = await ready(host(), model({ create: created, talk: input => ({ reply: 'Slowing the storm.', changes: { threads: [{ ...input.notebook.threads[1], speed: 'steady', steps: input.notebook.threads[1].steps.map((s: any) => ({ ...s, afterHours: 9 })) }] } }) }));
+    await c.talk('chat-1', 'Less weather drama.', false); await c.waitForJobs();
+    const view = (await c.view('chat-1'))!;
+    expect(view.notebook!.threads.map(t => t.speed)).toEqual(['steady', 'steady']);
+    expect(view.notebook!.people).toHaveLength(3);
+    expect(view.talk.at(-1)!.changes).toContain('Slowed 1 storyline');
+    const sent = await (async () => (await ready(host(), model({ create: created, talk: () => ({ reply: 'ok', changes: null }) }))))();
+    await sent.c.talk('chat-1', 'Hi.', false); await sent.c.waitForJobs();
+    expect(sent.m.calls.find(x => x.task === 'grimoire-talk-v1')!.messages[0].content).toContain('"changes" lists only what changes');
+  });
+  test('Stop drops the request and changes nothing', async () => {
+    const h = host();
+    h.add('assistant', `The ferry bell rings.${tracker('Day 1, 18:00', 'The ferry')}`);
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 3 }, {});
+    let talking = false;
+    const ask = async (messages: Message[], signal?: AbortSignal) => {
+      const input = JSON.parse(messages[1].content);
+      if (input.task !== 'grimoire-talk-v1') return JSON.stringify(created());
+      talking = true;
+      return new Promise<string>((_, reject) => signal?.addEventListener('abort', () => reject(new ModelError('CANCELLED', 'The request was cancelled.'))));
+    };
+    const c = new NotebookController(h.api, undefined, () => {}, ask);
+    await c.create('chat-1', {}); await c.waitForJobs();
+    await c.talk('chat-1', 'Change things.', false);
+    while (!talking) await new Promise(r => setTimeout(r, 1));
+    expect((await c.view('chat-1'))!.job).toMatchObject({ kind: 'talk', status: 'running' });
+    await c.cancel('chat-1'); await c.waitForJobs();
+    const view = (await c.view('chat-1'))!;
+    expect(view.job).toMatchObject({ status: 'failed', label: 'Stopped', error: 'Nothing was changed.' });
+    expect(view.notebook!.threads[1].speed).toBe('urgent');
   });
 });

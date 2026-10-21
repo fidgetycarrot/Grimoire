@@ -1050,14 +1050,15 @@ function talkMessages(input) {
   return [
     { role: "system", content: `${SAFETY}
 You are Grimoire, the private planner behind an ongoing roleplay chat. The player co-writes this story with you: they play the scene in front of them, and you keep the whole story in mind. Right now they are talking to you directly, outside the story, to give notes or feedback.
-Return {"ask": false, "reply": "...", "notebook": ${SHAPE} or null, "note": "", "push": null, "pushKind": "", "skipHours": 0}.
-${input.push ? `The player pressed a button: ${PUSH_ASKS[input.push]} Do it now: return the revised notebook and "push" (and "skipHours" for a new chapter). Do not ask anything; "reply" can be empty.
+Return {"ask": false, "reply": "...", "changes": {...} or null, "note": "", "push": null, "pushKind": "", "skipHours": 0}.
+"changes" lists only what changes, so keep it small: {"people": [...], "threads": [...], "beats": [...], "seeds": [...], "story": {...}, "arc": {...}}, each part optional. A person, thread, beat, or seed you include replaces the one with the same id, so write it in full, in the same shape as in the notebook; a new id adds one. "story" and "arc" fields you include replace those fields. Leave out everything that stays the same. The notebook's shape is: ${SHAPE}
+${input.push ? `The player pressed a button: ${PUSH_ASKS[input.push]} Do it now: return "changes" and "push" (and "skipHours" for a new chapter). Do not ask anything; "reply" can be empty.
 ${PUSH_RULES}
 ` : ""}How to answer:
-- If you understand what they want well enough to act on it, act. Revise the notebook so the story goes their way, set "ask" to false, and in "reply" say in one or two short sentences what you will do, in their terms. If nothing needs to change, return "notebook": null and say so.
-- Only if their message is unclear, or could mean very different changes, set "ask" to true, return "notebook": null, and put one short question in "reply". Once they have answered, act. Never ask more than you need.
+- If you understand what they want well enough to act on it, act. Change the plans so the story goes their way, set "ask" to false, and in "reply" say in one or two short sentences what you will do, in their terms. If nothing needs to change, return "changes": null and say so.
+- Only if their message is unclear, or could mean very different changes, set "ask" to true, return "changes": null, and put one short question in "reply". Once they have answered, act. Never ask more than you need.
 - Keep it brief and end there. Do not ask how they feel about it, offer ideas they didn't ask for, or invite them to keep talking.
-- Only when they ask for ideas ("help me think of something", "any ideas for\u2026"): offer two or three short pitches in "reply", one line each, numbered. Each is an open direction, not a plan ("someone from your past turns up"), built on what the player has seen and met. Never pitch the notebook's secrets, its planned events, or anything that would give them away. Set "ask" to true and "notebook" to null, so they can pick one or riff on it; then act on their choice.
+- Only when they ask for ideas ("help me think of something", "any ideas for\u2026"): offer two or three short pitches in "reply", one line each, numbered. Each is an open direction, not a plan ("someone from your past turns up"), built on what the player has seen and met. Never pitch the notebook's secrets, its planned events, or anything that would give them away. Set "ask" to true and "changes" to null, so they can pick one or riff on it; then act on their choice.
 - The reply must contain no spoilers. The player has not seen the notebook. Name only people, places, and events they have mentioned or met in the chat, and secrets in story.cameOut, which they already know. Never mention secrets, twists, planned events, breadcrumbs, or anything else they don't know.
 - Their character is theirs to play. If they ask you to make their character do or feel something, say that part is theirs, and change the world around it instead.
 - What already happened in the chat stays happened. Change what comes next: threads (their speed, steps, and whether they stay open), planned moments, breadcrumbs, people's wants and how they are played, and where the story is heading. Close threads with a reason and mark beats or seeds dropped instead of removing them. Keep every person, thread, step, beat, and seed id that exists.
@@ -1165,6 +1166,42 @@ function openExchange(lines) {
       start = i + 1;
   });
   return lines.slice(start);
+}
+function applyChanges(base, changes) {
+  if (!changes || typeof changes !== "object" || Array.isArray(changes))
+    return null;
+  const c = changes;
+  const out = structuredClone(base);
+  let touched = false;
+  for (const key of ["people", "threads", "beats", "seeds"]) {
+    const items = c[key];
+    if (!Array.isArray(items) || !items.length)
+      continue;
+    const list = [...out[key]];
+    for (const item of items) {
+      if (!item || typeof item !== "object" || typeof item.id !== "string")
+        continue;
+      const at = list.findIndex((x) => x.id === item.id);
+      if (at >= 0)
+        list[at] = item;
+      else
+        list.push(item);
+      touched = true;
+    }
+    out[key] = list;
+  }
+  for (const key of ["story", "arc"]) {
+    const part = c[key];
+    if (part && typeof part === "object" && !Array.isArray(part)) {
+      out[key] = { ...out[key], ...part };
+      touched = true;
+    }
+  }
+  if (Array.isArray(c.events) && c.events.length) {
+    out.events = [...out.events, ...c.events];
+    touched = true;
+  }
+  return touched ? out : null;
 }
 
 // src/pacing.ts
@@ -1945,7 +1982,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.11.2";
+var VERSION = "0.12.0";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, lines: 40, notes: 8, note: 200 };
@@ -2489,7 +2526,8 @@ class NotebookController {
       try {
         turns = conversation(await this.api.chat.getMessages(chatId)).length;
       } catch {}
-      current.job = { ...job, status: "failed", label: job.kind === "create" ? "The notebook could not be written" : job.kind === "talk" ? "Grimoire could not answer" : "The check-up could not finish", error: this.explain(error), ...turns !== undefined ? { failedAtTurn: turns } : {} };
+      const stopped = error instanceof ModelError && error.code === "CANCELLED";
+      current.job = stopped ? { ...job, status: "failed", label: "Stopped", error: "Nothing was changed." } : { ...job, status: "failed", label: job.kind === "create" ? "The notebook could not be written" : job.kind === "talk" ? "Grimoire could not answer" : "The check-up could not finish", error: this.explain(error), ...turns !== undefined ? { failedAtTurn: turns } : {} };
       await this.save(current);
     }).catch(() => {});
   }
@@ -2649,11 +2687,12 @@ class NotebookController {
             const reply = kind ? pushReply(kind, 0) : plainBlock(output.reply, 600);
             if (!reply)
               throw new NotebookError('"reply" is empty. Answer the player in one or two short sentences.');
-            if (kind && !(output.notebook && typeof output.notebook === "object"))
-              throw new NotebookError('Return the revised notebook and "push".');
+            const proposed = asked ? null : applyChanges(base.notebook, output.changes) ?? (output.notebook && typeof output.notebook === "object" ? output.notebook : null);
+            if (kind && !proposed)
+              throw new NotebookError('Return "changes" and "push".');
             let notebook = null, skip = 0, { moment, clock } = live;
-            if (!asked && output.notebook && typeof output.notebook === "object") {
-              let revised = validateNotebook(tidyNotebook(output.notebook, base.notebook));
+            if (proposed) {
+              let revised = validateNotebook(tidyNotebook(proposed, base.notebook));
               if (kind)
                 revised = launchPush(revised, checkPush(base.notebook, revised, output.push, kind));
               if (round === 1)
@@ -2743,6 +2782,12 @@ class NotebookController {
       state.talk = [...state.talk, { from: "grimoire", text: "Undone. The plans are back the way they were.", at: Date.now(), changes: [] }].slice(-TALK_LIMITS.lines);
       await this.save(state);
     });
+  }
+  async cancel(chatId) {
+    const running = this.running.get(chatId);
+    if (!running)
+      return;
+    running.abort(new DOMException("Stopped by you", "AbortError"));
   }
   async unpin(chatId, noteId) {
     return this.serial(chatId, async () => {
@@ -3095,6 +3140,8 @@ async function handle(controller, action, input) {
       return controller.push(string(data.chatId, "Chat"), data.kind);
     case "undo-talk":
       return controller.undoTalk(string(data.chatId, "Chat"));
+    case "cancel":
+      return controller.cancel(string(data.chatId, "Chat"));
     case "unpin":
       return controller.unpin(string(data.chatId, "Chat"), data.noteId);
     case "clear-talk":
