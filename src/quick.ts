@@ -142,10 +142,13 @@ export function applyQuick(current: Notebook, plan: QuickPlan, result: DecisionR
 export function quickError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error ?? '');
   if (/permission/i.test(message)) return 'Grant decisions in Lumiverse’s Extensions panel.';
+  if (/moderat|flagged|content.?(policy|filter|rules)|safety|refus|violat|not allowed/i.test(message)) return 'The decision model refused this reply, most likely because of its content rules.';
   if (/404|not found|no default|connection/i.test(message)) return 'Choose a decision connection in Grimoire settings, or set a default one in Lumiverse.';
   if (/timed?\s*out|timeout|504|deadline/i.test(message)) return 'The decision model took too long to answer.';
   if (/401|unauthori|api.?key|credential/i.test(message)) return 'The decision connection could not sign in. Check it in Lumiverse.';
   if (/429|rate|quota|credit/i.test(message)) return 'The decision provider reported a rate or credit limit.';
   if (/400|invalid|unsupported|protocol/i.test(message)) return 'The decision model could not answer these questions. Try another decision model.';
-  return 'The decision model request failed.';
+  // Codes only, never the provider's words (they can echo what was sent): enough to tell failures apart.
+  const code = /\b([45]\d\d)\b/.exec(message)?.[1] ?? (error && typeof error === 'object' && typeof (error as { code?: unknown }).code === 'string' && /^[A-Z_]{3,40}$/.test((error as { code: string }).code) ? (error as { code: string }).code : '');
+  return `The decision model request failed${code ? ` (code ${code})` : ''}.`;
 }

@@ -1619,6 +1619,8 @@ function quickError(error) {
   const message = error instanceof Error ? error.message : String(error ?? "");
   if (/permission/i.test(message))
     return "Grant decisions in Lumiverse\u2019s Extensions panel.";
+  if (/moderat|flagged|content.?(policy|filter|rules)|safety|refus|violat|not allowed/i.test(message))
+    return "The decision model refused this reply, most likely because of its content rules.";
   if (/404|not found|no default|connection/i.test(message))
     return "Choose a decision connection in Grimoire settings, or set a default one in Lumiverse.";
   if (/timed?\s*out|timeout|504|deadline/i.test(message))
@@ -1629,7 +1631,8 @@ function quickError(error) {
     return "The decision provider reported a rate or credit limit.";
   if (/400|invalid|unsupported|protocol/i.test(message))
     return "The decision model could not answer these questions. Try another decision model.";
-  return "The decision model request failed.";
+  const code = /\b([45]\d\d)\b/.exec(message)?.[1] ?? (error && typeof error === "object" && typeof error.code === "string" && /^[A-Z_]{3,40}$/.test(error.code) ? error.code : "");
+  return `The decision model request failed${code ? ` (code ${code})` : ""}.`;
 }
 
 // src/skip.ts
@@ -1942,7 +1945,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.11.0";
+var VERSION = "0.11.1";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, lines: 40, notes: 8, note: 200 };
@@ -1998,7 +2001,7 @@ function quickLog(value) {
           answers[key] = { choice: c.choice.slice(0, 20), confidence: Number(c.confidence) };
       }
     }
-    return Number.isInteger(x.reply) ? [{ reply: Number(x.reply), at: Number(x.at) || 0, ok: x.ok === true, answers, marked: Number(x.marked) || 0, checkup: x.checkup === true, shifted: x.shifted === true, held: Number(x.held) || 0 }] : [];
+    return Number.isInteger(x.reply) ? [{ reply: Number(x.reply), at: Number(x.at) || 0, ok: x.ok === true, ...typeof x.error === "string" && x.error ? { error: x.error.slice(0, 200) } : {}, answers, marked: Number(x.marked) || 0, checkup: x.checkup === true, shifted: x.shifted === true, held: Number(x.held) || 0 }] : [];
   });
 }
 function quickRecord(reply, result, outcome) {
@@ -2996,6 +2999,13 @@ class NotebookController {
           return;
         state.quick = { at: Date.now(), ok: !!result, error };
         let extra = "", outcome = null;
+        if (!result && state.intimateNow) {
+          const judged = live.prints.at(-1);
+          if (judged && !state.intimate.includes(judged)) {
+            state.intimate = [...state.intimate, judged].slice(-300);
+            now = await this.live(state, messages);
+          }
+        }
         if (result && covers(live.prints, now.prints)) {
           outcome = applyQuick(now.version.notebook, plan, result, now.moment);
           if (outcome.changed) {
@@ -3020,7 +3030,7 @@ class NotebookController {
             extra = "The story changed direction";
           }
         }
-        state.quickLog = [...state.quickLog, quickRecord(live.moment.reply ?? 0, result, outcome)].slice(-QUICK_LOG);
+        state.quickLog = [...state.quickLog, { ...quickRecord(live.moment.reply ?? 0, result, outcome), ...error ? { error } : {} }].slice(-QUICK_LOG);
         if (this.running.has(chatId)) {
           await this.save(state);
           return;

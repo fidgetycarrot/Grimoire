@@ -47,7 +47,7 @@ function quickLog(value: unknown): QuickRecord[] {
       if (typeof a === 'number' && Number.isFinite(a)) answers[key] = a;
       else { const c = record(a); if (typeof c.choice === 'string' && Number.isFinite(Number(c.confidence))) answers[key] = { choice: c.choice.slice(0, 20), confidence: Number(c.confidence) }; }
     }
-    return Number.isInteger(x.reply) ? [{ reply: Number(x.reply), at: Number(x.at) || 0, ok: x.ok === true, answers, marked: Number(x.marked) || 0, checkup: x.checkup === true, shifted: x.shifted === true, held: Number(x.held) || 0 }] : [];
+    return Number.isInteger(x.reply) ? [{ reply: Number(x.reply), at: Number(x.at) || 0, ok: x.ok === true, ...(typeof x.error === 'string' && x.error ? { error: x.error.slice(0, 200) } : {}), answers, marked: Number(x.marked) || 0, checkup: x.checkup === true, shifted: x.shifted === true, held: Number(x.held) || 0 }] : [];
   });
 }
 /** Numbers only: what the decision model answered, never the questions' story text. */
@@ -830,6 +830,8 @@ export class NotebookController {
         if (!now) return;
         state.quick = { at: Date.now(), ok: !!result, error };
         let extra = '', outcome: ReturnType<typeof applyQuick> | null = null;
+        // No answer during an intimate scene: assume it goes on, so the scene stays protected and its replies stay uncounted.
+        if (!result && state.intimateNow) { const judged = live.prints.at(-1); if (judged && !state.intimate.includes(judged)) { state.intimate = [...state.intimate, judged].slice(-300); now = (await this.live(state, messages))!; } }
         // The reply it judged must still be in the chat. A swipe or edit meanwhile means the answers are about a reply that is gone.
         if (result && covers(live.prints, now.prints)) {
           outcome = applyQuick(now.version.notebook, plan, result, now.moment);
@@ -848,7 +850,7 @@ export class NotebookController {
           // The story changed direction: hold old plans back and rework the notebook now.
           if (outcome.shifted) { state.resync = now.moment.reply ?? 0; extra = 'The story changed direction'; }
         }
-        state.quickLog = [...state.quickLog, quickRecord(live.moment.reply ?? 0, result, outcome)].slice(-QUICK_LOG);
+        state.quickLog = [...state.quickLog, { ...quickRecord(live.moment.reply ?? 0, result, outcome), ...(error ? { error } : {}) }].slice(-QUICK_LOG);
         // A check-up can't start while one runs; the next reply looks again.
         if (this.running.has(chatId)) { await this.save(state); return; }
         await this.decide(state, now, settings, extra);

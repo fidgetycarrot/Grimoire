@@ -728,3 +728,13 @@ describe('keeping the pacing on plan', () => {
     expect(earlySteps(before, { ...after, threads: after.threads.map(t => t.id === 'stolen-ring' ? { ...t, steps: t.steps.map((s, i) => i === 0 ? s : { ...s, status: 'waiting' as const }) } : t) }, { hours: 60, reply: 11, waits: paceWaits('medium', 'auto') })).toBe(0);
   });
 });
+
+import { quickError as quickWords } from '../src/quick';
+describe('quick check errors', () => {
+  test('a refusal on content grounds says so', () => {
+    expect(quickWords(new Error('400: Your request was flagged by content moderation'))).toBe('The decision model refused this reply, most likely because of its content rules.');
+    expect(quickWords(new Error('something odd'))).toBe('The decision model request failed.');
+    expect(quickWords(Object.assign(new Error('upstream said no'), { code: 'UPSTREAM_ERROR' }))).toBe('The decision model request failed (code UPSTREAM_ERROR).');
+    expect(quickWords(new Error('HTTP 502 from provider'))).toBe('The decision model request failed (code 502).');
+  });
+});
