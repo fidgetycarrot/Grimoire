@@ -469,14 +469,23 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   // ----- Pace button above the input -----
-  let mount: HTMLElement | null = null, paceButton: HTMLButtonElement | null = null, skipButton: HTMLButtonElement | null = null;
+  let mount: HTMLElement | null = null, paceButton: HTMLElement | null = null, skipButton: HTMLElement | null = null;
   try { mount = ctx.ui.mount('chat_actions') as HTMLElement; } catch { mount = null; }
+  /**
+   * The pills above the input are not <button>s: chat themes often force every
+   * button in that bar into a fixed square icon, which squashes text. These
+   * behave like buttons (focus, Enter, Space) without being styled as one.
+   */
+  const pill = (className: string, text: string, action: () => void) => {
+    const node = el('span', className, text); node.setAttribute('role', 'button'); node.tabIndex = 0; node.hidden = true;
+    node.addEventListener('click', action);
+    node.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); action(); } });
+    return node;
+  };
   if (mount) {
-    paceButton = el('button', 'gm-pace-button'); paceButton.type = 'button'; paceButton.hidden = true;
-    paceButton.addEventListener('click', () => void cyclePace());
-    skipButton = el('button', 'gm-pace-button gm-skip-button', 'Skip ahead?'); skipButton.type = 'button'; skipButton.hidden = true;
+    paceButton = pill('gm-pace-button', '', () => void cyclePace());
+    skipButton = pill('gm-pace-button gm-skip-button', 'Skip ahead?', () => { page = 'chat'; render(); tab.activate(); });
     skipButton.title = 'This scene has gone quiet. Open Grimoire to skip ahead, or wave it off.';
-    skipButton.addEventListener('click', () => { page = 'chat'; render(); tab.activate(); });
     mount.append(paceButton, skipButton);
     teardown.push(() => paceButton?.remove(), () => skipButton?.remove());
   }

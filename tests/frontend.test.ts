@@ -93,7 +93,7 @@ describe('the panel', () => {
     h.button('Quiet')!.click(); await tick();
     expect(h.requests.find(r => r.action === 'pace')!.input).toEqual({ chatId: 'chat-1', pace: 'quiet' });
     expect(h.root.textContent).toContain('No new trouble starts');
-    const pill = h.bar.querySelector('button')!;
+    const pill = (h.bar.querySelector('.gm-pace-button') as unknown as HTMLElement);
     expect(pill.hidden).toBe(false); expect(pill.textContent).toBe('Quiet');
     pill.click(); await tick();
     expect(h.requests.filter(r => r.action === 'pace').at(-1)!.input.pace).toBe('fast');
@@ -102,7 +102,7 @@ describe('the panel', () => {
   });
   test('the pace button hides when Grimoire is off in the chat', async () => {
     const h = harness({ enabled: false }); await tick();
-    expect(h.bar.querySelector('button')!.hidden).toBe(true);
+    expect((h.bar.querySelector('.gm-pace-button') as unknown as HTMLElement).hidden).toBe(true);
     expect(h.root.textContent).toContain('Turned off');
   });
   test('time skips send the amount and unit', async () => {
@@ -157,7 +157,7 @@ describe('time-skip suggestions', () => {
   const offer = { options: [{ hours: 12, label: 'Skip ahead to when something happens (about 12 hours)' }, { hours: 14, label: 'Skip to tomorrow morning' }] };
   test('show above the message box and in the panel, and skip or wave off', async () => {
     const h = harness({ skipOffer: offer }); await tick();
-    const pill = Array.from(h.bar.querySelectorAll('button')).find(b => b.textContent === 'Skip ahead?')!;
+    const pill = (Array.from(h.bar.querySelectorAll('.gm-pace-button')) as unknown as HTMLElement[]).find(b => b.textContent === 'Skip ahead?')!;
     expect(pill.hidden).toBe(false);
     expect(h.root.textContent).toContain('This scene has gone quiet');
     h.button('Skip ahead to when something happens (about 12 hours)')!.click(); await tick();
@@ -167,7 +167,7 @@ describe('time-skip suggestions', () => {
   });
   test('stay hidden when there is nothing to suggest', async () => {
     const h = harness(); await tick();
-    expect(Array.from(h.bar.querySelectorAll('button')).find(b => b.textContent === 'Skip ahead?')!.hidden).toBe(true);
+    expect((Array.from(h.bar.querySelectorAll('.gm-pace-button')) as unknown as HTMLElement[]).find(b => b.textContent === 'Skip ahead?')!.hidden).toBe(true);
     expect(h.root.textContent).not.toContain('This scene has gone quiet');
   });
 });

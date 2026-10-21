@@ -1,6 +1,6 @@
 {
   "name": "grimoire",
-  "version": "0.11.1",
+  "version": "0.11.2",
   "description": "Grimoire: a private story notebook for Lumiverse chats: where the story is going, why, and how fast.",
   "type": "module",
   "private": true,

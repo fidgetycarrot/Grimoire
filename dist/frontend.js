@@ -23,7 +23,7 @@ var styles = `
 .gm-steps{list-style:decimal!important}.gm-steps li[data-status=shown],.gm-steps li[data-status=offscreen]{color:var(--gm-muted)}.gm-steps li[data-status=skipped]{text-decoration:line-through;color:var(--gm-muted)}
 .gm-empty{text-align:center;padding:34px 18px;border:1px dashed var(--gm-line);border-radius:12px;color:var(--gm-muted)}
 .gm-footer{margin-top:26px;font-size:10px;letter-spacing:1.4px;color:var(--gm-muted);text-transform:uppercase}
-.gm-pace-button{display:inline-flex;white-space:nowrap;align-items:center;gap:6px;border:1px solid var(--lumiverse-border,rgba(255,255,255,.14));background:transparent;color:inherit;border-radius:999px;padding:3px 10px 3px 8px;font:600 12px/1.6 ui-sans-serif,system-ui,sans-serif;cursor:pointer;opacity:.9}.gm-pace-button:hover{opacity:1}.gm-pace-button svg{width:14px;height:14px}.gm-pace-button[hidden]{display:none!important}
+.gm-pace-button{box-sizing:border-box;flex:0 0 auto;width:auto;user-select:none;display:inline-flex;white-space:nowrap;align-items:center;gap:6px;border:1px solid var(--lumiverse-border,rgba(255,255,255,.14));background:transparent;color:inherit;border-radius:999px;padding:3px 10px 3px 8px;font:600 12px/1.6 ui-sans-serif,system-ui,sans-serif;cursor:pointer;opacity:.9}.gm-pace-button:hover{opacity:1}.gm-pace-button:focus-visible{outline:2px solid currentColor;outline-offset:2px}.gm-pace-button svg{width:14px;height:14px}.gm-pace-button[hidden]{display:none!important}
 .gm-home{margin:14px 0;font:13px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--lumiverse-text,inherit)}.gm-home[hidden]{display:none!important}.gm-home-title{display:flex;align-items:center;gap:7px;font-weight:650;font-size:12px;letter-spacing:.5px;text-transform:uppercase;opacity:.75;margin-bottom:8px}.gm-home-title svg{width:15px;height:15px}
 .gm-home-list,.gm-story-list{display:flex;gap:8px;flex-wrap:wrap}.gm-story-list{flex-direction:column}
 .gm-story{display:flex;flex-direction:column;align-items:flex-start;gap:1px;text-align:left;border:1px solid var(--lumiverse-border,rgba(127,127,127,.28));border-radius:10px;background:var(--lumiverse-bg-secondary,rgba(127,127,127,.08));color:inherit;padding:8px 12px;cursor:pointer;max-width:260px;min-width:0;font:inherit}.gm-story:hover{border-color:var(--lumiverse-primary,#8fb3d9)}.gm-story-name{font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}.gm-story-meta{font-size:11.5px;opacity:.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}.gm-story-list .gm-story{max-width:none;width:100%}
@@ -53,7 +53,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.11.1";
+var VERSION = "0.11.2";
 
 // src/frontend.ts
 var ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8 3v18"/><path d="M12 8h3M12 12h3"/></svg>';
@@ -893,20 +893,28 @@ function setup(ctx) {
   } catch {
     mount = null;
   }
+  const pill = (className, text, action) => {
+    const node = el("span", className, text);
+    node.setAttribute("role", "button");
+    node.tabIndex = 0;
+    node.hidden = true;
+    node.addEventListener("click", action);
+    node.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        action();
+      }
+    });
+    return node;
+  };
   if (mount) {
-    paceButton = el("button", "gm-pace-button");
-    paceButton.type = "button";
-    paceButton.hidden = true;
-    paceButton.addEventListener("click", () => void cyclePace());
-    skipButton = el("button", "gm-pace-button gm-skip-button", "Skip ahead?");
-    skipButton.type = "button";
-    skipButton.hidden = true;
-    skipButton.title = "This scene has gone quiet. Open Grimoire to skip ahead, or wave it off.";
-    skipButton.addEventListener("click", () => {
+    paceButton = pill("gm-pace-button", "", () => void cyclePace());
+    skipButton = pill("gm-pace-button gm-skip-button", "Skip ahead?", () => {
       page = "chat";
       render();
       tab.activate();
     });
+    skipButton.title = "This scene has gone quiet. Open Grimoire to skip ahead, or wave it off.";
     mount.append(paceButton, skipButton);
     teardown.push(() => paceButton?.remove(), () => skipButton?.remove());
   }
