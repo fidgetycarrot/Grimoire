@@ -1987,11 +1987,11 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.13.2";
+var VERSION = "0.13.3";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, lines: 40, notes: 8, note: 200 };
-var DEFAULT_SETTINGS = { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto", quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true, intimate: "protect" };
+var DEFAULT_SETTINGS = { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true, intimate: "protect" };
 var DEFAULT_PREFERENCES = { tone: "balanced", twist: true };
 
 // src/controller.ts
@@ -2089,7 +2089,6 @@ function validSettings(value) {
     maxOutputTokens: [8000, 16000, 32000, 64000].includes(tokens) ? tokens : DEFAULT_SETTINGS.maxOutputTokens,
     reasoningMode: ["inherit", "off", "low"].includes(v.reasoningMode) ? v.reasoningMode : "inherit",
     every: Number.isInteger(every) && every >= 2 && every <= 50 ? every : DEFAULT_SETTINGS.every,
-    placement: v.placement === "macro" ? "macro" : "auto",
     quick: { enabled: quick.enabled === true, connectionId: plainSetting(quick.connectionId, 120), model: plainSetting(quick.model, 200) },
     wait: v.wait === "short" || v.wait === "long" ? v.wait : "medium",
     homeList: v.homeList !== false,
@@ -2916,8 +2915,6 @@ class NotebookController {
   async macro(name, chatId) {
     if (!chatId)
       return "";
-    if (name === "note")
-      return (await this.settings()).placement === "macro" ? this.noteFor(chatId) : "";
     return this.serial(chatId, async () => {
       const state = await this.load(chatId);
       if (!state?.enabled || !state.versions.length)
@@ -2930,8 +2927,6 @@ class NotebookController {
   }
   async intercept(messages, context) {
     if (!["normal", "regenerate", "swipe"].includes(context.generationType) || !context.chatId)
-      return messages;
-    if ((await this.settings()).placement !== "auto")
       return messages;
     let note = "", exclude = context.excludeMessageId;
     if (!exclude && context.generationType !== "normal") {
@@ -3186,7 +3181,6 @@ function setupBackend(api) {
     handle(instance(userId), request.action, request.input).then((result) => api.sendToFrontend({ type: "grimoire:response", id: request.id, result }, userId, { frontendSessionId })).catch((error) => api.sendToFrontend({ type: "grimoire:response", id: request.id, error: error instanceof Error ? error.message : "Grimoire could not do that." }, userId, { frontendSessionId }));
   }));
   const macros = [
-    ["grimoire_note", "note", "The Grimoire note for this reply. Returns text only when Settings \u2192 Where the note goes is set to \u201CIn my preset\u201D."],
     ["grimoire_clock", "clock", "The current story time from Grimoire."],
     ["grimoire_pace", "pace", "The current pace line from Grimoire (auto, quiet, or fast)."]
   ];

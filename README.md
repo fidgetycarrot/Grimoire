@@ -76,11 +76,9 @@ Needs a Lumiverse with decision connections (spindle types 0.6.45+, host capabil
 
 Only confident answers change anything (70% or more for yes-or-no questions), and they only move the story forward: a quick check never un-marks anything. Its marks are provisional: the next full check-up confirms or corrects each one, so the smarter model always has the final say. Answers about a reply that was swiped or edited meanwhile are thrown away. Quick-check updates are tied to the reply they judged, so regenerating that reply goes back to the notebook from before it.
 
-## Placing the note
+## Where the note goes
 
-By default the note is added for you, just before the reply (after any prefill is kept last). Prompt Breakdown labels it **Grimoire**.
-
-If you'd rather place it yourself, set **Settings → Where the note goes** to **In my preset** and put `{{grimoire_note}}` in your preset. The note is never added twice. Two more macros work either way:
+The note is added for you, just before the reply (any prefill is kept last). Prompt Breakdown labels it **Grimoire**. Two macros let your preset show a little more:
 
 - `{{grimoire_clock}}`: the current story time.
 - `{{grimoire_pace}}`: the current pace line.

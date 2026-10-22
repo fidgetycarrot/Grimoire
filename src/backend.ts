@@ -55,8 +55,7 @@ export function setupBackend(api: SpindleAPI): () => void {
       .catch(error => api.sendToFrontend({ type: 'grimoire:response', id: request.id, error: error instanceof Error ? error.message : 'Grimoire could not do that.' }, userId, { frontendSessionId }));
   }));
 
-  const macros: Array<[string, 'note' | 'clock' | 'pace', string]> = [
-    ['grimoire_note', 'note', 'The Grimoire note for this reply. Returns text only when Settings → Where the note goes is set to “In my preset”.'],
+  const macros: Array<[string, 'clock' | 'pace', string]> = [
     ['grimoire_clock', 'clock', 'The current story time from Grimoire.'],
     ['grimoire_pace', 'pace', 'The current pace line from Grimoire (auto, quiet, or fast).'],
   ];

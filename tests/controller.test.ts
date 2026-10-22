@@ -164,15 +164,10 @@ describe('the note in the prompt', () => {
     expect(await c.intercept(prompt, { chatId: 'chat-1', generationType: 'continue' })).toBe(prompt);
     expect(await c.intercept(prompt, { chatId: 'chat-1', generationType: 'impersonate' })).toBe(prompt);
   });
-  test('the macro carries the note only when your preset places it, never both', async () => {
-    const { h, c } = await ready();
-    expect(await c.macro('note', 'chat-1')).toBe('');
+  test('the clock and pace macros read the live story', async () => {
+    const { c } = await ready();
     expect(await c.macro('clock', 'chat-1')).toBe('Day 1, 18:20');
     expect(await c.macro('pace', 'chat-1')).toContain('Pace: steady');
-    await c.saveSettings({ ...(h.storage.get('settings.json') as object), placement: 'macro' });
-    expect(await c.macro('note', 'chat-1')).toContain('Grimoire: private story guidance');
-    const prompt = [{ role: 'user' as const, content: 'Hi' }];
-    expect(await c.intercept(prompt, { chatId: 'chat-1', generationType: 'normal' })).toBe(prompt);
   });
   test('turning it off removes the note', async () => {
     const { c } = await ready();

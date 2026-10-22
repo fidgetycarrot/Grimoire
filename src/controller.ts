@@ -90,7 +90,6 @@ export function validSettings(value: unknown): Settings {
     maxOutputTokens: [8000, 16000, 32000, 64000].includes(tokens) ? tokens : DEFAULT_SETTINGS.maxOutputTokens,
     reasoningMode: ['inherit', 'off', 'low'].includes(v.reasoningMode as string) ? v.reasoningMode as Settings['reasoningMode'] : 'inherit',
     every: Number.isInteger(every) && every >= 2 && every <= 50 ? every : DEFAULT_SETTINGS.every,
-    placement: v.placement === 'macro' ? 'macro' : 'auto',
     quick: { enabled: quick.enabled === true, connectionId: plainSetting(quick.connectionId, 120), model: plainSetting(quick.model, 200) },
     wait: v.wait === 'short' || v.wait === 'long' ? v.wait : 'medium',
     homeList: v.homeList !== false,
@@ -721,9 +720,8 @@ export class NotebookController {
       return buildNote({ intimate, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map(n => n.text) });
     });
   }
-  async macro(name: 'note' | 'clock' | 'pace', chatId: string | undefined): Promise<string> {
+  async macro(name: 'clock' | 'pace', chatId: string | undefined): Promise<string> {
     if (!chatId) return '';
-    if (name === 'note') return (await this.settings()).placement === 'macro' ? this.noteFor(chatId) : '';
     return this.serial(chatId, async () => {
       const state = await this.load(chatId);
       if (!state?.enabled || !state.versions.length) return '';
@@ -734,7 +732,6 @@ export class NotebookController {
   }
   async intercept(messages: LlmMessageDTO[], context: Pick<InterceptorContextDTO, 'chatId' | 'generationType' | 'excludeMessageId'> & { regenFeedback?: string }): Promise<LlmMessageDTO[] | InterceptorResultDTO> {
     if (!['normal', 'regenerate', 'swipe'].includes(context.generationType) || !context.chatId) return messages;
-    if ((await this.settings()).placement !== 'auto') return messages;
     let note = '', exclude = context.excludeMessageId;
     // Some hosts leave out which reply is being replaced. Then the newest reply is the one being redone.
     if (!exclude && context.generationType !== 'normal') { try { const last = conversation(await this.api.chat.getMessages(context.chatId)).at(-1); if (last?.role === 'assistant') exclude = last.id; } catch { /* use the whole chat */ } }

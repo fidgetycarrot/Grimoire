@@ -54,7 +54,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.13.2";
+var VERSION = "0.13.3";
 
 // src/frontend.ts
 var ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8 3v18"/><path d="M12 8h3M12 12h3"/></svg>';
@@ -769,7 +769,7 @@ function setup(ctx) {
     body.append(renderNow(view), renderSteer(view), renderBehind(view), renderSpoilers(view), renderMore(view));
   }
   function renderSettings() {
-    const settings = { ...snapshot?.settings ?? { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, placement: "auto", quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true, intimate: "protect" } };
+    const settings = { ...snapshot?.settings ?? { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true, intimate: "protect" } };
     const card = el("section", "gm-card gm-stack");
     const connection = select([["", "Choose a connection"], ...(snapshot?.connections ?? []).map((c) => [c.id, `${c.name}${c.model ? ` · ${c.model}` : ""}`])], settings.connectionId);
     const every = el("input");
@@ -780,10 +780,9 @@ function setup(ctx) {
     const tokens = select([["8000", "8,000"], ["16000", "16,000"], ["32000", "32,000"], ["64000", "64,000"]], String(settings.maxOutputTokens));
     const reasoning = select([["inherit", "Use the connection’s setting"], ["off", "Off"], ["low", "Low"]], settings.reasoningMode);
     const wait = select([["short", "A few replies (about 8)"], ["medium", "Some replies (about 15)"], ["long", "Many replies (about 30)"]], settings.wait ?? "medium");
-    const placement = select([["auto", "Added for me"], ["macro", "In my preset, with {{grimoire_note}}"]], settings.placement);
     const grid = el("div", "gm-grid");
     grid.append(labeled("Response room (tokens)", tokens), labeled("Reasoning", reasoning));
-    card.append(el("h2", "", "Settings"), labeled("Model connection", connection, "Used to write notebooks and run check-ups. Your chat keeps its own connection. A cheaper model may do, but test it on a chat first."), labeled("Longest a story thread waits", wait, "A thread moves on when enough story time has passed, or after this many replies, whichever comes first, so a long scene never leaves the story stuck. Urgent threads wait less and slow ones longer. Big scenes still aren’t interrupted for slow threads; they come in at the next break."), labeled("Check-up after this many replies", every, "A fallback. Check-ups also run when the scene changes or time jumps."), grid, labeled("Where the note goes", placement, "Added for me puts a short private note before each reply. If your preset uses {{grimoire_note}}, choose that so the note is never added twice. {{grimoire_clock}} and {{grimoire_pace}} work either way."));
+    card.append(el("h2", "", "Settings"), labeled("Model connection", connection, "Used to write notebooks and run check-ups. Your chat keeps its own connection. A cheaper model may do, but test it on a chat first."), labeled("Longest a story thread waits", wait, "A thread moves on when enough story time has passed, or after this many replies, whichever comes first, so a long scene never leaves the story stuck. Urgent threads wait less and slow ones longer. Big scenes still aren’t interrupted for slow threads; they come in at the next break."), labeled("Check-up after this many replies", every, "A fallback. Check-ups also run when the scene changes or time jumps."), grid);
     const decisions = snapshot?.decisions ?? { available: false, reason: "", connections: [] };
     const quickCard = el("section", "gm-card gm-stack");
     const quickRow = el("label", "gm-switch"), quickOn = el("input");
@@ -817,7 +816,7 @@ function setup(ctx) {
     homeRow.append(home, document.createTextNode("Show my stories on the home page"));
     card.append(homeRow);
     const save = button("Save settings", async () => {
-      await act("settings", { settings: { connectionId: connection.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, placement: placement.value, wait: wait.value, homeList: home.checked, intimate: intimate.value, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } });
+      await act("settings", { settings: { connectionId: connection.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, wait: wait.value, homeList: home.checked, intimate: intimate.value, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } });
       notify("Settings saved.");
     }, "primary");
     body.append(card, quickCard, save);
