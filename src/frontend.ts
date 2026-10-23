@@ -107,10 +107,10 @@ export function setup(ctx: SpindleFrontendContext) {
     const syncLock = () => { lock.disabled = shape.value === 'auto'; if (lock.disabled) lock.checked = false; };
     shape.addEventListener('change', syncLock); syncLock();
     grid.append(labeled('How the story is built', shape, 'Grimoire can switch shapes between parts of the story as it goes, unless you keep one.'), lockRow);
-    const ideas = el('textarea', 'gm-talk-input'); ideas.rows = 3; ideas.maxLength = 1000; ideas.placeholder = 'Like “a slow-burn romance, trouble with old friends, a trip that goes sideways”';
+    const ideas = el('textarea', 'gm-talk-input'); ideas.rows = 4; ideas.maxLength = 3000; ideas.placeholder = 'Like “a slow-burn romance, trouble with old friends, a trip that goes sideways”, or someone you’d like to meet';
     const keepIdeas = el('input'); keepIdeas.type = 'checkbox'; keepIdeas.style.width = 'auto';
     const keepRow = el('label', 'gm-row gm-small'); keepRow.append(keepIdeas, document.createTextNode('Keep these as lasting notes'));
-    grid.append(labeled('Anything you’d like in this story? (optional)', ideas, 'Grimoire builds the story around your ideas and paces them in over time. It won’t tell you how.'), keepRow);
+    grid.append(labeled('Anything you’d like in this story? (optional)', ideas, 'Grimoire builds the story around your ideas and paces them in over time. It won’t tell you how. Describe someone you’d like to meet and they keep your words.'), keepRow);
     const noConnection = !snapshot?.settings.connectionId;
     const parts = view.earlierParts ?? 0;
     const write = button('Write the notebook', async () => {
@@ -335,7 +335,7 @@ export function setup(ctx: SpindleFrontendContext) {
     arc.append(el('p', '', `${notebook.arc.shape === 'kishotenketsu' ? 'Kishōtenketsu' : 'Conflict'}: ${STAGE_WORDS[notebook.arc.stage] ?? notebook.arc.stage}`));
     if (notebook.arc.turn) arc.append(el('p', 'gm-meta', `The turn: ${notebook.arc.turn}`));
     const people = section('People');
-    for (const p of notebook.people) { const e = el('div', 'gm-entry'); const name = el('p'); name.append(el('strong', '', p.name), ...(p.role ? [document.createTextNode(`, ${p.role}`)] : [])); if (!p.met) name.append(el('span', 'gm-chip', 'not met')); if (p.status === 'gone') name.append(el('span', 'gm-chip', 'gone')); e.append(name, el('p', 'gm-small', `Wants ${p.wants}`), ...(p.doing ? [el('p', 'gm-meta', `Doing: ${p.doing}`)] : []), ...(p.voice ? [el('p', 'gm-meta', `Voice: ${p.voice}`)] : [])); people.append(e); }
+    for (const p of notebook.people) { const e = el('div', 'gm-entry'); const name = el('p'); name.append(el('strong', '', p.name), ...(p.role ? [document.createTextNode(`, ${p.role}`)] : [])); if (!p.met) name.append(el('span', 'gm-chip', 'not met')); if (p.status === 'gone') name.append(el('span', 'gm-chip', 'gone')); e.append(name, el('p', 'gm-small', `Wants ${p.wants}`), ...(p.doing ? [el('p', 'gm-meta', `Doing: ${p.doing}`)] : []), ...(p.voice ? [el('p', 'gm-meta', `Voice: ${p.voice}`)] : []), ...(p.depth ? [el('p', 'gm-meta', `More than their role: ${p.depth}`)] : []), ...(p.own ? [el('p', 'gm-meta', `Your description: ${p.own}`)] : []), ...(p.sheet ? [el('p', 'gm-meta', `Sheet: ${p.sheet}`)] : [])); people.append(e); }
     const threads = section('Threads');
     for (const t of notebook.threads) {
       const e = el('div', 'gm-entry'), title = el('p'); title.append(el('strong', '', t.title), el('span', 'gm-chip', t.status === 'open' ? t.speed : t.status));

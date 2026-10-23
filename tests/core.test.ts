@@ -752,3 +752,16 @@ describe('voices', () => {
     expect(validateNotebook(old).people[0].voice).toBe('');
   });
 });
+
+describe('character sheets', () => {
+  test('at most six people get a sheet; the player’s own people keep theirs first', () => {
+    const { tidyNotebook } = require('../src/tidy');
+    const { validateNotebook } = require('../src/notebook');
+    const n: any = sampleNotebook();
+    for (let i = 0; i < 8; i++) n.people.push({ id: `p${i}`, name: `Person ${i}`, role: 'local', wants: 'something', sheet: `Sheet ${i}.`, own: i === 7 ? 'The player wrote this one.' : '', status: 'active' });
+    const nb = validateNotebook(tidyNotebook(n));
+    expect(nb.people.filter((p: any) => p.sheet)).toHaveLength(6);
+    expect(nb.people.find((p: any) => p.id === 'p7').sheet).toBe('Sheet 7.');
+    expect(() => validateNotebook(n)).toThrow('at most 6 people');
+  });
+});

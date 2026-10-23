@@ -75,6 +75,19 @@ function validPreferences(value: unknown): Preferences {
   return { tone: ['light', 'balanced', 'dark'].includes(v.tone as string) ? v.tone as Preferences['tone'] : 'balanced', twist: v.twist !== false, shape, lockShape: shape !== 'auto' && v.lockShape === true };
 }
 /**
+ * People the player described in their ideas keep the player's words, exactly.
+ * Only text that really is in the ideas is kept, so a model can't put words in their mouth.
+ */
+function withOwnWords(notebook: Notebook, value: unknown, ideas: string): Notebook {
+  const squash = (s: string) => s.replace(/\s+/g, ' ').trim();
+  const source = squash(ideas).toLowerCase(), own = new Map<string, string>();
+  for (const item of Array.isArray(value) ? value : []) {
+    const r = record(item), from = typeof r.from === 'string' ? squash(r.from).slice(0, 3000) : '';
+    if (typeof r.person === 'string' && from.length >= 10 && source.includes(from.toLowerCase())) own.set(r.person, from);
+  }
+  return own.size ? { ...notebook, people: notebook.people.map(p => own.has(p.id) ? { ...p, own: own.get(p.id)! } : p) } : notebook;
+}
+/**
  * The story rules an update must keep: pacing, and a main storyline in the
  * chosen shape at the start of each part. A first answer that breaks one is
  * sent back; a second gets the plainest fix from code.
@@ -389,7 +402,7 @@ export class NotebookController {
   async create(chatId: string, preferencesInput: unknown, ideasInput: unknown = '', keepIdeas: unknown = false): Promise<Job> {
     // Your ideas for the story, if any: the first notebook is built around them.
     const ideas = typeof ideasInput === 'string' ? ideasInput.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim() : '';
-    if (ideas.length > TALK_LIMITS.message) throw new Error(`Keep your ideas under ${TALK_LIMITS.message} characters.`);
+    if (ideas.length > TALK_LIMITS.ideas) throw new Error(`Keep your ideas under ${TALK_LIMITS.ideas} characters.`);
     const pin = keepIdeas === true && !!ideas;
     return this.serial(chatId, async () => {
       const info = await this.chatInfo(chatId);
@@ -425,7 +438,7 @@ export class NotebookController {
             round++;
             const output = record(value);
             const first = validateNotebook(tidyNotebook(output.notebook));
-            const ruled = storyRules(null, first, round, {}, state.preferences);
+            const ruled = withOwnWords(storyRules(null, first, round, {}, state.preferences), output.playerPeople, ideas);
             const notes = pin ? (Array.isArray(output.notes) ? output.notes : []).map(n => plain(n, TALK_LIMITS.note)).filter(Boolean).slice(0, 4) : [];
             // The story opens now: the main storyline's first moment is due with the first reply.
             return { notebook: openArc(withoutTimes(ruled), 'story'), recipe: validateRecipe(output.tracker).recipe, notes };

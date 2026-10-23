@@ -1232,3 +1232,43 @@ describe('narrator cards', () => {
     expect(m.calls[0].messages[0].content).toContain('That card is the voice that runs the story, not a character in it: never add it to people');
   });
 });
+
+describe('people with depth', () => {
+  const ideas = 'A slow burn with someone at the docks. I would like to meet Tamsin, a retired smuggler who now mends nets, laughs too loudly, and still owes money to the wrong people. ' + 'More notes. '.repeat(100);
+  const withTamsin = () => {
+    const n: any = sampleNotebook();
+    n.people.push({ id: 'tamsin', name: 'Tamsin', aliases: [], role: 'net mender', wants: 'to clear her old debt quietly', doing: 'mending nets at dawn', hint: 'warm, loud, deflects with jokes', voice: 'Long run-on sentences.', depth: 'Generous to strangers, ruthless about money.', sheet: 'Grew up on the river barges; left smuggling after a friend drowned.', met: false, status: 'active' });
+    n.people[1].sheet = 'Fought in three wars and hates talking about any of them.';
+    return { notebook: n, tracker: recipe, playerPeople: [{ person: 'tamsin', from: 'Tamsin, a retired smuggler who now mends nets, laughs too loudly, and still owes money to the wrong people.' }, { person: 'mira', from: 'Mira is secretly a queen.' }] };
+  };
+  test('someone you describe keeps your words; words you never wrote are not kept', async () => {
+    const h = host();
+    h.add('assistant', `The ferry bell rings.${tracker('Day 1, 18:00', 'The ferry')}`);
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 8 }, {});
+    const m = model({ create: withTamsin, checkup: (input: any) => {
+      const notebook = structuredClone(input.notebook);
+      const tamsin = notebook.people.find((p: any) => p.id === 'tamsin');
+      tamsin.own = 'Changed by the model.'; tamsin.sheet = '';
+      return { notebook, tracker: null };
+    } });
+    const c = new NotebookController(h.api, undefined, () => {}, m.ask);
+    expect(ideas.length).toBeGreaterThan(1000);
+    await c.create('chat-1', {}, ideas); await c.waitForJobs();
+    expect(m.calls[0].messages[0].content).toContain('"playerPeople"');
+    let nb = (await c.view('chat-1'))!.notebook!;
+    expect(nb.people.find(p => p.id === 'tamsin')!.own).toBe('Tamsin, a retired smuggler who now mends nets, laughs too loudly, and still owes money to the wrong people.');
+    expect(nb.people.find(p => p.id === 'mira')!.own).toBe('');
+    // A check-up can't change your words, and leaving a sheet out keeps it.
+    await c.checkup('chat-1', 'test'); await c.waitForJobs();
+    nb = (await c.view('chat-1'))!.notebook!;
+    expect(nb.people.find(p => p.id === 'tamsin')).toMatchObject({ own: expect.stringContaining('retired smuggler'), sheet: expect.stringContaining('river barges') });
+    // The narrator gets the full sheet when she's in the scene, and not otherwise.
+    h.add('user', 'I find Tamsin by the nets.'); h.add('assistant', `Tamsin waves.${tracker('Day 1, 18:10', 'The docks')}`);
+    const text = await c.noteFor('chat-1');
+    expect(text).toContain('Who they are, in full');
+    expect(text).toContain('Tamsin: Tamsin, a retired smuggler');
+    expect(text).toContain('Grew up on the river barges');
+    expect(text).toContain('More than their role: Generous to strangers, ruthless about money.');
+    expect(text).not.toContain('three wars');
+  });
+});

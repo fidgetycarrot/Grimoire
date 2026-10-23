@@ -16,7 +16,14 @@ export interface Thread {
   status: 'open' | 'paused' | 'closed'; closedReason: string; ifFollowed: string; ifIgnored: string;
   steps: Step[]; startAt?: number; /** Code-owned: how many replies the chat had when the thread began. */ startReply?: number;
 }
-export interface Person { id: string; name: string; aliases: string[]; role: string; wants: string; doing: string; hint: string; /** How they talk, so the narrator gives each person a voice of their own. */ voice: string; met: boolean; status: 'active' | 'gone' }
+export interface Person {
+  id: string; name: string; aliases: string[]; role: string; wants: string; doing: string; hint: string;
+  /** How they talk, so the narrator gives each person a voice of their own. */ voice: string;
+  /** What keeps them from being a stock type: a contradiction, a specific detail, a tie to the world. */ depth: string;
+  /** For the few who matter most: a fuller character sheet, like a short card. No secrets, no appearance. */ sheet: string;
+  /** The player's own description of this person, word for word. Code-owned: a model can't change it. */ own: string;
+  met: boolean; status: 'active' | 'gone';
+}
 export interface Beat { id: string; text: string; purpose: string; conditions: string; thread: string; intensity: 'low' | 'high'; status: 'possible' | 'happened' | 'dropped'; quick?: true }
 /** A hidden truth the player has since learned. atReply is code-owned: the reply it came out at. */
 export interface Revealed { text: string; atReply?: number }
@@ -53,7 +60,7 @@ export interface Notebook {
 }
 export type ShapeChoice = Shape | 'auto';
 export interface Preferences { tone: 'light' | 'balanced' | 'dark'; twist: boolean; /** The shape the story starts with; auto lets the model choose. */ shape: ShapeChoice; /** Keep that shape for every part of the story. */ lockShape: boolean }
-export const LIMITS = Object.freeze({ people: 24, threads: 12, steps: 6, beats: 16, seeds: 12, events: 40, truths: 12, text: 600, short: 160 });
+export const LIMITS = Object.freeze({ sheets: 6, sheet: 2000, own: 3000, people: 24, threads: 12, steps: 6, beats: 16, seeds: 12, events: 40, truths: 12, text: 600, short: 160 });
 
 const ID = /^[a-z0-9][a-z0-9-]{0,40}$/;
 const count = (v: unknown) => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 10_000_000 ? v : undefined;
@@ -142,9 +149,10 @@ export function validateNotebook(value: unknown): Notebook {
       id: id(p.id, `${path}.id`), name: text(p.name, `${path}.name`, 80, false),
       aliases: list(p.aliases, `${path}.aliases`, 8).map((a, j) => text(a, `${path}.aliases[${j}]`, 80, false)),
       role: text(p.role, `${path}.role`, LIMITS.short), wants: text(p.wants, `${path}.wants`), doing: text(p.doing, `${path}.doing`),
-      hint: text(p.hint, `${path}.hint`), voice: text(p.voice, `${path}.voice`, 300), met: p.met === true, status: choice(p.status, ['active', 'gone'] as const, `${path}.status`, 'active'),
+      hint: text(p.hint, `${path}.hint`), voice: text(p.voice, `${path}.voice`, 300), depth: text(p.depth, `${path}.depth`, 400), sheet: text(p.sheet, `${path}.sheet`, LIMITS.sheet), own: text(p.own, `${path}.own`, LIMITS.own), met: p.met === true, status: choice(p.status, ['active', 'gone'] as const, `${path}.status`, 'active'),
     };
   }), 'people');
+  if (people.filter(p => p.sheet).length > LIMITS.sheets) fail(`Write a sheet for at most ${LIMITS.sheets} people: the ones who matter most.`);
   const personIds = new Set(people.map(p => p.id));
   const threads = unique(list(input.threads, 'threads', LIMITS.threads).map((item, i): Thread => {
     const t = record(item), path = `threads[${i}]`;
@@ -225,6 +233,8 @@ export function mergeRevision(previous: Notebook, revised: Notebook, now: number
     if (seed.status !== 'waiting' && next!.status === 'waiting' && !seed.quick) failMerge(`Seed "${seed.id}" was already planted and can't go back to waiting.`);
   }
   const fresh = withoutTimes(holdStage(previous, holdTurn(previous, revised), moment(now)));
+  // The player's own words about a person stay exactly as they wrote them.
+  fresh.people = fresh.people.map(p => ({ ...p, own: previous.people.find(x => x.id === p.id)?.own ?? '' }));
   // Something that came out can't go back to being secret.
   const lost = previous.story.cameOut.filter(r => !fresh.story.cameOut.some(x => sameText(x.text, r.text)));
   const story = { ...fresh.story, cameOut: carryRevealed(previous, [...fresh.story.cameOut, ...lost.map(({ text }) => ({ text }))]) };

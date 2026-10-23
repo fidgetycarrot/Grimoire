@@ -54,7 +54,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.16.1";
+var VERSION = "0.17.0";
 
 // src/frontend.ts
 var ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8 3v18"/><path d="M12 8h3M12 12h3"/></svg>';
@@ -257,15 +257,15 @@ function setup(ctx) {
     syncLock();
     grid.append(labeled("How the story is built", shape, "Grimoire can switch shapes between parts of the story as it goes, unless you keep one."), lockRow);
     const ideas = el("textarea", "gm-talk-input");
-    ideas.rows = 3;
-    ideas.maxLength = 1000;
-    ideas.placeholder = "Like “a slow-burn romance, trouble with old friends, a trip that goes sideways”";
+    ideas.rows = 4;
+    ideas.maxLength = 3000;
+    ideas.placeholder = "Like “a slow-burn romance, trouble with old friends, a trip that goes sideways”, or someone you’d like to meet";
     const keepIdeas = el("input");
     keepIdeas.type = "checkbox";
     keepIdeas.style.width = "auto";
     const keepRow = el("label", "gm-row gm-small");
     keepRow.append(keepIdeas, document.createTextNode("Keep these as lasting notes"));
-    grid.append(labeled("Anything you’d like in this story? (optional)", ideas, "Grimoire builds the story around your ideas and paces them in over time. It won’t tell you how."), keepRow);
+    grid.append(labeled("Anything you’d like in this story? (optional)", ideas, "Grimoire builds the story around your ideas and paces them in over time. It won’t tell you how. Describe someone you’d like to meet and they keep your words."), keepRow);
     const noConnection = !snapshot?.settings.connectionId;
     const parts = view.earlierParts ?? 0;
     const write = button("Write the notebook", async () => {
@@ -644,7 +644,7 @@ function setup(ctx) {
         name.append(el("span", "gm-chip", "not met"));
       if (p.status === "gone")
         name.append(el("span", "gm-chip", "gone"));
-      e.append(name, el("p", "gm-small", `Wants ${p.wants}`), ...p.doing ? [el("p", "gm-meta", `Doing: ${p.doing}`)] : [], ...p.voice ? [el("p", "gm-meta", `Voice: ${p.voice}`)] : []);
+      e.append(name, el("p", "gm-small", `Wants ${p.wants}`), ...p.doing ? [el("p", "gm-meta", `Doing: ${p.doing}`)] : [], ...p.voice ? [el("p", "gm-meta", `Voice: ${p.voice}`)] : [], ...p.depth ? [el("p", "gm-meta", `More than their role: ${p.depth}`)] : [], ...p.own ? [el("p", "gm-meta", `Your description: ${p.own}`)] : [], ...p.sheet ? [el("p", "gm-meta", `Sheet: ${p.sheet}`)] : []);
       people.append(e);
     }
     const threads = section("Threads");

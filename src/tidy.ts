@@ -75,12 +75,15 @@ export function tidyNotebook(value: unknown, previous?: Notebook): unknown {
   let people = ids(array(input.people).map(raw => {
     const p = record(raw), name = plain(p.name, 80) || human(slug(p.id)), id = slug(p.id) || slug(name);
     return { id, name, aliases: [...new Set(array(p.aliases).map(a => plain(a, 80)).filter(Boolean))].slice(0, 8),
-      role: plain(p.role, LIMITS.short), wants: plain(p.wants), doing: plain(p.doing), hint: plain(p.hint), voice: plain(p.voice, 300) || (previous?.people.find(x => x.id === id)?.voice ?? ''), met: truthy(p.met),
+      role: plain(p.role, LIMITS.short), wants: plain(p.wants), doing: plain(p.doing), hint: plain(p.hint), voice: plain(p.voice, 300) || (previous?.people.find(x => x.id === id)?.voice ?? ''), depth: plain(p.depth, 400) || (previous?.people.find(x => x.id === id)?.depth ?? ''), sheet: plain(p.sheet, LIMITS.sheet) || (previous?.people.find(x => x.id === id)?.sheet ?? ''), own: plain(p.own, LIMITS.own) || (previous?.people.find(x => x.id === id)?.own ?? ''), met: truthy(p.met),
       status: pick(p.status, ['active', 'gone'] as const, PERSON, 'active') };
   }).filter(p => p.name), 'person');
   if (previous) for (const old of previous.people) if (!people.some(p => p.id === old.id)) people.push(structuredClone(old));
   const earlier = new Set(previous?.people.map(p => p.id));
   people = cap(people, LIMITS.people, p => (earlier.has(p.id) ? 4 : 0) + (p.met ? 2 : 0) + (p.status === 'active' ? 1 : 0));
+  // Too many sheets: keep the ones for people the player described, then ones written before, then people met.
+  const sheeted = people.filter(p => p.sheet).sort((a, b) => Number(!!b.own) - Number(!!a.own) || Number(!!previous?.people.find(x => x.id === b.id)?.sheet) - Number(!!previous?.people.find(x => x.id === a.id)?.sheet) || Number(b.met) - Number(a.met));
+  for (const p of sheeted.slice(LIMITS.sheets)) p.sheet = '';
   const who = new Map<string, string>();
   for (const p of people) for (const key of [p.id, p.name, ...p.aliases]) who.set(slug(key), p.id);
 
