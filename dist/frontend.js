@@ -54,7 +54,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.14.0";
+var VERSION = "0.15.0";
 
 // src/frontend.ts
 var ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8 3v18"/><path d="M12 8h3M12 12h3"/></svg>';
@@ -228,6 +228,7 @@ function setup(ctx) {
     await refresh(true);
     return result;
   }
+  const SHAPE_CHOICES = [["auto", "Let Grimoire choose"], ["conflict", "Conflict: a problem that builds to a climax"], ["kishotenketsu", "Kishōtenketsu: people and discovery, with a turn instead of a fight"]];
   function renderStart(view) {
     const card = el("section", "gm-card gm-stack");
     card.append(el("h2", "", "Start a story notebook"), el("p", "gm-small", "Grimoire reads this chat’s card, your persona, the card’s and the chat’s lorebooks, and anything already said. It writes a private plan for the story: what is really going on, what people want, and the threads that will move over time. You won’t see it unless you open it."));
@@ -240,6 +241,21 @@ function setup(ctx) {
     twistRow.append(twist, document.createTextNode("A twist is allowed, if one fits"));
     const grid = el("div", "gm-stack");
     grid.append(labeled("Tone", tone, "The story keeps going as long as you play: when its threads wrap up, a check-up starts the next part from what happened."));
+    const shape = select(SHAPE_CHOICES, view.preferences.shape ?? "auto");
+    const lock = el("input");
+    lock.type = "checkbox";
+    lock.checked = !!view.preferences.lockShape;
+    lock.style.width = "auto";
+    const lockRow = el("label", "gm-row gm-small");
+    lockRow.append(lock, document.createTextNode("Keep this shape for the whole chat"));
+    const syncLock = () => {
+      lock.disabled = shape.value === "auto";
+      if (lock.disabled)
+        lock.checked = false;
+    };
+    shape.addEventListener("change", syncLock);
+    syncLock();
+    grid.append(labeled("How the story is built", shape, "Grimoire can switch shapes between parts of the story as it goes, unless you keep one."), lockRow);
     const ideas = el("textarea", "gm-talk-input");
     ideas.rows = 3;
     ideas.maxLength = 1000;
@@ -253,7 +269,7 @@ function setup(ctx) {
     const noConnection = !snapshot?.settings.connectionId;
     const parts = view.earlierParts ?? 0;
     const write = button("Write the notebook", async () => {
-      await act("create", { chatId: view.chatId, preferences: { tone: tone.value, twist: twist.checked }, ideas: ideas.value.trim(), keepIdeas: keepIdeas.checked });
+      await act("create", { chatId: view.chatId, preferences: { tone: tone.value, twist: twist.checked, shape: shape.value, lockShape: lock.checked }, ideas: ideas.value.trim(), keepIdeas: keepIdeas.checked });
       notify(parts ? `Reading the chat, then writing the notebook. This uses ${parts + 1} model requests and can take a few minutes.` : "Writing the notebook. This uses one model request and can take a minute.");
     }, "primary");
     write.classList.add("gm-wide");
@@ -458,7 +474,12 @@ function setup(ctx) {
     return card;
   }
   function renderMore(view) {
-    const d = details("More: check-ups, time skips, delete");
+    const d = details("More: check-ups, time skips, story shape, delete");
+    const kept = select([["off", "No, let Grimoire choose"], ...SHAPE_CHOICES.slice(1)], view.preferences.lockShape ? view.preferences.shape : "off");
+    const keep = button("Save", async () => {
+      await act("shape", { chatId: view.chatId, shape: kept.value === "off" ? "auto" : kept.value, lockShape: kept.value !== "off" });
+      notify(kept.value === "off" ? "Grimoire will choose the shape of each part." : "Saved. Every part of the story will use this shape.");
+    });
     const amount = el("input");
     amount.type = "number";
     amount.min = "1";
@@ -492,7 +513,7 @@ function setup(ctx) {
       await act("remove", { chatId: view.chatId });
       notify("Notebook deleted for this chat.");
     }, "danger");
-    d.body.append(check, el("p", "gm-hint", "Reads the latest chat and updates the plan. Check-ups also run on their own when a scene changes, time jumps, or enough replies pass."), el("div", "gm-sub"), skipRow, skip, el("div", "gm-sub"), remove);
+    d.body.append(check, el("p", "gm-hint", "Reads the latest chat and updates the plan. Check-ups also run on their own when a scene changes, time jumps, or enough replies pass."), el("div", "gm-sub"), skipRow, skip, el("div", "gm-sub"), labeled("Keep one story shape for this chat", kept, "If this part of the story already has the other shape, the change starts with the next part."), keep, el("div", "gm-sub"), remove);
     return d.root;
   }
   const QUICK_WORDS = [[/^due_/, "Planned development shown"], [/^moment_/, "Possible moment happened"], [/^detail_mentioned$/, "Breadcrumb mentioned"], [/^echo_heard$/, "Echo heard"], [/^callback_/, "Breadcrumb paid off"], [/^fits_/, "Storyline still fits"], [/^truth_/, "Secret came out"], [/^story_shift$/, "Change of direction"], [/^rushing$/, "Rushing"], [/^intimate$/, "Intimate scene"], [/^new_turn$/, "Something new"]];
@@ -630,6 +651,8 @@ function setup(ctx) {
     for (const t of notebook.threads) {
       const e = el("div", "gm-entry"), title = el("p");
       title.append(el("strong", "", t.title), el("span", "gm-chip", t.status === "open" ? t.speed : t.status));
+      if (t.id === notebook.arc.main)
+        title.append(el("span", "gm-chip", "main storyline"));
       if (due.includes(t.id)) {
         const c = el("span", "gm-chip", "due");
         c.dataset.tone = "due";

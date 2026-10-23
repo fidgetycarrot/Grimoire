@@ -188,7 +188,9 @@ describe('the note in the prompt', () => {
 
 describe('check-ups', () => {
   test('run after enough replies, and the update becomes the new version', async () => {
-    const { h, m, c } = await ready();
+    // The storm has already blown through; the ring is the main storyline, so nothing urgent asks for an early check-up.
+    const calmer = () => { const n: any = sampleNotebook(); n.arc.main = 'stolen-ring'; n.threads[1].steps[0].status = 'shown'; return { notebook: n, tracker: recipe }; };
+    const { h, m, c } = await ready(host(), model({ create: calmer, checkup: input => ({ notebook: { ...input.notebook, summary: 'Notebook updated after the ferry.' }, tracker: null }) }));
     h.add('user', 'We cross.');
     h.add('assistant', `The far bank.${tracker('Day 1, 19:00', 'The ferry')}`);
     await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
@@ -199,7 +201,7 @@ describe('check-ups', () => {
     const checkups = m.calls.filter(x => x.task === 'grimoire-checkup-v1');
     expect(checkups).toHaveLength(1);
     expect(checkups[0].input.reason).toBe('3 replies since the last update');
-    expect(checkups[0].input.preferences).toEqual({ tone: 'balanced', twist: false });
+    expect(checkups[0].input.preferences).toEqual({ tone: 'balanced', twist: false, shape: 'auto', lockShape: false });
     expect(checkups[0].messages[0].content).toContain('open the next arc');
     expect(checkups[0].input.clockOwner).toEqual({ day: 'tracker', hour: 'tracker' });
     expect(checkups[0].input.trackerText).toContain('Location: The ferry');
@@ -236,7 +238,7 @@ describe('check-ups', () => {
     const sloppy = () => {
       const n: any = sampleNotebook();
       n.people[1].id = 'Cole_The Barbarian'; n.threads[0].people = ['Oswin', 'Cole_The Barbarian'];
-      n.threads[0].speed = 'medium'; n.threads[0].steps[0].afterHours = '12 hours'; n.threads[1].id = 'storm'; n.threads[1].status = 'active';
+      n.threads[0].speed = 'medium'; n.threads[0].steps[1].afterHours = '24 hours'; n.threads[1].id = 'storm'; n.threads[1].status = 'active';
       n.people[0].wants = 'x '.repeat(500); n.people[0].hint = 'dry<br>humor {{char}}';
       n.events = Array.from({ length: 70 }, (_, i) => `Event ${i}`); n.clock = { day: '3', hour: 25, label: '' };
       return { notebook: n, tracker: null };
@@ -246,7 +248,7 @@ describe('check-ups', () => {
     const nb = (await c.view('chat-1'))!.notebook!;
     expect(nb.people[1].id).toBe('cole-the-barbarian');
     expect(nb.threads[0]).toMatchObject({ speed: 'steady', people: ['harbor-master', 'cole-the-barbarian'] });
-    expect(nb.threads[0].steps[0].afterHours).toBe(12);
+    expect(nb.threads[0].steps[1].afterHours).toBe(24);
     expect(nb.threads[1].status).toBe('open');
     expect(nb.people[0].wants.length).toBeLessThanOrEqual(600);
     expect(nb.people[0].hint).toBe('dry humor');
@@ -542,26 +544,26 @@ describe('long scenes', () => {
   test('a planned development comes due after enough replies, even if story time barely moves', async () => {
     const h = host(); h.add('assistant', `The ferry bell rings.${tracker('Day 1, 18:00', 'The ferry')}`);
     await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 50, wait: 'short' }, {});
-    const slowPlan = () => { const n: any = sampleNotebook(); n.threads[0].steps[0].afterHours = 48; n.threads[1].status = 'paused'; return { notebook: n, tracker: recipe }; };
+    // The ring is a side storyline here, so its step waits its full turn; the main storyline already began.
+    const slowPlan = () => { const n: any = sampleNotebook(); n.threads[0].steps[0].afterHours = 48; n.threads[1].steps[0].status = 'shown'; n.threads[1].steps.push({ id: 'river-floods', text: 'The river floods.', sign: 'Water laps at the ferry steps.', afterHours: 200, status: 'waiting' }); return { notebook: n, tracker: recipe }; };
     const c = new NotebookController(h.api, undefined, () => {}, model({ create: slowPlan }).ask);
     await c.create('chat-1', {}); await c.waitForJobs();
     for (let i = 0; i < 7; i++) { h.add('user', `Talk ${i}.`); h.add('assistant', `They talk.${tracker('Day 1, 18:0' + i, 'The ferry')}`); }
-    expect(await c.noteFor('chat-1')).not.toContain('A shout from the manor');
-    expect((await c.view('chat-1'))!.dueIds).toEqual([]);
+    expect((await c.view('chat-1'))!.dueIds).not.toContain('stolen-ring');
     h.add('user', 'Talk more.'); h.add('assistant', `They talk.${tracker('Day 1, 18:09', 'The ferry')}`);
-    expect(await c.noteFor('chat-1')).toContain('A shout from the manor');
-    expect((await c.view('chat-1'))!.dueIds).toEqual(['stolen-ring']);
+    expect((await c.view('chat-1'))!.dueIds).toContain('stolen-ring');
   });
 });
 
 describe('time-skip suggestions', () => {
   test('a quiet stretch offers a skip that lands on the next development; Not now hides it', async () => {
     const h = host(); h.add('assistant', `The ferry bell rings.${tracker('Day 1, 18:00', 'The ferry')}`);
-    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 50 }, {});
-    const calm = () => { const n: any = sampleNotebook(); n.threads[1].status = 'paused'; return { notebook: n, tracker: recipe }; };
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 50, wait: 'short' }, {});
+    // The ring is the main storyline and has already begun; its next step is half a day out, and the scene has stalled.
+    const calm = () => { const n: any = sampleNotebook(); n.arc.main = 'stolen-ring'; n.rhythm = 'stalled'; n.threads[0].steps[0].status = 'shown'; n.threads[0].steps[1].afterHours = 12; n.threads[1].status = 'paused'; return { notebook: n, tracker: recipe }; };
     const c = new NotebookController(h.api, undefined, () => {}, model({ create: calm }).ask);
     await c.create('chat-1', {}); await c.waitForJobs();
-    for (let i = 0; i < 9; i++) { h.add('user', `Chat ${i}.`); h.add('assistant', `Small talk.${tracker('Day 1, 18:0' + i, 'The ferry')}`); }
+    for (let i = 0; i < 3; i++) { h.add('user', `Chat ${i}.`); h.add('assistant', `Small talk.${tracker('Day 1, 18:0' + i, 'The ferry')}`); }
     const offer = (await c.view('chat-1'))!.skipOffer!;
     expect(offer.options[0]).toEqual({ hours: 12, label: 'Skip ahead to when something happens (about 12 hours)' });
     expect(JSON.stringify(offer)).not.toMatch(/ring|manor|Oswin/i);
@@ -1101,7 +1103,7 @@ describe('big setting lorebooks', () => {
   function world(h: ReturnType<typeof host>, activated: string[] = []) {
     const big = Array.from({ length: 150 }, (_, i) => ({ id: `e${i}`, comment: `Place ${i}`, key: [`Place${i}`], content: `About place ${i}.`, constant: false }));
     big[120] = { id: 'e120', comment: 'Oswin’s guild', key: ['Oswin'], content: 'The guild Oswin answers to.', constant: false };
-    big[7] = { id: 'e7', comment: 'The far bank', key: ['far bank'], content: 'A muddy landing.', constant: false };
+    big[7] = { id: 'e7', comment: 'The far bank', key: ['far bank', 'ferry'], content: 'A muddy landing.', constant: false };
     const api = h.api as any;
     const chats = api.chats.get;
     api.chats.get = async (id: string) => { const chat = await chats(id); return chat ? { ...chat, metadata: { chat_world_book_ids: ['world'] } } : null; };
@@ -1113,14 +1115,16 @@ describe('big setting lorebooks', () => {
       getActivated: async () => activated.map(id => ({ id, comment: '', keys: [], source: 'keyword' })),
     };
   }
-  test('the notebook reads the chat’s lorebook too, past the first page, with an index of the rest', async () => {
+  test('the first notebook reads the chat’s lorebook too, past the first page, and widely', async () => {
     const h = host(); world(h);
     const { m } = await ready(h);
     const lore = m.calls[0].input.lore;
     expect(lore.rules).toEqual(['Low Water: A river town.']);
-    expect(lore.entries).toEqual([]);
-    expect(lore.index).toContain('Place 149');
-    expect(lore.index).toContain('Oswin’s guild');
+    // What the card and chat mention comes first; a small book then fits in full, so nothing is left for the index.
+    expect(lore.entries[0]).toBe('The far bank: A muddy landing.');
+    expect(lore.entries).toContain('Place 149: About place 149.');
+    expect(lore.entries).toHaveLength(150);
+    expect(lore.index).toEqual([]);
     expect(m.calls[0].messages[0].content).toContain('this world\'s canon');
   });
   test('check-ups read what is in play and what the plans head toward', async () => {
@@ -1139,5 +1143,51 @@ describe('big setting lorebooks', () => {
     const { m, c } = await ready(h);
     await c.checkup('chat-1', 'test'); await c.waitForJobs();
     for (const call of m.calls) expect(call.messages[0].content).not.toContain('canon');
+  });
+});
+
+describe('Grimoire leads the story', () => {
+  test('the first notebook opens its main storyline at once, in the shape you chose', async () => {
+    const h = host();
+    h.add('assistant', `The ferry bell rings.${tracker('Day 1, 18:00', 'The ferry')}`);
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 8 }, {});
+    // The model ignores the chosen shape twice; code puts it right.
+    const m = model({ create: () => ({ notebook: { ...sampleNotebook(), arc: { shape: 'conflict', stage: 'setup', turn: '', main: 'stolen-ring' } }, tracker: recipe }) });
+    const c = new NotebookController(h.api, undefined, () => {}, m.ask);
+    await c.create('chat-1', { tone: 'balanced', twist: true, shape: 'kishotenketsu', lockShape: true }); await c.waitForJobs();
+    expect(m.calls).toHaveLength(2);
+    expect(m.calls[0].messages[0].content).toContain('Shape: the player chose "kishotenketsu" for this first part of the story; set arc.shape to it (every part of this story will use it).');
+    expect(m.calls[0].messages[0].content).toContain('Grimoire leads the story');
+    const nb = (await c.view('chat-1'))!.notebook!;
+    expect(nb.arc).toMatchObject({ shape: 'kishotenketsu', stage: 'ki', main: 'stolen-ring', opening: 'story' });
+    expect(nb.threads[0].steps[0].afterHours).toBe(0);
+    const text = await c.noteFor('chat-1');
+    expect(text).toContain('What the story does now:\n- The stolen ring: A shout from the manor on the hill.');
+  });
+  test('a kept shape holds at check-ups, and a new part opens with its own main storyline', async () => {
+    const newPart = (input: any) => {
+      const notebook = structuredClone(input.notebook);
+      notebook.threads[0].status = 'closed'; notebook.threads[0].closedReason = 'The ring went home.';
+      notebook.threads.push({ id: 'the-letter', title: 'The letter', speed: 'steady', why: 'Mira’s sister writes after years.', hint: 'news from far away', people: ['mira'], status: 'open', closedReason: '', ifFollowed: '', ifIgnored: '',
+        steps: [{ id: 'letter-arrives', text: 'A letter arrives.', sign: 'A courier asks for Mira.', afterHours: 30, status: 'waiting' }, { id: 'visit', text: 'The sister visits.', sign: 'A boat with a red sail.', afterHours: 48, status: 'waiting' }] });
+      // A new part, but in the other shape: sent back, then put right by code.
+      notebook.arc = { shape: 'conflict', stage: 'setup', turn: '', main: 'the-letter' };
+      return { notebook, tracker: null };
+    };
+    const h = host();
+    const m = model({ create: () => ({ notebook: { ...sampleNotebook(), arc: { shape: 'kishotenketsu', stage: 'ketsu', turn: '', main: 'stolen-ring' } }, tracker: recipe }), checkup: newPart });
+    const { c } = await ready(h, m);
+    await c.setShape('chat-1', 'kishotenketsu', true);
+    await c.checkup('chat-1', 'test'); await c.waitForJobs();
+    const checkups = m.calls.filter(x => x.task === 'grimoire-checkup-v1');
+    expect(checkups[0].messages[0].content).toContain('Keep arc.shape "kishotenketsu"');
+    expect(checkups).toHaveLength(2);
+    const nb = (await c.view('chat-1'))!.notebook!;
+    expect(nb.arc).toMatchObject({ shape: 'kishotenketsu', stage: 'ki', main: 'the-letter', opening: 'chapter' });
+    expect(nb.threads.find(t => t.id === 'the-letter')!.steps[0].afterHours).toBe(0);
+    expect(await c.noteFor('chat-1')).toContain('The main storyline is The letter');
+    // Letting Grimoire choose again.
+    await c.setShape('chat-1', 'auto', false);
+    expect((await c.view('chat-1'))!.preferences).toMatchObject({ shape: 'kishotenketsu', lockShape: false });
   });
 });

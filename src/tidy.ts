@@ -155,7 +155,9 @@ export function tidyNotebook(value: unknown, previous?: Notebook): unknown {
   const STAGE_WORDS: Record<string, string> = { introduction: 'ki', development: 'sho', shou: 'sho', turn: 'ten', twist: 'ten', conclusion: 'ketsu', reconciliation: 'ketsu', together: 'ketsu', risingaction: 'rising', build: 'rising', resolve: 'resolution', aftermath: 'resolution' };
   const named = STAGES[shape].includes(stageWord) ? stageWord : STAGE_WORDS[stageWord];
   const stage = named && STAGES[shape].includes(named) ? named : previous && previous.arc.shape === shape ? previous.arc.stage : STAGES[shape][0];
-  const arc = { shape, stage, turn: plain(a.turn) };
+  // The main storyline, by id or title; left out, it stays what it was.
+  const mainWord = slug(a.main), main = threadIds.has(mainWord) ? mainWord : byTitle.get(mainWord) ?? (!mainWord && previous && threadIds.has(previous.arc.main) ? previous.arc.main : '');
+  const arc = { shape, stage, turn: plain(a.turn), main };
 
   // Too many events: fold the oldest into one line rather than lose them silently.
   let events = array(input.events).map(e => plain(typeof e === 'string' ? e : record(e).text)).filter(Boolean);

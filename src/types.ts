@@ -6,7 +6,7 @@ import type { FieldCheck, Recipe } from './tracker';
 import type { Glance, SkipOffer } from './skip';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.14.0';
+export const VERSION = '0.15.0';
 export const MAX_VERSIONS = 16;
 
 /** One saved state of the notebook and the chat history it describes. */
@@ -82,7 +82,7 @@ export const TALK_LIMITS = { message: 1000, lines: 40, notes: 8, note: 200 } as 
 export interface QuickSettings { enabled: boolean; connectionId: string; model: string }
 export interface Settings { connectionId: string; maxOutputTokens: number; reasoningMode: ReasoningMode; every: number; quick: QuickSettings; /** The most replies a planned development waits, as a size. */ wait: WaitSetting; /** List chats with a notebook on the home page. */ homeList: boolean; /** During intimate scenes: keep the story out until they end, or let urgent things in. */ intimate: 'protect' | 'allow' }
 export const DEFAULT_SETTINGS: Settings = { connectionId: '', maxOutputTokens: 16000, reasoningMode: 'inherit', every: 8, quick: { enabled: false, connectionId: '', model: '' }, wait: 'medium', homeList: true, intimate: 'protect' };
-export const DEFAULT_PREFERENCES: Preferences = { tone: 'balanced', twist: true };
+export const DEFAULT_PREFERENCES: Preferences = { tone: 'balanced', twist: true, shape: 'auto', lockShape: false };
 
 export interface ChatView {
   chatId: string; name: string; supported: boolean; reason: string;

@@ -527,7 +527,14 @@ function validateNotebook(value) {
   }), "seeds");
   return {
     version: 1,
-    arc: { shape, stage, turn: text(arcInput.turn, "arc.turn"), ...count(arcInput.startReply) !== undefined ? { startReply: count(arcInput.startReply) } : {} },
+    arc: {
+      shape,
+      stage,
+      turn: text(arcInput.turn, "arc.turn"),
+      main: typeof arcInput.main === "string" && threadIds.has(arcInput.main) ? arcInput.main : "",
+      ...count(arcInput.startReply) !== undefined ? { startReply: count(arcInput.startReply) } : {},
+      ...arcInput.opening === "story" || arcInput.opening === "chapter" ? { opening: arcInput.opening } : {}
+    },
     seeds,
     story: {
       question: text(story.question, "story.question", LIMITS.text, false),
@@ -601,7 +608,7 @@ function keepTimes(previous, edited, now) {
   }) }, now);
 }
 function withoutTimes(notebook) {
-  const { startReply: _arcStart, ...arc } = notebook.arc;
+  const { startReply: _arcStart, opening: _opening, ...arc } = notebook.arc;
   return {
     ...notebook,
     arc,
@@ -690,10 +697,35 @@ function holdStage(previous, revised, m) {
   return stage === revised.arc.stage ? revised : { ...revised, arc: { ...revised.arc, stage } };
 }
 function carryArc(previous, arc) {
-  const { startReply: _s, ...rest } = arc;
+  const { startReply: _s, opening: _o, ...rest } = arc;
   if (previous.arc.shape !== arc.shape || STAGES[arc.shape].indexOf(arc.stage) === 0 && STAGES[arc.shape].indexOf(previous.arc.stage) > 0)
     return rest;
-  return previous.arc.startReply !== undefined ? { ...rest, startReply: previous.arc.startReply } : rest;
+  return { ...rest, ...previous.arc.startReply !== undefined ? { startReply: previous.arc.startReply } : {}, ...previous.arc.opening ? { opening: previous.arc.opening } : {} };
+}
+function openingLength(notebook, m) {
+  if (!notebook.arc.opening || !m.waits)
+    return null;
+  return m.waits.steady * (notebook.arc.opening === "story" ? 2 : 1);
+}
+function inOpening(notebook, m) {
+  const length = openingLength(notebook, m);
+  return length !== null && m.reply !== undefined && notebook.arc.startReply !== undefined && m.reply - notebook.arc.startReply < length;
+}
+function threadMoment(notebook, thread, now) {
+  const m = moment(now);
+  if (thread.id !== notebook.arc.main || !m.waits || !inOpening(notebook, m))
+    return m;
+  return { ...m, waits: { urgent: m.waits.urgent, steady: Math.max(m.waits.urgent, Math.ceil(m.waits.steady / 2)), slow: Math.max(m.waits.urgent, Math.ceil(m.waits.slow / 2)) } };
+}
+function overdue(notebook, thread, now) {
+  const m = threadMoment(notebook, thread, now), index = thread.steps.findIndex((s) => s.status === "waiting");
+  if (index < 0 || m.reply === undefined || !m.waits)
+    return 0;
+  const from = thread.steps.slice(0, index).reverse().find((s) => s.atReply !== undefined)?.atReply ?? thread.startReply;
+  if (from === undefined)
+    return 0;
+  const wait = thread.steps[index].afterHours === 0 ? 0 : m.waits[thread.speed];
+  return Math.max(0, m.reply - from - wait);
 }
 function nextStep(thread, now) {
   if (thread.status !== "open")
@@ -711,7 +743,7 @@ function nextStep(thread, now) {
 }
 function dueThreads(notebook, now) {
   return notebook.threads.flatMap((thread) => {
-    const next = nextStep(thread, now);
+    const next = nextStep(thread, threadMoment(notebook, thread, now));
     return next?.due ? [{ thread, step: next.step }] : [];
   });
 }
@@ -761,18 +793,18 @@ var PACE = {
   auto: ""
 };
 var RHYTHM = {
-  calm: "Pace: steady. Let scenes play out. One existing thread may move when it fits naturally.",
+  calm: "Pace: steady. Let scenes play out, and keep the story moving.",
   rising: "Pace: tension is building. Let it build through what people say and do; do not rush the payoff.",
   peak: "Pace: a big moment is happening. Play it out fully before anything new begins.",
   aftermath: "Pace: a big moment just happened. Leave room for talk and aftermath. Only urgent matters press in.",
-  stalled: "Pace: things have been quiet for a while. Let an existing thread move, using one of the developments below."
+  stalled: "Pace: things have been quiet for a while. Move the story now: the main storyline first, using what is below."
 };
 var STAGE = {
-  setup: "Arc: setup. Show what is at stake and the first small signs of trouble.",
-  rising: "Arc: rising action. Complications build; each scene should change the situation a little.",
+  setup: "Arc: setup. The main storyline has begun: show what it is, who it involves, and what is at stake, and draw the player into it.",
+  rising: "Arc: rising action. Complications build in the main storyline; each scene should change the situation a little.",
   climax: "Arc: climax. The main conflict comes to a head; let it play out fully.",
   resolution: "Arc: resolution. Let consequences settle and leave room for what it all meant.",
-  ki: "Arc: introduction. Let people, places, and routines show themselves. No trouble is needed.",
+  ki: "Arc: introduction. The main storyline opens with something worth following. Let people, places, and routines show themselves around it. No trouble is needed.",
   sho: "Arc: development. Deepen what is here: closeness, habits, small changes. Do not escalate or invent conflict.",
   ten: "Arc: the turn. Something unexpected casts what came before in a new light. It does not have to be a threat.",
   ketsu: "Arc: bringing it together. Let the turn and what came before settle into something new: an understanding, a choice, a changed bond."
@@ -780,6 +812,8 @@ var STAGE = {
 var INTIMATE = "Pace: an intimate scene is under way. Let it play out at its own pace, for as long as the player wants. Nothing from outside interrupts it: planned developments wait until it is over.";
 var GUIDED = "The player gave guidance for this reply. It comes first: follow it, and where anything below disagrees, the guidance wins. No new developments this time.";
 var DEEPENING = "Pace: the scene is deepening. Let it grow through what people say and do; there is no need to escalate.";
+var OPENING = "The story is just starting: keep the main storyline in front and moving, and keep side matters small for now.";
+var BRING_AFTER = 2;
 var PLANT_GAP = 4;
 function seedPlan(notebook, now) {
   const m = typeof now === "number" ? { hours: now } : now, reply = m.reply, gap = m.waits?.steady ?? 15;
@@ -815,6 +849,13 @@ function buildNote(input) {
   if (wishes.length)
     lines.push(`The player's standing wishes for this story (they outrank the plans below): ${wishes.map(end).join(" ")}`.slice(0, 900));
   const held = new Set(input.held ?? []), reworking = !!input.reworking, quiet = reworking || guided || intimate;
+  const m = typeof now === "number" ? { hours: now } : now;
+  const main = quiet ? undefined : notebook.threads.find((t) => t.id === notebook.arc.main && t.status === "open" && !held.has(t.id));
+  const opening = !!main && inOpening(notebook, m);
+  if (main)
+    lines.push(`The main storyline is ${main.title}: ${end(main.hint || main.why)} This is the story the player is in. Keep it present through what people say and do, and let its next development arrive when it is due.`);
+  if (opening)
+    lines.push(OPENING);
   const seedsAll = seedPlan(notebook, now), used = new Set;
   const seeds = quiet ? { plant: null, ready: [], echo: null } : { plant: seedsAll.plant && !held.has(seedsAll.plant.pays) ? seedsAll.plant : null, ready: seedsAll.ready.filter((s) => !held.has(s.pays)), echo: seedsAll.echo };
   if (reworking)
@@ -829,13 +870,26 @@ function buildNote(input) {
       lines.push(`- ${callback(seed)}`);
   }
   const due = quiet ? [] : dueThreads(notebook, now).filter((d) => !held.has(d.thread.id));
-  const urgent = due.filter((d) => d.thread.speed === "urgent").slice(0, 2);
-  const slower = quietTime ? [] : due.filter((d) => d.thread.speed !== "urgent").slice(0, pace === "fast" ? 2 : 1);
-  const developments = [...urgent, ...slower];
-  if (developments.length) {
-    lines.push("Developments that are due (bring in only if they fit what is happening):");
-    for (const { thread, step } of developments) {
-      const when = thread.speed === "urgent" ? "this can interrupt" : pace === "fast" ? "bring this in soon" : "at a natural break, such as the end of this scene";
+  const lead = due.find((d) => d.thread.id === main?.id && (pace !== "quiet" || d.thread.speed === "urgent"));
+  if (lead) {
+    const late = !quietTime && overdue(notebook, lead.thread, now) >= BRING_AFTER;
+    const when = quietTime && lead.thread.speed !== "urgent" ? "as soon as this moment has settled" : "now, in this reply or the next";
+    const tie = seeds.ready.find((s) => s.pays === lead.thread.id && !used.has(s.id));
+    const tied = notebook.people.filter((p) => p.status === "active" && lead.thread.people.includes(p.id)).map((p) => p.name).slice(0, 3);
+    lines.push("What the story does now:");
+    lines.push(`- ${lead.thread.title}: ${lead.step.sign || lead.step.text} (bring it in ${when}). Why it matters: ${lead.thread.hint || lead.thread.why}${tie ? ` ${callback(tie)}` : ""}`);
+    if (late)
+      lines.push(`- If this has not reached the player yet, bring it to them: someone tied to it seeks them out${tied.length ? ` (${tied.join(", ")})` : ""}, word reaches them, or it happens where they are. They still choose what to do.`);
+  }
+  const side = due.filter((d) => d !== lead && d.thread.id !== main?.id);
+  const pressing = (d) => d.thread.speed === "urgent" || !quietTime && d.step.afterHours === 0;
+  const urgent = side.filter(pressing).slice(0, lead ? 1 : 2);
+  const slower = quietTime || opening ? [] : side.filter((d) => !pressing(d)).slice(0, lead ? pace === "fast" ? 1 : 0 : pace === "fast" ? 2 : 1);
+  const developments = [...lead ? [lead] : [], ...urgent, ...slower];
+  if (urgent.length || slower.length) {
+    lines.push(lead ? "Side storylines that are due (bring in only if they fit what is happening):" : "Developments that are due (bring in only if they fit what is happening):");
+    for (const { thread, step } of [...urgent, ...slower]) {
+      const when = thread.speed === "urgent" ? "this can interrupt" : pace === "fast" || step.afterHours === 0 ? "bring this in soon" : "at a natural break, such as the end of this scene";
       const tie = seeds.ready.find((s) => s.pays === thread.id && !used.has(s.id));
       lines.push(`- ${thread.title}: ${step.sign || step.text} (${when}). Why it matters: ${thread.hint || thread.why}${tie ? ` ${callback(tie)}` : ""}`);
     }
@@ -866,10 +920,11 @@ function buildNote(input) {
     lines.push(`A small detail to mention in passing, without drawing attention to it: ${end(seeds.plant.detail)}`);
   if (seeds.echo)
     lines.push(`Something that happened elsewhere can reach the player in passing, as news, a rumor, an overheard remark, or a message, only if it fits: ${end(seeds.echo.detail)}`);
-  const newcomer = !quiet && !quietTime && (notebook.rhythm === "calm" || notebook.rhythm === "stalled" || pace === "fast") ? notebook.people.find((p) => p.status === "active" && !p.met && !present.includes(p)) : undefined;
+  const unmet = notebook.people.filter((p) => p.status === "active" && !p.met && !present.includes(p));
+  const newcomer = !quiet && !quietTime && (notebook.rhythm === "calm" || notebook.rhythm === "stalled" || pace === "fast") ? unmet.find((p) => main?.people.includes(p.id)) ?? (opening ? undefined : unmet[0]) : undefined;
   if (newcomer && lines.length < 16)
     lines.push(`Someone who could appear if it fits: ${newcomer.name}${newcomer.role ? `, ${newcomer.role}` : ""}. Wants ${newcomer.wants || "something of their own"}.`);
-  const rules = "This guidance is conditional. The latest messages decide what actually happened; skip anything they make irrelevant. Never write the player character's actions, words, thoughts, or feelings. Keep secrets hidden and let them show only through small details.";
+  const rules = "The latest messages decide what actually happened; skip anything they have made impossible. Never write the player character's actions, words, thoughts, or feelings. Keep secrets hidden and let them show only through small details.";
   while (lines.length > 4 && lines.join(`
 `).length + rules.length + 1 > 2400)
     lines.pop();
@@ -895,7 +950,7 @@ var PUSH_ASKS = {
   secret: "A secret starts to surface: something still in hiddenTruth (never anything in cameOut, which the player already knows), or what a planted breadcrumb really means, begins to come out.",
   consequence: "Something catches up with the player: a consequence of something that already happened in the chat, or of a storyline left alone, arrives.",
   surprise: "Choose whatever established thing would move this story best right now.",
-  chapter: 'Start a new chapter. Wrap up what is spent (close threads with a reason; keep anything still alive), then open the next part of the story from where things stand now: what people want now, what is unresolved, what the player set in motion. Set a new story question if the old one is answered or tired, and set arc.stage to the first stage of its shape. If a jump in time would give the chapter a fresh start, set "skipHours" (up to 720); otherwise 0.'
+  chapter: 'Start a new chapter. Wrap up what is spent (close threads with a reason; keep anything still alive), then open the next part of the story from where things stand now: what people want now, what is unresolved, what the player set in motion. Set a new story question if the old one is answered or tired, set arc.stage to the first stage of its shape, and set arc.main to the main storyline of the chapter: its first waiting step is the opening moment that draws the player in, arriving with the next reply. If a jump in time would give the chapter a fresh start, set "skipHours" (up to 720); otherwise 0.'
 };
 var ALLOWED = {
   person: ["person"],
@@ -949,7 +1004,7 @@ function secretsLeft(notebook) {
 
 // src/lore.ts
 var LORE_ROOM = {
-  create: { rules: 16000, rule: 4000, entries: 32000, entry: 6000, index: 1e4 },
+  create: { rules: 24000, rule: 6000, entries: 130000, entry: 8000, index: 16000, fill: true },
   update: { rules: 15000, rule: 3000, entries: 1e4, entry: 4000, index: 9000 }
 };
 var NO_LORE = { rules: [], entries: [], index: [], more: 0 };
@@ -1020,7 +1075,8 @@ function pickLore(all, focus, active, room) {
     return { entry, order, score };
   }).filter((s) => s.score > 0).sort((a, b) => b.score - a.score || a.order - b.order);
   left = room.entries;
-  for (const { entry } of scored) {
+  const order = [...scored.map((s) => s.entry), ...room.fill ? all.filter((e) => !e.constant && !scored.some((s) => s.entry === e)) : []];
+  for (const entry of order) {
     const piece = `${entry.title}: ${entry.content}`.slice(0, room.entry);
     if (piece.length > left)
       continue;
@@ -1065,7 +1121,7 @@ var NOTES = `- "notes" are standing wishes from the player, who co-writes this s
 `;
 var SHAPE = `{
  "story": {"question": "what the story is about and its central question", "stakes": "what can be won or lost", "direction": "roughly where it could end, as possibilities", "hiddenTruth": ["established background facts the player does not know yet"], "twist": "a twist, or empty", "cameOut": ["hidden truths the player has since learned, moved here word for word from hiddenTruth or twist"]},
- "arc": {"shape": "conflict|kishotenketsu", "stage": "setup|rising|climax|resolution for conflict; ki|sho|ten|ketsu for kishotenketsu", "turn": "kishotenketsu only: what the turn is, or empty"},
+ "arc": {"shape": "conflict|kishotenketsu", "stage": "setup|rising|climax|resolution for conflict; ki|sho|ten|ketsu for kishotenketsu", "turn": "kishotenketsu only: what the turn is, or empty", "main": "the id of the thread that is this part's main storyline"},
  "seeds": [{"id": "green-wax", "detail": "an ordinary-looking detail the narrator can mention in passing", "payoff": "what it turns out to mean later", "pays": "the thread id, beat id, or turn it pays into", "status": "waiting|planted|paid|echo|dropped"}],
  "people": [{"id": "cole", "name": "Cole", "aliases": [], "role": "short role", "wants": "what they want", "doing": "what they are doing about it right now, on or off screen", "hint": "a narrator-safe note on how to play them, with no secrets", "voice": "how they talk: word choice, sentence length and rhythm, habits and tics, what they never say, and one short sample line that shows the sound (an example, not a catchphrase); no secrets", "met": false, "status": "active"}],
  "threads": [{"id": "stolen-ring", "title": "The stolen ring", "speed": "urgent|steady|slow", "why": "why it matters, including hidden causes", "hint": "why it matters, in narrator-safe words with no secrets", "people": ["cole"], "status": "open", "closedReason": "", "ifFollowed": "what following it leads to", "ifIgnored": "what happens if it is left alone", "steps": [{"id": "owner-notices", "text": "what happens", "sign": "how the player could notice it", "afterHours": 24, "status": "waiting"}]}],
@@ -1078,12 +1134,13 @@ var SHAPE = `{
 var CRAFT = [
   "How to build it:",
   "1. Start from what the card already sets up: its premise, people, and any plot it begins. Build on it; do not replace it.",
+  "1a. Grimoire leads the story, so the player can simply play the scene in front of them and be carried along. Every part of the story has one main storyline (arc.main): the thread that carries the story question and that the player is clearly in. It opens at once with an inciting moment that draws the player in, its first waiting step, which arrives with the very next reply. For conflict, that is a job offered, a problem that lands, someone who needs something, something that just happened. For kishotenketsu, it is an invitation or a question worth following: someone new, a change, something unexplained, with no trouble needed. Build it from the card, the lore, and what people want; if the card already begins a plot, that is the main storyline. Give it four to six steps that build across the whole part: the first is the opening moment, later ones raise it, and the last is where the part comes to a head. Make it steady or urgent, never slow. Side storylines are smaller and grow around it. Leading is not deciding for the player: the world brings the story to them, and they choose what to do.",
   "2. Decide what is really going on: causes and motives before the chat began. Every thread and beat must follow from these, so the narrator never has to invent reasons on the spot.",
   "3. Give each important person a want and a current plan. They act on it offscreen too.",
   "3b. Give each person a voice of their own, so no two sound alike: how long their sentences run, what words they reach for or avoid, their rhythm and habits (a teenager, a tired detective, and a nervous clerk should be told apart with the names hidden). Take it from the card and the chat when they show it. Avoid the default voice every character slides into (quippy, wry, a little sarcastic) unless that really is the person.",
   "4. Plan a small supporting cast (about two to four people beyond the card's character) so the world is not just the main character. They have their own lives and are met when they fit.",
   "5. Threads are open problems or opportunities, one problem each: an unrelated subplot is its own thread. Each has a speed (urgent: minutes to hours; steady: a day to several days; slow: a week or more) and two to five steps toward its consequence. Most steps are signs the player could notice; only the last is the consequence itself. afterHours is story time after the previous step (or the thread's start) before the step becomes due.",
-  "5b. The story is open-ended: plan its first arc (the story question and two to four threads); later check-ups open new arcs as these resolve. Pacing is the shape of the arc, not just the next scene. Stagger the threads so they come to a head at different times, with room between them. Only the scene's immediate problem should come to a head soon; the others begin with small signs and build. Mix speeds: only one storyline may be urgent at a time (urgent means something bad happens within hours if nobody acts: a fire, a deadline, someone hunting you; feelings and relationships are almost never urgent), and at least one slow one. A later emergency can be prepared with a breadcrumb or two, never started early. Keep story time realistic: Grimoire also moves a thread on after a number of replies, so never squeeze story time to keep things moving. If the card fixes an event at a certain time (a show tonight, a deadline), use it, but let only the threads that truly depend on it peak there.",
+  "5b. The story is open-ended: plan its first arc (the story question and two to four threads); later check-ups open new arcs as these resolve. Pacing is the shape of the arc, not just the next scene. Stagger the threads so they come to a head at different times, with room between them. The main storyline starts now and builds across the part; side storylines begin with small signs and build. Mix speeds: only one storyline may be urgent at a time (urgent means something bad happens within hours if nobody acts: a fire, a deadline, someone hunting you; feelings and relationships are almost never urgent), and at least one slow one. A later emergency can be prepared with a breadcrumb or two, never started early. Keep story time realistic: Grimoire also moves a thread on after a number of replies, so never squeeze story time to keep things moving. If the card fixes an event at a certain time (a show tonight, a deadline), use it, but let only the threads that truly depend on it peak there.",
   "6. Beats are possible moments, not a script. Each says what it sets up or pays off and what must be true first. Most should be low intensity; plan no more than two high-intensity moments at a time, so big moments stay big.",
   "6a. Arc shape. Choose the shape that fits this arc: conflict when the story runs on danger, rivalry, mystery, or a problem to beat (setup, rising, climax, resolution); kishotenketsu when it runs on people, closeness, comfort, desire, discovery, or everyday life (ki: introduce people, places, routines; sho: develop and deepen them without escalating; ten: a turn, something unexpected that casts what came before in a new light, which need not be a threat; ketsu: bring the turn and what came before together into a new understanding). In a kishotenketsu arc, threads are developments rather than problems: if one is left alone, life simply carries on; its steps are small changes that lead toward the turn. A small conflict can still live inside a kishotenketsu arc, and the next arc may take the other shape. Put the turn in arc.turn; it is the natural place for a twist.",
   "6b. Seeds are breadcrumbs: four to eight ordinary-looking details (an object, a habit, a name, a stray remark, a sound) the narrator can mention in passing now, each paid off later in a thread step, a beat, or the turn. The detail must look unremarkable and give nothing away on its own; the payoff says what it turns out to mean. A kishotenketsu turn needs at least two seeds that prepare it, so it feels earned rather than random. Use details the card and chat already contain when you can.",
@@ -1102,13 +1159,14 @@ Return {"record": "..."}: the story so far, rewritten to include this part. Keep
   ];
 }
 function creationMessages(material, preferences, ideas = "", keep = false) {
+  const shape = preferences.shape === "auto" ? "" : ` Shape: the player chose "${preferences.shape}" for this first part of the story; set arc.shape to it${preferences.lockShape ? " (every part of this story will use it)" : ""}.`;
   const twist = preferences.twist ? 'A twist is allowed. If it fits, hide one in "hiddenTruth" and "twist" (or arc.turn for kishotenketsu), and prepare it with seeds. It is optional, not the point.' : 'Do not plan a twist. Leave "twist" empty; a kishotenketsu turn should then be a gentle change of view rather than a reveal.';
   return [
     { role: "system", content: `${SAFETY}
 You write a private story notebook for an ongoing roleplay chat. It gives the narrator a story of its own: where it is going, why, and how fast. The player must not see it.
 Return {"notebook": ${SHAPE}, "tracker": {"fields": [], "note": ""}${keep ? ', "notes": ["\u2026"]' : ""}}.
 ${CRAFT}
-${LORE(material.lore)}Tone: ${preferences.tone}. ${twist}${ideas ? `
+${LORE(material.lore)}Tone: ${preferences.tone}. ${twist}${shape}${ideas ? `
 The player, who co-writes this story, shared ideas for it in "ideas". Build the notebook around them where they fit the card: give them threads, people, beats, or breadcrumbs, paced like everything else, so they arrive in time rather than all at once. They are wishes for where the story can go, not events that already happened.${keep ? ` Also return "notes": one to four short standing instructions in plain words that keep these wishes in force, as close to the player's own words as you can, with no spoilers.` : ""}` : ""}
 If the chat already has messages, start from what has happened: record it under events, mark people met, and set the clock to now. A long chat comes with "storySoFar", a record of everything before the messages in "chat"; treat it as part of the chat. Keep events compact: at most about 30 short lines, merging older ones. Threads and people the chat already started come first; plan new ones around them.
 
@@ -1137,11 +1195,13 @@ ${LORE(input.lore) ? `- ${LORE(input.lore)}` : ""}${input.notes.length ? NOTES :
 - Voices: fill in "voice" for anyone who has none, and keep each one steady once set. Base it on who the person is (age, background, job, temperament, the card) and the moments where they sounded most like themselves, not on how the narrator has been writing everyone lately: narrators drift into one shared voice, and the notebook is how to pull them back out. If several people have started to sound alike, give each a clearly different voice.
 - Seeds: mark a seed "planted" once the chat has mentioned its detail, and "paid" once it came back with its meaning. When a thread ends where the player can't see, or a seed's story is left behind, consider an "echo" (as above in shape: detail is how the player could hear of it) so it can surface later; that makes the world feel alive. Never move a seed back to waiting. When the narrator mentions a striking detail in passing that isn't a seed, consider making it one and planning where it pays off; that is how the story stays cohesive.
 - Arc stage: move it on when the story has: ki to sho once people and place are established; sho to ten only after development has had room and the turn's seeds are planted; ten to ketsu once the turn has landed; for conflict, setup to rising to climax to resolution the same way.
-- When most threads have closed or the story question has been answered, open the next arc: a new story question if needed, and new threads that grow from what has happened and from what people now want. The story goes on as long as the player plays.
+- arc.main is this part's main storyline. Keep it pointing at the thread that carries the story; when it ends, the part's story is usually ready to come to a head or end.
+- When most threads have closed or the story question has been answered, open the next arc: a new story question if needed, and new threads that grow from what has happened and from what people now want. Give it a main storyline (arc.main) that opens at once with an inciting moment, as in 1a. The story goes on as long as the player plays.
 - Add threads the player started. Tie useful invented details to threads or people. Some presets add panels to each reply (scene notes, character thoughts, "seeds"): what they say happened in the scene happened, but their guesses and seeds are the narrator's inventions. Fit them to the notebook's truth where they can; never let them overwrite it. Keep the notebook compact: merge old events, drop beats that no longer fit (mark them dropped).
 - Clock: ${input.clockOwner.day === "tracker" && input.clockOwner.hour === "tracker" ? "the tracker owns the time; copy its current day and hour." : `set the story time as of the last message. The tracker owns: ${[input.clockOwner.day === "tracker" ? "the day" : "", input.clockOwner.hour === "tracker" ? "the hour" : ""].filter(Boolean).join(" and ") || "nothing"}; you set the rest.`} Time only moves forward. Do not count the same time twice.
 - Rhythm: how the story feels right now (peak during a big moment, aftermath right after one, stalled if nothing has changed for a while).
-- Pace mode chosen by the player: ${input.pace}. In quiet mode, do not start new trouble; urgent things still play out.
+${input.preferences.lockShape && input.preferences.shape !== "auto" ? `- Shape: the player wants every part of this story to be "${input.preferences.shape}". Keep arc.shape "${input.preferences.shape}"; a new part uses it too.
+` : ""}- Pace mode chosen by the player: ${input.pace}. In quiet mode, do not start new trouble; urgent things still play out.
 - Summary: one short line the player sees, with no spoilers, like "Notebook updated after the tavern."
 - tracker: ${input.recipe.fields.length ? "return null unless the tracker fields listed as unavailable can now be read from the replies, or the format changed; then return a corrected recipe in the same format as before." : 'no tracker is known yet. If the raw replies in "replies" carry a status block (time, place, who is present), as tags, tag attributes, or labeled lines, return a recipe for it; otherwise return null. The opening message is left out, because presets seldom add a tracker to it.'}${input.replies.length ? ` Recipe methods:
 ${TRACKER_METHODS}` : ""}
@@ -1332,11 +1392,6 @@ function paceProblems(previous, revised, rules = {}) {
   }
   return problems;
 }
-function enforcePace(previous, revised, rules = {}) {
-  const problems = paceProblems(previous, revised, rules);
-  if (problems.length)
-    throw new NotebookError(problems.join(" "), "The update broke a pacing rule, so it was sent back once.");
-}
 function fixPace(previous, revised, rules = {}) {
   const keep = keeper(previous, revised);
   return { ...revised, threads: revised.threads.map((thread) => {
@@ -1354,7 +1409,7 @@ function fixPace(previous, revised, rules = {}) {
 function earlySteps(previous, revised, now) {
   let early = 0;
   for (const thread of previous.threads) {
-    const next = nextStep(thread, now);
+    const next = nextStep(thread, threadMoment(previous, thread, now));
     const after = revised.threads.find((t) => t.id === thread.id);
     if (!after)
       continue;
@@ -1370,6 +1425,64 @@ function earlySteps(previous, revised, now) {
     });
   }
   return early;
+}
+
+// src/lead.ts
+var ready = (t) => !!t && t.status === "open" && t.steps.some((s) => s.status === "waiting");
+function shapeFor(previous, revised, prefs) {
+  if (prefs.shape === "auto")
+    return null;
+  if (!previous)
+    return prefs.shape;
+  if (!prefs.lockShape)
+    return null;
+  return previous.arc.shape === prefs.shape || isNewArc(previous, revised) ? prefs.shape : null;
+}
+function leadProblems(previous, revised, prefs) {
+  const problems = [];
+  const shape = shapeFor(previous, revised, prefs);
+  if (shape && revised.arc.shape !== shape)
+    problems.push(`The player chose the "${shape}" shape for this part of the story. Set arc.shape to "${shape}" and arc.stage to one of: ${STAGES[shape].join(", ")}.`);
+  const fresh = !previous || isNewArc(previous, revised);
+  const main = revised.threads.find((t) => t.id === revised.arc.main);
+  if (fresh) {
+    if (!ready(main))
+      problems.push("Set arc.main to the id of this part's main storyline: the open thread that carries the story question and that the player is clearly in. Its first waiting step is the opening moment that draws the player in; it arrives at once.");
+    else if (main.speed === "slow")
+      problems.push(`The main storyline "${main.id}" can't be slow at the start of a part. Make it steady or urgent.`);
+  }
+  return problems;
+}
+function fixLead(previous, revised, prefs) {
+  let out = revised;
+  const shape = shapeFor(previous, out, prefs);
+  if (shape && out.arc.shape !== shape) {
+    const index = Math.max(0, STAGES[out.arc.shape].indexOf(out.arc.stage));
+    const starting = !previous || index === 0 && STAGES[previous.arc.shape].indexOf(previous.arc.stage) > 0;
+    const arc = previous && previous.arc.shape === shape && !starting ? { ...out.arc, shape, stage: previous.arc.stage, turn: previous.arc.turn } : { ...out.arc, shape, stage: STAGES[shape][index], turn: shape === "kishotenketsu" ? out.arc.turn : "" };
+    out = { ...out, arc };
+  }
+  const fresh = !previous || isNewArc(previous, out);
+  const current = out.threads.find((t) => t.id === out.arc.main);
+  if (!ready(current) && (fresh || !current || STAGES[out.arc.shape].indexOf(out.arc.stage) < 2)) {
+    const open = out.threads.filter(ready);
+    const rank = { urgent: 0, steady: 1, slow: 2 };
+    const pick = open.find((t) => t.id === previous?.arc.main) ?? [...open].sort((a, b) => rank[a.speed] - rank[b.speed])[0];
+    out = { ...out, arc: { ...out.arc, main: pick?.id ?? "" } };
+  }
+  if (fresh)
+    out = { ...out, threads: out.threads.map((t) => t.id === out.arc.main && t.speed === "slow" ? { ...t, speed: "steady" } : t) };
+  return out;
+}
+function openArc(notebook, kind) {
+  let first = true;
+  const begun = notebook.threads.find((t) => t.id === notebook.arc.main)?.steps.some((s) => s.status === "shown" || s.status === "offscreen");
+  return { ...notebook, arc: { ...notebook.arc, opening: kind }, threads: notebook.threads.map((thread) => thread.id !== notebook.arc.main || begun ? thread : { ...thread, steps: thread.steps.map((step) => {
+    if (step.status !== "waiting" || !first)
+      return step;
+    first = false;
+    return { ...step, afterHours: 0 };
+  }) }) };
 }
 
 // src/tidy.ts
@@ -1556,7 +1669,8 @@ function tidyNotebook(value, previous) {
   const STAGE_WORDS = { introduction: "ki", development: "sho", shou: "sho", turn: "ten", twist: "ten", conclusion: "ketsu", reconciliation: "ketsu", together: "ketsu", risingaction: "rising", build: "rising", resolve: "resolution", aftermath: "resolution" };
   const named = STAGES[shape].includes(stageWord) ? stageWord : STAGE_WORDS[stageWord];
   const stage = named && STAGES[shape].includes(named) ? named : previous && previous.arc.shape === shape ? previous.arc.stage : STAGES[shape][0];
-  const arc = { shape, stage, turn: plain(a.turn) };
+  const mainWord = slug(a.main), main = threadIds.has(mainWord) ? mainWord : byTitle.get(mainWord) ?? (!mainWord && previous && threadIds.has(previous.arc.main) ? previous.arc.main : "");
+  const arc = { shape, stage, turn: plain(a.turn), main };
   let events = array(input.events).map((e) => plain(typeof e === "string" ? e : record5(e).text)).filter(Boolean);
   if (events.length > LIMITS.events) {
     const fold = events.length - LIMITS.events + 1;
@@ -2087,12 +2201,12 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.14.0";
+var VERSION = "0.15.0";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, lines: 40, notes: 8, note: 200 };
 var DEFAULT_SETTINGS = { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true, intimate: "protect" };
-var DEFAULT_PREFERENCES = { tone: "balanced", twist: true };
+var DEFAULT_PREFERENCES = { tone: "balanced", twist: true, shape: "auto", lockShape: false };
 
 // src/controller.ts
 var record7 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
@@ -2166,7 +2280,16 @@ function playerNotes(value) {
 }
 function validPreferences(value) {
   const v = record7(value);
-  return { tone: ["light", "balanced", "dark"].includes(v.tone) ? v.tone : "balanced", twist: v.twist !== false };
+  const shape = v.shape === "conflict" || v.shape === "kishotenketsu" ? v.shape : "auto";
+  return { tone: ["light", "balanced", "dark"].includes(v.tone) ? v.tone : "balanced", twist: v.twist !== false, shape, lockShape: shape !== "auto" && v.lockShape === true };
+}
+function storyRules(previous, revised, round, pace, prefs) {
+  if (round === 1) {
+    const problems = [...paceProblems(previous, revised, pace), ...leadProblems(previous, revised, prefs)];
+    if (problems.length)
+      throw new NotebookError(problems.join(" "), "The update broke a story rule, so it was sent back once.");
+  }
+  return fixLead(previous, round === 1 ? revised : fixPace(previous, revised, pace), prefs);
 }
 function prune(versions) {
   if (versions.length <= MAX_VERSIONS)
@@ -2606,10 +2729,9 @@ ${character.personality}`, persona?.description ?? "", storySoFar], LORE_ROOM.cr
             round++;
             const output = record7(value);
             const first = validateNotebook(tidyNotebook(output.notebook));
-            if (round === 1)
-              enforcePace(null, first);
+            const ruled = storyRules(null, first, round, {}, state.preferences);
             const notes = pin ? (Array.isArray(output.notes) ? output.notes : []).map((n) => plain(n, TALK_LIMITS.note)).filter(Boolean).slice(0, 4) : [];
-            return { notebook: withoutTimes(round === 1 ? first : fixPace(null, first)), recipe: validateRecipe(output.tracker).recipe, notes };
+            return { notebook: openArc(withoutTimes(ruled), "story"), recipe: validateRecipe(output.tracker).recipe, notes };
           }, signal);
           await this.serial(chatId, async () => {
             const current = await this.load(chatId) ?? state;
@@ -2723,11 +2845,10 @@ ${character.personality}`, persona?.description ?? "", storySoFar], LORE_ROOM.cr
           const output = record7(value);
           let revised = validateNotebook(tidyNotebook(output.notebook, base.notebook));
           const rules = { speedUps: Object.fromEntries(Object.entries(record7(output.speedUps)).map(([k, v]) => [k, typeof v === "string" ? v : ""])) };
-          if (round === 1)
-            enforcePace(base.notebook, revised, rules);
-          else
-            revised = fixPace(base.notebook, revised, rules);
+          revised = storyRules(base.notebook, revised, round, rules, state.preferences);
           let merged = mergeRevision(base.notebook, revised, live.moment);
+          if (isNewArc(base.notebook, merged))
+            merged = openArc(merged, "chapter");
           if (absoluteHours(liveClock(merged.clock, live.values, live.types).clock) < absoluteHours(live.clock))
             merged = { ...merged, clock: live.clock };
           return { notebook: merged, recipe: output.tracker ? validateRecipe(output.tracker).recipe : null, early: earlySteps(base.notebook, merged, live.moment) };
@@ -2843,10 +2964,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar], LORE_ROOM.cr
               let revised = validateNotebook(tidyNotebook(proposed, base.notebook));
               if (kind)
                 revised = launchPush(revised, checkPush(base.notebook, revised, output.push, kind));
-              if (round === 1)
-                enforcePace(base.notebook, revised, { playerAsked: true });
-              else
-                revised = fixPace(base.notebook, revised, { playerAsked: true });
+              revised = storyRules(base.notebook, revised, round, { playerAsked: true }, state.preferences);
               if (kind === "chapter")
                 skip = Math.min(720, Math.max(0, Math.round(Number(output.skipHours) || 0)));
               if (skip) {
@@ -2855,6 +2973,8 @@ ${character.personality}`, persona?.description ?? "", storySoFar], LORE_ROOM.cr
                 moment = { ...live.moment, hours: absoluteHours(clock) };
               }
               notebook = { ...mergeRevision(base.notebook, revised, moment), ...skip ? { clock } : {} };
+              if (isNewArc(base.notebook, notebook))
+                notebook = openArc(notebook, "chapter");
             }
             return { reply: kind ? pushReply(kind, skip) : reply, asked, notebook, kind, skip, note: !asked && pinning ? plain(output.note, TALK_LIMITS.note) : "" };
           }, signal);
@@ -2964,6 +3084,18 @@ ${character.personality}`, persona?.description ?? "", storySoFar], LORE_ROOM.cr
         throw new Error("Write a notebook for this chat first.");
       state.enabled = enabled;
       await this.save(state);
+    });
+  }
+  async setShape(chatId, shape, lockShape) {
+    return this.serial(chatId, async () => {
+      const state = await this.load(chatId);
+      if (!state)
+        throw new Error("Write a notebook for this chat first.");
+      const wanted = shape === "auto" ? state.preferences.shape : shape;
+      state.preferences = validPreferences({ ...state.preferences, shape: wanted, lockShape: shape !== "auto" && lockShape === true });
+      await this.save(state);
+      this.changed();
+      return state.preferences;
     });
   }
   async setPace(chatId, pace) {
@@ -3266,6 +3398,8 @@ async function handle(controller, action, input) {
         throw new Error("The notebook is already being updated.");
       return job;
     }
+    case "shape":
+      return controller.setShape(string(data.chatId, "Chat"), data.shape, data.lockShape);
     case "enable":
       return controller.setEnabled(string(data.chatId, "Chat"), data.enabled === true);
     case "pace":

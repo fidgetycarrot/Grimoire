@@ -92,6 +92,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const result = await rpc.request<T>(action, input); await refresh(true); return result;
   }
 
+  const SHAPE_CHOICES: Array<[string, string]> = [['auto', 'Let Grimoire choose'], ['conflict', 'Conflict: a problem that builds to a climax'], ['kishotenketsu', 'Kishōtenketsu: people and discovery, with a turn instead of a fight']];
   // ----- This chat -----
   function renderStart(view: ChatView) {
     const card = el('section', 'gm-card gm-stack');
@@ -100,6 +101,12 @@ export function setup(ctx: SpindleFrontendContext) {
     const twist = el('input'); twist.type = 'checkbox'; twist.checked = view.preferences.twist; twist.style.width = 'auto';
     const twistRow = el('label', 'gm-row gm-small'); twistRow.append(twist, document.createTextNode('A twist is allowed, if one fits'));
     const grid = el('div', 'gm-stack'); grid.append(labeled('Tone', tone, 'The story keeps going as long as you play: when its threads wrap up, a check-up starts the next part from what happened.'));
+    const shape = select(SHAPE_CHOICES, view.preferences.shape ?? 'auto');
+    const lock = el('input'); lock.type = 'checkbox'; lock.checked = !!view.preferences.lockShape; lock.style.width = 'auto';
+    const lockRow = el('label', 'gm-row gm-small'); lockRow.append(lock, document.createTextNode('Keep this shape for the whole chat'));
+    const syncLock = () => { lock.disabled = shape.value === 'auto'; if (lock.disabled) lock.checked = false; };
+    shape.addEventListener('change', syncLock); syncLock();
+    grid.append(labeled('How the story is built', shape, 'Grimoire can switch shapes between parts of the story as it goes, unless you keep one.'), lockRow);
     const ideas = el('textarea', 'gm-talk-input'); ideas.rows = 3; ideas.maxLength = 1000; ideas.placeholder = 'Like “a slow-burn romance, trouble with old friends, a trip that goes sideways”';
     const keepIdeas = el('input'); keepIdeas.type = 'checkbox'; keepIdeas.style.width = 'auto';
     const keepRow = el('label', 'gm-row gm-small'); keepRow.append(keepIdeas, document.createTextNode('Keep these as lasting notes'));
@@ -107,7 +114,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const noConnection = !snapshot?.settings.connectionId;
     const parts = view.earlierParts ?? 0;
     const write = button('Write the notebook', async () => {
-      await act('create', { chatId: view.chatId, preferences: { tone: tone.value, twist: twist.checked }, ideas: ideas.value.trim(), keepIdeas: keepIdeas.checked });
+      await act('create', { chatId: view.chatId, preferences: { tone: tone.value, twist: twist.checked, shape: shape.value, lockShape: lock.checked }, ideas: ideas.value.trim(), keepIdeas: keepIdeas.checked });
       notify(parts ? `Reading the chat, then writing the notebook. This uses ${parts + 1} model requests and can take a few minutes.` : 'Writing the notebook. This uses one model request and can take a minute.');
     }, 'primary');
     write.classList.add('gm-wide'); write.disabled = noConnection || view.job?.status === 'running';
@@ -234,7 +241,9 @@ export function setup(ctx: SpindleFrontendContext) {
   }
   /** Things you seldom need: a check-up on demand, a manual time skip, deleting the notebook. */
   function renderMore(view: ChatView) {
-    const d = details('More: check-ups, time skips, delete');
+    const d = details('More: check-ups, time skips, story shape, delete');
+    const kept = select([['off', 'No, let Grimoire choose'], ...SHAPE_CHOICES.slice(1)], view.preferences.lockShape ? view.preferences.shape : 'off');
+    const keep = button('Save', async () => { await act('shape', { chatId: view.chatId, shape: kept.value === 'off' ? 'auto' : kept.value, lockShape: kept.value !== 'off' }); notify(kept.value === 'off' ? 'Grimoire will choose the shape of each part.' : 'Saved. Every part of the story will use this shape.'); });
     const amount = el('input'); amount.type = 'number'; amount.min = '1'; amount.max = '999'; amount.value = '1';
     const unit = select([['hours', 'hours'], ['days', 'days'], ['weeks', 'weeks']], 'days');
     const busy = view.job?.status === 'running';
@@ -247,7 +256,8 @@ export function setup(ctx: SpindleFrontendContext) {
       confirmDelete = false; await act('remove', { chatId: view.chatId }); notify('Notebook deleted for this chat.');
     }, 'danger');
     d.body.append(check, el('p', 'gm-hint', 'Reads the latest chat and updates the plan. Check-ups also run on their own when a scene changes, time jumps, or enough replies pass.'),
-      el('div', 'gm-sub'), skipRow, skip, el('div', 'gm-sub'), remove);
+      el('div', 'gm-sub'), skipRow, skip, el('div', 'gm-sub'),
+      labeled('Keep one story shape for this chat', kept, 'If this part of the story already has the other shape, the change starts with the next part.'), keep, el('div', 'gm-sub'), remove);
     return d.root;
   }
   const QUICK_WORDS: Array<[RegExp, string]> = [[/^due_/, 'Planned development shown'], [/^moment_/, 'Possible moment happened'], [/^detail_mentioned$/, 'Breadcrumb mentioned'], [/^echo_heard$/, 'Echo heard'], [/^callback_/, 'Breadcrumb paid off'], [/^fits_/, 'Storyline still fits'], [/^truth_/, 'Secret came out'], [/^story_shift$/, 'Change of direction'], [/^rushing$/, 'Rushing'], [/^intimate$/, 'Intimate scene'], [/^new_turn$/, 'Something new']];
@@ -329,6 +339,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const threads = section('Threads');
     for (const t of notebook.threads) {
       const e = el('div', 'gm-entry'), title = el('p'); title.append(el('strong', '', t.title), el('span', 'gm-chip', t.status === 'open' ? t.speed : t.status));
+      if (t.id === notebook.arc.main) title.append(el('span', 'gm-chip', 'main storyline'));
       if (due.includes(t.id)) { const c = el('span', 'gm-chip', 'due'); c.dataset.tone = 'due'; title.append(c); }
       const steps = el('ol', 'gm-steps'); for (const step of t.steps) { const li = el('li', 'gm-small', step.text); li.dataset.status = step.status; if (step.status !== 'waiting') li.append(el('span', 'gm-chip', step.status)); steps.append(li); }
       e.append(title, el('p', 'gm-small', t.why), steps, ...(t.ifIgnored ? [el('p', 'gm-meta', `If left alone: ${t.ifIgnored}`)] : []), ...(t.closedReason ? [el('p', 'gm-meta', `Closed: ${t.closedReason}`)] : []));

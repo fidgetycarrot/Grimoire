@@ -4,7 +4,7 @@ import type { Notebook } from '../src/notebook';
 export function sampleNotebook(): Notebook {
   return {
     version: 1,
-    arc: { shape: 'conflict', stage: 'setup', turn: '' },
+    arc: { shape: 'conflict', stage: 'setup', turn: '', main: 'storm' },
     seeds: [
       { id: 'green-wax', detail: 'Oswin seals his letters with green wax.', payoff: 'The ring box in the next town is sealed with the same green wax, tying the sale to Oswin.', pays: 'stolen-ring', status: 'waiting' },
     ],

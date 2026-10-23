@@ -13,11 +13,15 @@
  */
 export interface LoreEntry { id: string; title: string; keys: string[]; content: string; constant: boolean; caseSensitive: boolean; wholeWords: boolean; regex: boolean }
 export interface Lore { rules: string[]; entries: string[]; index: string[]; /** Titles left out of the index for room. */ more: number }
-export interface LoreRoom { rules: number; rule: number; entries: number; entry: number; index: number }
+export interface LoreRoom { rules: number; rule: number; entries: number; entry: number; index: number; /** Fill leftover room with the rest of the book, in book order, so the first plan sees the world broadly. */ fill?: boolean }
 
-/** In characters. Writing a notebook reads more; check-ups and talk keep to what they need. */
+/**
+ * In characters (about four to a token). The first notebook is where the
+ * story is set up, so it reads widely: up to about 40,000 tokens. Check-ups
+ * and talk keep to what they need: about 8,000.
+ */
 export const LORE_ROOM: Record<'create' | 'update', LoreRoom> = {
-  create: { rules: 16_000, rule: 4_000, entries: 32_000, entry: 6_000, index: 10_000 },
+  create: { rules: 24_000, rule: 6_000, entries: 130_000, entry: 8_000, index: 16_000, fill: true },
   update: { rules: 15_000, rule: 3_000, entries: 10_000, entry: 4_000, index: 9_000 },
 };
 export const NO_LORE: Lore = { rules: [], entries: [], index: [], more: 0 };
@@ -77,7 +81,9 @@ export function pickLore(all: LoreEntry[], focus: string[], active: ReadonlySet<
     return { entry, order, score };
   }).filter(s => s.score > 0).sort((a, b) => b.score - a.score || a.order - b.order);
   left = room.entries;
-  for (const { entry } of scored) {
+  // What matters most first; then, for the first notebook, the rest of the world in book order.
+  const order = [...scored.map(s => s.entry), ...(room.fill ? all.filter(e => !e.constant && !scored.some(s => s.entry === e)) : [])];
+  for (const entry of order) {
     const piece = `${entry.title}: ${entry.content}`.slice(0, room.entry);
     if (piece.length > left) continue;
     entries.push(piece); used.add(entry.id); left -= piece.length;

@@ -22,7 +22,7 @@ function harness(chat: Partial<NonNullable<Snapshot['chat']>> | null = {}, setti
     connections: [{ id: 'model', name: 'Writer', model: 'm' }],
     settings: { connectionId: 'model', maxOutputTokens: 16000, reasoningMode: 'inherit', every: 8, quick: { enabled: false, connectionId: '', model: '' }, wait: 'medium', homeList: true, intimate: 'protect', ...settings },
     decisions: { available: true, reason: '', connections: [{ id: 'dec', name: 'Jev', provider: 'typesafe', model: '~typesafe/jev-latest', isDefault: true }] },
-    chat: chat === null ? null : { chatId: 'chat-1', name: 'Low Water', supported: true, reason: '', enabled: true, pace: 'auto', preferences: { tone: 'balanced', twist: true }, hasNotebook: true,
+    chat: chat === null ? null : { chatId: 'chat-1', name: 'Low Water', supported: true, reason: '', enabled: true, pace: 'auto', preferences: { tone: 'balanced', twist: true, shape: 'auto', lockShape: false }, hasNotebook: true,
       summary: 'Notebook updated after the tavern.', clock: { day: 2, hour: 21, label: '' }, clockText: 'Day 2, 21:00', sources: { day: 'notebook', hour: 'notebook', exact: false }, checks: [],
       needsCheck: '', job: null, updatedAt: Date.now(), repliesSinceCheck: 2, skipHours: 0, notebook: stamp(validateNotebook(sampleNotebook()), 40), behind: false, earlierParts: 0, quick: null, dueIds: [], skipOffer: null, glance: null, reworking: false, talk: [], notes: [], quickLog: [], canUndo: false, ...chat },
   };
@@ -120,7 +120,7 @@ describe('the panel', () => {
   test('a chat without a notebook offers to write one, and needs a connection first', async () => {
     const h = harness({ hasNotebook: false, notebook: null }); await tick();
     h.button('Write the notebook')!.click(); await tick();
-    expect(h.requests.find(r => r.action === 'create')!.input).toEqual({ chatId: 'chat-1', preferences: { tone: 'balanced', twist: true }, ideas: '', keepIdeas: false });
+    expect(h.requests.find(r => r.action === 'create')!.input).toEqual({ chatId: 'chat-1', preferences: { tone: 'balanced', twist: true, shape: 'auto', lockShape: false }, ideas: '', keepIdeas: false });
     const none = harness({ hasNotebook: false, notebook: null }, { connectionId: '' }); await tick();
     expect(none.button('Write the notebook')!.disabled).toBe(true);
     expect(none.root.textContent).toContain('Choose a model connection in Settings first.');

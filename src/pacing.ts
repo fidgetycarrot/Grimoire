@@ -1,4 +1,4 @@
-import { nextStep, NotebookError, type Moment, type Notebook, type Speed } from './notebook';
+import { nextStep, NotebookError, threadMoment, type Moment, type Notebook, type Speed } from './notebook';
 
 /**
  * Keeping the plan's pacing from drifting.
@@ -64,7 +64,7 @@ export function fixPace(previous: Notebook | null, revised: Notebook, rules: Pac
 export function earlySteps(previous: Notebook, revised: Notebook, now: Moment): number {
   let early = 0;
   for (const thread of previous.threads) {
-    const next = nextStep(thread, now);
+    const next = nextStep(thread, threadMoment(previous, thread, now));
     const after = revised.threads.find(t => t.id === thread.id);
     if (!after) continue;
     thread.steps.forEach((step, i) => {

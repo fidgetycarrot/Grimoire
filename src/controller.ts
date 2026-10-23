@@ -4,11 +4,12 @@ import { conversation, fingerprints, newestMatching, covers, planHistory, readab
 import { splitOoc } from './ooc';
 import { askJson, askModel, ModelError, type Ask } from './model';
 import { buildNote, liveClock, paceLine, type ClockSources } from './note';
-import { dueThreads, fillReplies, keepTimes, mergeRevision, NotebookError, partProgress, stamp, validateNotebook, waitsFor, withoutTimes, type Moment, type Notebook, type Pace, type Preferences } from './notebook';
+import { dueThreads, fillReplies, isNewArc, keepTimes, mergeRevision, NotebookError, partProgress, stamp, validateNotebook, waitsFor, withoutTimes, type Moment, type Notebook, type Pace, type Preferences } from './notebook';
 import { checkupMessages, creationMessages, digestMessages, talkMessages, type Material } from './prompts';
 import { applyChanges, describeChanges, openExchange } from './talk';
 import { checkPush, launchPush, PUSH_KINDS, secretsLeft, type PushKind } from './push';
-import { earlySteps, enforcePace, fixPace } from './pacing';
+import { earlySteps, fixPace, paceProblems, type PaceRules } from './pacing';
+import { fixLead, leadProblems, openArc } from './lead';
 import { LORE_ROOM, NO_LORE, pickLore, toEntry, type Lore, type LoreEntry, type LoreRoom } from './lore';
 import { plain, plainBlock, tidyNotebook } from './tidy';
 import { applyQuick, quickError, quickQuestions, quickState } from './quick';
@@ -69,7 +70,20 @@ interface Live { state: ChatState; turns: Turn[]; prints: string[]; index: numbe
 
 function validPreferences(value: unknown): Preferences {
   const v = record(value);
-  return { tone: ['light', 'balanced', 'dark'].includes(v.tone as string) ? v.tone as Preferences['tone'] : 'balanced', twist: v.twist !== false };
+  const shape = v.shape === 'conflict' || v.shape === 'kishotenketsu' ? v.shape : 'auto';
+  return { tone: ['light', 'balanced', 'dark'].includes(v.tone as string) ? v.tone as Preferences['tone'] : 'balanced', twist: v.twist !== false, shape, lockShape: shape !== 'auto' && v.lockShape === true };
+}
+/**
+ * The story rules an update must keep: pacing, and a main storyline in the
+ * chosen shape at the start of each part. A first answer that breaks one is
+ * sent back; a second gets the plainest fix from code.
+ */
+function storyRules(previous: Notebook | null, revised: Notebook, round: number, pace: PaceRules, prefs: Preferences): Notebook {
+  if (round === 1) {
+    const problems = [...paceProblems(previous, revised, pace), ...leadProblems(previous, revised, prefs)];
+    if (problems.length) throw new NotebookError(problems.join(' '), 'The update broke a story rule, so it was sent back once.');
+  }
+  return fixLead(previous, round === 1 ? revised : fixPace(previous, revised, pace), prefs);
 }
 /**
  * Keep the base version, the newest full update, and the most recent ones.
@@ -389,9 +403,10 @@ export class NotebookController {
             round++;
             const output = record(value);
             const first = validateNotebook(tidyNotebook(output.notebook));
-            if (round === 1) enforcePace(null, first);
+            const ruled = storyRules(null, first, round, {}, state.preferences);
             const notes = pin ? (Array.isArray(output.notes) ? output.notes : []).map(n => plain(n, TALK_LIMITS.note)).filter(Boolean).slice(0, 4) : [];
-            return { notebook: withoutTimes(round === 1 ? first : fixPace(null, first)), recipe: validateRecipe(output.tracker).recipe, notes };
+            // The story opens now: the main storyline's first moment is due with the first reply.
+            return { notebook: openArc(withoutTimes(ruled), 'story'), recipe: validateRecipe(output.tracker).recipe, notes };
           }, signal);
           await this.serial(chatId, async () => {
             const current = await this.load(chatId) ?? state;
@@ -480,8 +495,10 @@ export class NotebookController {
           let revised = validateNotebook(tidyNotebook(output.notebook, base.notebook));
           // Pacing rules: the first answer that breaks one is sent back; a second gets the plainest fix.
           const rules = { speedUps: Object.fromEntries(Object.entries(record(output.speedUps)).map(([k, v]) => [k, typeof v === 'string' ? v : ''])) };
-          if (round === 1) enforcePace(base.notebook, revised, rules); else revised = fixPace(base.notebook, revised, rules);
+          revised = storyRules(base.notebook, revised, round, rules, state.preferences);
           let merged = mergeRevision(base.notebook, revised, live.moment);
+          // A new part of the story opens with its main storyline's first moment.
+          if (isNewArc(base.notebook, merged)) merged = openArc(merged, 'chapter');
           // Time only moves forward. A clock that went back keeps the time from before the check-up;
           // tracker-owned parts are read again below either way.
           if (absoluteHours(liveClock(merged.clock, live.values, live.types).clock) < absoluteHours(live.clock)) merged = { ...merged, clock: live.clock };
@@ -579,7 +596,7 @@ export class NotebookController {
             if (proposed) {
               let revised = validateNotebook(tidyNotebook(proposed, base.notebook));
               if (kind) revised = launchPush(revised, checkPush(base.notebook, revised, output.push, kind));
-              if (round === 1) enforcePace(base.notebook, revised, { playerAsked: true }); else revised = fixPace(base.notebook, revised, { playerAsked: true });
+              revised = storyRules(base.notebook, revised, round, { playerAsked: true }, state.preferences);
               // A new chapter may open after a jump in time. Only the parts of the clock Grimoire owns move; the narrator is told.
               if (kind === 'chapter') skip = Math.min(720, Math.max(0, Math.round(Number(output.skipHours) || 0)));
               if (skip) {
@@ -588,6 +605,7 @@ export class NotebookController {
                 moment = { ...live.moment, hours: absoluteHours(clock) };
               }
               notebook = { ...mergeRevision(base.notebook, revised, moment), ...(skip ? { clock } : {}) };
+              if (isNewArc(base.notebook, notebook)) notebook = openArc(notebook, 'chapter');
             }
             return { reply: kind ? pushReply(kind, skip) : reply, asked, notebook, kind, skip, note: !asked && pinning ? plain(output.note, TALK_LIMITS.note) : '' };
           }, signal);
@@ -678,6 +696,17 @@ export class NotebookController {
   // ----- Player controls ---------------------------------------------------------
   async setEnabled(chatId: string, enabled: boolean) {
     return this.serial(chatId, async () => { const state = await this.load(chatId); if (!state?.versions.length) throw new Error('Write a notebook for this chat first.'); state.enabled = enabled; await this.save(state); });
+  }
+  /** Keep one story shape for the whole chat, or let Grimoire choose. Check-ups apply it. */
+  async setShape(chatId: string, shape: unknown, lockShape: unknown) {
+    return this.serial(chatId, async () => {
+      const state = await this.load(chatId);
+      if (!state) throw new Error('Write a notebook for this chat first.');
+      const wanted = shape === 'auto' ? state.preferences.shape : shape;
+      state.preferences = validPreferences({ ...state.preferences, shape: wanted, lockShape: shape !== 'auto' && lockShape === true });
+      await this.save(state); this.changed();
+      return state.preferences;
+    });
   }
   async setPace(chatId: string, pace: unknown) {
     if (!PACES.includes(pace as Pace)) throw new Error('Choose auto, quiet, or fast.');

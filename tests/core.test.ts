@@ -151,7 +151,8 @@ describe('the notebook', () => {
 });
 
 describe('the note before each reply', () => {
-  const base = () => stamp(validateNotebook(sampleNotebook()), absoluteHours({ day: 1, hour: 18 }));
+  // Without a main storyline (an older notebook): every storyline is treated alike.
+  const base = () => stamp(validateNotebook({ ...sampleNotebook(), arc: { ...sampleNotebook().arc, main: '' } }), absoluteHours({ day: 1, hour: 18 }));
   const note = (pace: 'auto' | 'quiet' | 'fast', hoursLater: number, extra: Partial<Parameters<typeof buildNote>[0]> = {}, nb = base()) => {
     const now = absoluteHours({ day: 1, hour: 18 }) + hoursLater;
     return buildNote({ notebook: nb, pace, clock: { day: Math.floor(now / 24), hour: now % 24, label: '' }, now, recent: 'Mira looks up from the chain.', ...extra });
@@ -189,7 +190,7 @@ describe('the note before each reply', () => {
     expect(text).toContain('a big moment just happened');
     expect(text).not.toContain('A shout from the manor');
     const stalled = base(); stalled.rhythm = 'stalled';
-    expect(note('auto', 1, {}, stalled)).toContain('Let an existing thread move');
+    expect(note('auto', 1, {}, stalled)).toContain('Move the story now');
   });
   test('nothing is due before its time, and a time skip is told once', () => {
     expect(note('auto', 1)).not.toContain('Developments that are due');
@@ -440,7 +441,7 @@ describe('arc shapes and breadcrumbs', () => {
   const { waitsFor, holdTurn } = require('../src/notebook');
   const { tidyNotebook } = require('../src/tidy');
   const waits = waitsFor('medium', 'auto');
-  const base = () => stamp(validateNotebook(sampleNotebook()), { hours: 42, reply: 10 });
+  const base = () => stamp(validateNotebook({ ...sampleNotebook(), arc: { ...sampleNotebook().arc, main: '' } }), { hours: 42, reply: 10 });
   const note = (nb: any, reply: number, hours = 42) => buildNote({ notebook: nb, pace: 'auto', clock: { day: 1, hour: 18, label: '' }, now: { hours, reply, waits }, recent: 'Mira' });
   test('a detail is planted without its meaning, then brought back much later with it', () => {
     const nb = base();
@@ -489,7 +490,7 @@ describe('arc shapes and breadcrumbs', () => {
     raw.arc = { shape: 'Kishōtenketsu', stage: 'Development', turn: '' };
     raw.seeds = [{ id: 'Green Wax', detail: 'Green wax.', payoff: 'Oswin.', pays: 'The stolen ring', status: 'mentioned' }];
     const tidy = validateNotebook(tidyNotebook(raw));
-    expect(tidy.arc).toEqual({ shape: 'kishotenketsu', stage: 'sho', turn: '' });
+    expect(tidy.arc).toEqual({ shape: 'kishotenketsu', stage: 'sho', turn: '', main: '' });
     expect(tidy.seeds[0]).toMatchObject({ id: 'green-wax', pays: 'stolen-ring', status: 'planted' });
     // Older notebooks without an arc or seeds still load.
     const { arc: _a, seeds: _s, ...old } = sampleNotebook() as any;

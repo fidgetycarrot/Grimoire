@@ -28,7 +28,7 @@ export const PUSH_ASKS: Record<PushKind, string> = {
   secret: 'A secret starts to surface: something still in hiddenTruth (never anything in cameOut, which the player already knows), or what a planted breadcrumb really means, begins to come out.',
   consequence: 'Something catches up with the player: a consequence of something that already happened in the chat, or of a storyline left alone, arrives.',
   surprise: 'Choose whatever established thing would move this story best right now.',
-  chapter: 'Start a new chapter. Wrap up what is spent (close threads with a reason; keep anything still alive), then open the next part of the story from where things stand now: what people want now, what is unresolved, what the player set in motion. Set a new story question if the old one is answered or tired, and set arc.stage to the first stage of its shape. If a jump in time would give the chapter a fresh start, set "skipHours" (up to 720); otherwise 0.',
+  chapter: 'Start a new chapter. Wrap up what is spent (close threads with a reason; keep anything still alive), then open the next part of the story from where things stand now: what people want now, what is unresolved, what the player set in motion. Set a new story question if the old one is answered or tired, set arc.stage to the first stage of its shape, and set arc.main to the main storyline of the chapter: its first waiting step is the opening moment that draws the player in, arriving with the next reply. If a jump in time would give the chapter a fresh start, set "skipHours" (up to 720); otherwise 0.',
 };
 
 const ALLOWED: Record<PushKind, PushTie['kind'][]> = {

@@ -29,7 +29,12 @@ export interface Story { question: string; stakes: string; direction: string; hi
  */
 export type Shape = 'conflict' | 'kishotenketsu';
 export const STAGES: Record<Shape, readonly string[]> = { conflict: ['setup', 'rising', 'climax', 'resolution'], kishotenketsu: ['ki', 'sho', 'ten', 'ketsu'] };
-export interface Arc { shape: Shape; stage: string; /** Kishōtenketsu: what the turn is. Secret; the narrator learns it only at the turn. */ turn: string; /** Code-owned: the reply this part of the story began at. */ startReply?: number }
+export interface Arc {
+  shape: Shape; stage: string; /** Kishōtenketsu: what the turn is. Secret; the narrator learns it only at the turn. */ turn: string;
+  /** The thread that is this part's main storyline: it carries the story question, and the note keeps it in front. */ main: string;
+  /** Code-owned: the reply this part of the story began at. */ startReply?: number;
+  /** Code-owned: this part opened the story, or a later chapter. Its opening stretch moves the main storyline briskly. */ opening?: 'story' | 'chapter';
+}
 /**
  * A breadcrumb: an ordinary-looking detail mentioned in passing now and paid
  * off later. The narrator sees only the detail when planting it; what it
@@ -46,7 +51,8 @@ export interface Notebook {
   version: 1; story: Story; arc: Arc; people: Person[]; threads: Thread[]; beats: Beat[]; seeds: Seed[];
   events: string[]; clock: StoryClock; rhythm: Rhythm; summary: string;
 }
-export interface Preferences { tone: 'light' | 'balanced' | 'dark'; twist: boolean }
+export type ShapeChoice = Shape | 'auto';
+export interface Preferences { tone: 'light' | 'balanced' | 'dark'; twist: boolean; /** The shape the story starts with; auto lets the model choose. */ shape: ShapeChoice; /** Keep that shape for every part of the story. */ lockShape: boolean }
 export const LIMITS = Object.freeze({ people: 24, threads: 12, steps: 6, beats: 16, seeds: 12, events: 40, truths: 12, text: 600, short: 160 });
 
 const ID = /^[a-z0-9][a-z0-9-]{0,40}$/;
@@ -176,7 +182,8 @@ export function validateNotebook(value: unknown): Notebook {
   }), 'seeds');
   return {
     version: 1,
-    arc: { shape, stage: stage as string, turn: text(arcInput.turn, 'arc.turn'), ...(count(arcInput.startReply) !== undefined ? { startReply: count(arcInput.startReply) } : {}) },
+    arc: { shape, stage: stage as string, turn: text(arcInput.turn, 'arc.turn'), main: typeof arcInput.main === 'string' && threadIds.has(arcInput.main) ? arcInput.main : '',
+      ...(count(arcInput.startReply) !== undefined ? { startReply: count(arcInput.startReply) } : {}), ...(arcInput.opening === 'story' || arcInput.opening === 'chapter' ? { opening: arcInput.opening } : {}) },
     seeds,
     story: { question: text(story.question, 'story.question', LIMITS.text, false), stakes: text(story.stakes, 'story.stakes'), direction: text(story.direction, 'story.direction'),
       hiddenTruth: list(story.hiddenTruth, 'story.hiddenTruth', LIMITS.truths).map((x, i) => text(x, `story.hiddenTruth[${i}]`, LIMITS.text, false)), twist: text(story.twist, 'story.twist'),
@@ -244,7 +251,7 @@ export function keepTimes(previous: Notebook, edited: Notebook, now: number | Mo
 /** Drop any times a model wrote. Only code records when things began or happened. */
 export function withoutTimes(notebook: Notebook): Notebook {
   // Quick-check flags go too: a check-up or an edit has the final say.
-  const { startReply: _arcStart, ...arc } = notebook.arc;
+  const { startReply: _arcStart, opening: _opening, ...arc } = notebook.arc;
   return { ...notebook, arc, story: { ...notebook.story, cameOut: notebook.story.cameOut.map(({ text }) => ({ text })) }, seeds: notebook.seeds.map(({ plantedAt: _p, paidAt: _q, echoAt: _e, quick: _k, ...seed }) => seed), beats: notebook.beats.map(({ quick: _k, ...beat }) => beat),
     threads: notebook.threads.map(({ startAt: _start, startReply: _reply, ...thread }) => ({ ...thread, steps: thread.steps.map(({ at: _at, atReply: _atReply, quick: _k, ...step }) => step) })) };
 }
@@ -328,9 +335,40 @@ export function holdStage(previous: Notebook, revised: Notebook, m: Moment): Not
 }
 /** The part keeps the reply it began at, unless a new part began. */
 function carryArc(previous: Notebook, arc: Arc): Arc {
-  const { startReply: _s, ...rest } = arc;
+  const { startReply: _s, opening: _o, ...rest } = arc;
   if (previous.arc.shape !== arc.shape || (STAGES[arc.shape].indexOf(arc.stage) === 0 && STAGES[arc.shape].indexOf(previous.arc.stage) > 0)) return rest;
-  return previous.arc.startReply !== undefined ? { ...rest, startReply: previous.arc.startReply } : rest;
+  return { ...rest, ...(previous.arc.startReply !== undefined ? { startReply: previous.arc.startReply } : {}), ...(previous.arc.opening ? { opening: previous.arc.opening } : {}) };
+}
+
+/**
+ * The opening stretch: the first replies of the story (two steady waits,
+ * about 30 at the default), or of a later chapter (one steady wait). The
+ * main storyline moves briskly through it so the player has a story to step
+ * into, not one to go looking for.
+ */
+export function openingLength(notebook: Notebook, m: Moment): number | null {
+  if (!notebook.arc.opening || !m.waits) return null;
+  return m.waits.steady * (notebook.arc.opening === 'story' ? 2 : 1);
+}
+export function inOpening(notebook: Notebook, m: Moment): boolean {
+  const length = openingLength(notebook, m);
+  return length !== null && m.reply !== undefined && notebook.arc.startReply !== undefined && m.reply - notebook.arc.startReply < length;
+}
+/** The main storyline during the opening stretch waits half as long between steps. */
+export function threadMoment(notebook: Notebook, thread: Thread, now: number | Moment): Moment {
+  const m = moment(now);
+  if (thread.id !== notebook.arc.main || !m.waits || !inOpening(notebook, m)) return m;
+  return { ...m, waits: { urgent: m.waits.urgent, steady: Math.max(m.waits.urgent, Math.ceil(m.waits.steady / 2)), slow: Math.max(m.waits.urgent, Math.ceil(m.waits.slow / 2)) } };
+}
+/** How many replies a due step has waited past its turn (by replies; 0 when only story time made it due). */
+export function overdue(notebook: Notebook, thread: Thread, now: number | Moment): number {
+  const m = threadMoment(notebook, thread, now), index = thread.steps.findIndex(s => s.status === 'waiting');
+  if (index < 0 || m.reply === undefined || !m.waits) return 0;
+  const from = thread.steps.slice(0, index).reverse().find(s => s.atReply !== undefined)?.atReply ?? thread.startReply;
+  if (from === undefined) return 0;
+  // A step made due at once (an opening moment) counts from when it began.
+  const wait = thread.steps[index].afterHours === 0 ? 0 : m.waits[thread.speed];
+  return Math.max(0, m.reply - from - wait);
 }
 
 /** The next step of a thread, and whether enough story time, or enough replies, have passed for it. */
@@ -349,6 +387,6 @@ export function nextStep(thread: Thread, now: number | Moment): { step: Step; du
   return { step, due: byTime || byReplies };
 }
 export function dueThreads(notebook: Notebook, now: number | Moment): Array<{ thread: Thread; step: Step }> {
-  return notebook.threads.flatMap(thread => { const next = nextStep(thread, now); return next?.due ? [{ thread, step: next.step }] : []; });
+  return notebook.threads.flatMap(thread => { const next = nextStep(thread, threadMoment(notebook, thread, now)); return next?.due ? [{ thread, step: next.step }] : []; });
 }
 export const nowOf = (notebook: Notebook) => absoluteHours(notebook.clock);
