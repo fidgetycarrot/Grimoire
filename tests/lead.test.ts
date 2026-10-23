@@ -77,7 +77,7 @@ describe('the note leads with the main storyline', () => {
     expect(text).not.toContain('bring it to them');
   });
   test('an urgent side storyline still presses in', () => {
-    const text = note(opened(), 10, { now: { hours: 50, reply: 10, waits } });
+    const text = note(opened(), 12, { now: { hours: 50, reply: 12, waits } });
     expect(text).toContain('Side storylines that are due');
     expect(text).toContain('Shutters bang');
   });
@@ -95,5 +95,22 @@ describe('the note leads with the main storyline', () => {
   test('it steps back for swipe guidance and intimate scenes', () => {
     expect(note(opened(), 12, { guided: true })).not.toContain('main storyline');
     expect(note(opened(), 12, { intimate: true })).not.toContain('A shout from the manor');
+  });
+});
+
+describe('an opponent in every conflict part', () => {
+  test('a conflict part’s main storyline must name someone in it', () => {
+    const nb = validateNotebook({ ...sampleNotebook(), arc: { shape: 'conflict', stage: 'setup', turn: '', main: 'stolen-ring' } });
+    expect(leadProblems(null, nb, prefs())).toEqual([]);
+    nb.threads[0].people = [];
+    expect(leadProblems(null, nb, prefs()).join(' ')).toContain('needs an opponent');
+    expect(leadProblems(null, { ...nb, arc: { ...nb.arc, shape: 'kishotenketsu', stage: 'ki' } }, prefs())).toEqual([]);
+  });
+});
+
+describe('problems take time', () => {
+  test('every note tells the narrator not to fix things at once', () => {
+    expect(note(opened(), 10)).toContain('Problems take time. Nothing gets solved in the scene it comes up in');
+    expect(note(opened(), 10, { guided: true })).toContain('Problems take time');
   });
 });

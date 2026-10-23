@@ -262,7 +262,7 @@ export function setup(ctx: SpindleFrontendContext) {
       labeled('Keep one story shape for this chat', kept, 'If this part of the story already has the other shape, the change starts with the next part.'), keep, el('div', 'gm-sub'), remove);
     return d.root;
   }
-  const QUICK_WORDS: Array<[RegExp, string]> = [[/^due_/, 'Planned development shown'], [/^moment_/, 'Possible moment happened'], [/^detail_mentioned$/, 'Breadcrumb mentioned'], [/^echo_heard$/, 'Echo heard'], [/^callback_/, 'Breadcrumb paid off'], [/^fits_/, 'Storyline still fits'], [/^truth_/, 'Secret came out'], [/^story_shift$/, 'Change of direction'], [/^rushing$/, 'Rushing'], [/^intimate$/, 'Intimate scene'], [/^new_turn$/, 'Something new']];
+  const QUICK_WORDS: Array<[RegExp, string]> = [[/^due_/, 'Planned development shown'], [/^moment_/, 'Possible moment happened'], [/^detail_mentioned$/, 'Breadcrumb mentioned'], [/^echo_heard$/, 'Echo heard'], [/^callback_/, 'Breadcrumb paid off'], [/^fits_/, 'Storyline still fits'], [/^truth_/, 'Secret came out'], [/^story_shift$/, 'Change of direction'], [/^rushing$/, 'Rushing'], [/^intimate$/, 'Intimate scene'], [/^new_turn$/, 'Something new'], [/^new_problem$/, 'New problem'], [/^easy_fix$/, 'Solved too easily']];
   const RHYTHM_WORDS: Record<string, string> = { calm: 'calm', rising: 'building', peak: 'big moment', aftermath: 'aftermath', stalled: 'stalled' };
   const STAGE_WORDS: Record<string, string> = { setup: 'setup', rising: 'rising action', climax: 'climax', resolution: 'resolution', ki: 'introduction', sho: 'development', ten: 'the turn', ketsu: 'bringing it together' };
   const part = (title: string) => { const s = el('section', 'gm-stack gm-part'); s.append(el('h4', '', title)); return s; };

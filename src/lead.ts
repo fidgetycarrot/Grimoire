@@ -36,6 +36,7 @@ export function leadProblems(previous: Notebook | null, revised: Notebook, prefs
   if (fresh) {
     if (!ready(main)) problems.push('Set arc.main to the id of this part\'s main storyline: the open thread that carries the story question and that the player is clearly in. Its first waiting step is the opening moment that draws the player in; it arrives at once.');
     else if (main.speed === 'slow') problems.push(`The main storyline "${main.id}" can't be slow at the start of a part. Make it steady or urgent.`);
+    else if (revised.arc.shape === 'conflict' && !main.people.length) problems.push(`The main storyline "${main.id}" needs an opponent: a person or group in "people" whose want collides with the player character's, listed in the storyline's people.`);
   }
   // Within a part, a main storyline that ran out is replaced by code (fixLead), so an ordinary update is never sent back for it.
   return problems;
@@ -83,7 +84,7 @@ export function openArc(notebook: Notebook, kind: 'story' | 'chapter'): Notebook
   return { ...notebook, arc: { ...notebook.arc, opening: kind }, threads: notebook.threads.map(thread => thread.id !== notebook.arc.main || begun ? thread : { ...thread, steps: thread.steps.map(step => {
     if (step.status !== 'waiting' || !first) return step;
     first = false;
-    return { ...step, afterHours: 0 };
+    return { ...step, afterHours: 0, now: true as const };
   }) }) };
 }
 

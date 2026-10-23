@@ -477,7 +477,8 @@ function validateNotebook(value) {
         status: choice(s.status, ["waiting", "shown", "offscreen", "skipped"], `${p}.status`, "waiting"),
         ...typeof at === "number" && Number.isFinite(at) ? { at } : {},
         ...count(s.atReply) !== undefined ? { atReply: count(s.atReply) } : {},
-        ...s.quick === true ? { quick: true } : {}
+        ...s.quick === true ? { quick: true } : {},
+        ...s.now === true ? { now: true } : {}
       };
     }), `${path}.steps`);
     const peopleIds = list(t.people, `${path}.people`, 8).map((x, j) => id(x, `${path}.people[${j}]`)).filter((x) => personIds.has(x));
@@ -598,7 +599,7 @@ function mergeRevision(previous, revised, now) {
     return { ...thread, ...old?.startAt !== undefined ? { startAt: old.startAt } : {}, ...old?.startReply !== undefined ? { startReply: old.startReply } : {}, steps: thread.steps.map((step) => {
       const before = old?.steps.find((s) => s.id === step.id);
       if (step.status === "waiting")
-        return step;
+        return before?.now && before.status === "waiting" && step.afterHours === 0 ? { ...step, now: true } : step;
       return { ...step, ...before?.at !== undefined ? { at: before.at } : {}, ...before?.atReply !== undefined ? { atReply: before.atReply } : {} };
     }) };
   }) }, now);
@@ -733,6 +734,9 @@ function overdue(notebook, thread, now) {
   const wait = thread.steps[index].afterHours === 0 ? 0 : m.waits[thread.speed];
   return Math.max(0, m.reply - from - wait);
 }
+function minGap(waits, speed) {
+  return Math.max(1, Math.ceil(waits[speed] / 3));
+}
 function nextStep(thread, now) {
   if (thread.status !== "open")
     return null;
@@ -742,9 +746,11 @@ function nextStep(thread, now) {
   const m = moment(now), earlier = thread.steps.slice(0, index).reverse();
   const base = Math.min(earlier.find((step) => step.at !== undefined)?.at ?? thread.startAt ?? m.hours, m.hours);
   const step = thread.steps[index];
-  const byTime = m.hours >= base + step.afterHours;
   const fromReply = earlier.find((step) => step.atReply !== undefined)?.atReply ?? thread.startReply;
-  const byReplies = m.reply !== undefined && m.waits !== undefined && fromReply !== undefined && m.reply - fromReply >= m.waits[thread.speed];
+  const since = m.reply !== undefined && fromReply !== undefined ? m.reply - fromReply : undefined;
+  const gap = step.now || since === undefined || !m.waits ? true : since >= minGap(m.waits, thread.speed);
+  const byTime = m.hours >= base + step.afterHours && gap;
+  const byReplies = since !== undefined && m.waits !== undefined && since >= m.waits[thread.speed];
   return { step, due: byTime || byReplies };
 }
 function dueThreads(notebook, now) {
@@ -818,6 +824,7 @@ var STAGE = {
 var INTIMATE = "Pace: an intimate scene is under way. Let it play out at its own pace, for as long as the player wants. Nothing from outside interrupts it: planned developments wait until it is over.";
 var GUIDED = "The player gave guidance for this reply. It comes first: follow it, and where anything below disagrees, the guidance wins. No new developments this time.";
 var DEEPENING = "Pace: the scene is deepening. Let it grow through what people say and do; there is no need to escalate.";
+var PROBLEMS = "Problems take time. Nothing gets solved in the scene it comes up in: a solution costs something, takes more than one step, and can fail. Nobody produces the money, the answer, the rescue, or the perfect plan out of nowhere, and no one fixes the player's trouble for them. Let problems weigh on people and grow until they are dealt with through effort.";
 var OPENING = "The story is just starting: keep the main storyline in front and moving, and keep side matters small for now.";
 var BRING_AFTER = 2;
 var PLANT_GAP = 4;
@@ -931,9 +938,10 @@ function buildNote(input) {
   if (newcomer && lines.length < 16)
     lines.push(`Someone who could appear if it fits: ${newcomer.name}${newcomer.role ? `, ${newcomer.role}` : ""}. Wants ${newcomer.wants || "something of their own"}.`);
   const sheets = present.filter((p) => p.sheet || p.own).slice(0, 3).map((p) => `${p.name}:${p.own ? ` ${end(p.own)}` : ""}${p.sheet ? ` ${end(p.sheet)}` : ""}`.slice(0, 2600));
-  const rules = "The latest messages decide what actually happened; skip anything they have made impossible. Never write the player character's actions, words, thoughts, or feelings. Keep secrets hidden and let them show only through small details.";
+  const rules = `The latest messages decide what actually happened; skip anything they have made impossible. Never write the player character's actions, words, thoughts, or feelings. Keep secrets hidden and let them show only through small details.
+` + PROBLEMS;
   while (lines.length > 4 && lines.join(`
-`).length + rules.length + 1 > 2400)
+`).length + rules.length + 1 > 2800)
     lines.pop();
   const cast = sheets.length ? `
 Who they are, in full (play them true to this, and let it show in what they do, not in explanations):
@@ -1005,7 +1013,7 @@ function launchPush(notebook, push) {
       if (step.status !== "waiting" || !first)
         return step;
       first = false;
-      return { ...step, afterHours: 0 };
+      return { ...step, afterHours: 0, now: true };
     }) };
   }) };
 }
@@ -1184,7 +1192,7 @@ var SHAPE = `{
 var CRAFT = [
   "How to build it:",
   "1. Start from what the card already sets up: its premise, people, and any plot it begins. Build on it; do not replace it.",
-  "1a. Grimoire leads the story, so the player can simply play the scene in front of them and be carried along. Every part of the story has one main storyline (arc.main): the thread that carries the story question and that the player is clearly in. It opens at once with an inciting moment that draws the player in, its first waiting step, which arrives with the very next reply. For conflict, that is a job offered, a problem that lands, someone who needs something, something that just happened. For kishotenketsu, it is an invitation or a question worth following: someone new, a change, something unexplained, with no trouble needed. Build it from the card, the lore, and what people want; if the card already begins a plot, that is the main storyline. Give it four to six steps that build across the whole part: the first is the opening moment, later ones raise it, and the last is where the part comes to a head. Make it steady or urgent, never slow. Side storylines are smaller and grow around it. Leading is not deciding for the player: the world brings the story to them, and they choose what to do.",
+  "1a. Grimoire leads the story, so the player can simply play the scene in front of them and be carried along. Every part of the story has one main storyline (arc.main): the thread that carries the story question and that the player is clearly in. It opens at once with an inciting moment that draws the player in, its first waiting step, which arrives with the very next reply. For conflict, that is a job offered, a problem that lands, someone who needs something, something that just happened. For kishotenketsu, it is an invitation or a question worth following: someone new, a change, something unexplained, with no trouble needed. Build it from the card, the lore, and what people want; if the card already begins a plot, that is the main storyline. Give it four to six steps that build across the whole part: the first is the opening moment, later ones raise it, and the last is where the part comes to a head. Make it steady or urgent, never slow. In a conflict part, the main storyline has an opponent: a person or group in the notebook whose want collides with what the player character wants or needs, who has the means to act on it, acts offscreen between scenes, pushes harder when ignored, and does not fold in one scene; list them in its people. Problems in it resist easy fixes: each step makes things harder or costs something before anything gets better. Side storylines are smaller and grow around it. Leading is not deciding for the player: the world brings the story to them, and they choose what to do.",
   "1b. Some cards are not a person: a narrator, a game master, or a world, or a card left nearly blank so a lorebook can carry the setting. That card is the voice that runs the story, not a character in it: never add it to people or give it wants. Build the cast from the lore, the player's ideas, and the persona's world instead.",
   "2. Decide what is really going on: causes and motives before the chat began. Every thread and beat must follow from these, so the narrator never has to invent reasons on the spot.",
   "3. Give each important person a want and a current plan. They act on it offscreen too.",
@@ -1243,6 +1251,7 @@ ${LORE(input.lore) ? `- ${LORE(input.lore)}` : ""}${input.notes.length ? NOTES :
 - People invented in the chat: add them only if they matter (they act, recur, or tie into a thread). Mark people met once the player has met them.
 - Revise future beats and plans when the player's choices change what makes sense. Keep the pacing rules below: if waiting steps are packed too tightly (several threads peaking on the same night, steady steps hours apart), spread them out by raising afterHours on waiting steps. Change how the story gets somewhere, not why, unless the player has made the old why impossible. Do not force the player back onto an old plan.
 - Entries with "quick": true were marked after a reply by a fast reader. Confirm them by keeping them, or correct them if the chat does not support them (a step back to waiting, a beat back to possible, a seed back to waiting or planted).
+- Problems: a problem the player raised, or one that came up in the chat, becomes a storyline with its own steps unless it truly ended. If the chat solved a problem too easily (in a reply or two, at no real cost, through money, luck, or someone fixing it for the player), keep what happened, but it is not the end: give it a catch, a cost, a delay, or someone it angers, and make that a storyline. Problems are what move the story; do not let them evaporate.
 - Secrets that came out: once the chat shows the player has learned a hidden truth (or the twist), or it came out where they could see, move it word for word to story.cameOut and out of hiddenTruth (empty twist if it was the twist). From then on it is an established fact: rewrite people's "hint" and "doing", thread hints, and beats so nobody keeps acting as if it were still secret, and plan no more clues or reveal moments for it; build on it instead. A suspicion or a guess is not learning it. Never move anything back out of cameOut.
 - Sheets: keep each "sheet" true to how the person has actually been in the chat, and add what has changed (what they learned, how they now feel about the player character, what they did). Return a sheet only when it changes; leave it empty to keep it as it is. Someone who has become important gets a sheet; never more than six. Fill in "depth" for anyone who has none.
 - Voices: fill in "voice" for anyone who has none, and keep each one steady once set. Base it on who the person is (age, background, job, temperament, the card) and the moments where they sounded most like themselves, not on how the narrator has been writing everyone lately: narrators drift into one shared voice, and the notebook is how to pull them back out. If several people have started to sound alike, give each a clearly different voice.
@@ -1528,6 +1537,8 @@ function leadProblems(previous, revised, prefs) {
       problems.push("Set arc.main to the id of this part's main storyline: the open thread that carries the story question and that the player is clearly in. Its first waiting step is the opening moment that draws the player in; it arrives at once.");
     else if (main.speed === "slow")
       problems.push(`The main storyline "${main.id}" can't be slow at the start of a part. Make it steady or urgent.`);
+    else if (revised.arc.shape === "conflict" && !main.people.length)
+      problems.push(`The main storyline "${main.id}" needs an opponent: a person or group in "people" whose want collides with the player character's, listed in the storyline's people.`);
   }
   return problems;
 }
@@ -1559,7 +1570,7 @@ function openArc(notebook, kind) {
     if (step.status !== "waiting" || !first)
       return step;
     first = false;
-    return { ...step, afterHours: 0 };
+    return { ...step, afterHours: 0, now: true };
   }) }) };
 }
 function storyLeft(notebook) {
@@ -1965,6 +1976,16 @@ function quickQuestions(notebook, now) {
     instructions: "Is the latest reply an intimate or sexual scene that is still going on at the end of the reply?",
     criteria: { true: "Yes, an intimate or sexual scene is under way and has not ended.", false: "No, or it has ended." }
   };
+  questions.new_problem = {
+    type: "noul",
+    instructions: "Did the player's message or the latest reply bring up a new problem for the player character (a debt, a threat, a loss, someone against them, something at risk) that the open storylines do not already cover?",
+    criteria: { true: "Yes, a new problem came up.", false: "No new problem, or it is one the storylines already cover." }
+  };
+  questions.easy_fix = {
+    type: "noul",
+    instructions: "Did the latest reply solve a problem too easily: in one go, at no real cost, through money, luck, or someone fixing it for the player character?",
+    criteria: { true: "Yes, a problem was solved too easily.", false: "No, or the solution took real effort or cost something." }
+  };
   questions.rhythm = { type: "choice", instructions: "Which best describes the scene at the end of the latest reply?", criteria: RHYTHMS };
   questions.new_turn = {
     type: "noul",
@@ -2035,7 +2056,8 @@ function applyQuick(current, plan, result, now) {
   }
   const held = Object.entries(plan.marks).flatMap(([key, mark]) => mark.kind === "fits" && answers[key]?.type === "noul" && answers[key].noul <= QUICK.no ? [mark.thread] : []);
   const cameOut = Object.entries(plan.marks).some(([key, mark]) => mark.kind === "truth" && yes(answers[key]));
-  return { notebook, changed, marked, needsCheckup: yes(answers.new_turn) || held.length > 0 || cameOut, rushing: yes(answers.rushing), intimate: yes(answers.intimate), shifted: yes(answers.story_shift), held };
+  const problem = yes(answers.new_problem), easyFix = yes(answers.easy_fix);
+  return { notebook, changed, marked, needsCheckup: yes(answers.new_turn) || held.length > 0 || cameOut || problem || easyFix, problem, easyFix, rushing: yes(answers.rushing), intimate: yes(answers.intimate), shifted: yes(answers.story_shift), held };
 }
 function quickError(error) {
   const message = error instanceof Error ? error.message : String(error ?? "");
@@ -2378,7 +2400,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.17.4";
+var VERSION = "0.18.0";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -3566,7 +3588,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
             now = await this.live(state, messages);
           }
           if (outcome.needsCheckup)
-            extra = "Something new happened in the story";
+            extra = outcome.easyFix ? "A problem was solved too easily" : outcome.problem ? "A new problem came up" : "Something new happened in the story";
           const judged = live.prints.at(-1);
           state.intimateNow = outcome.intimate;
           if (outcome.intimate && judged && !state.intimate.includes(judged)) {

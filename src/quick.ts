@@ -87,6 +87,11 @@ export function quickQuestions(notebook: Notebook, now: number | Moment): QuickP
     criteria: { true: 'Yes, it hurried past things that needed room.', false: 'No, it took the time the scene needed, even if a lot happened.' } };
   questions.intimate = { type: 'noul', instructions: 'Is the latest reply an intimate or sexual scene that is still going on at the end of the reply?',
     criteria: { true: 'Yes, an intimate or sexual scene is under way and has not ended.', false: 'No, or it has ended.' } };
+  // Narrators like to fix the player's trouble at once. A new problem, or one solved too easily, gets a check-up to make it a storyline.
+  questions.new_problem = { type: 'noul', instructions: 'Did the player\'s message or the latest reply bring up a new problem for the player character (a debt, a threat, a loss, someone against them, something at risk) that the open storylines do not already cover?',
+    criteria: { true: 'Yes, a new problem came up.', false: 'No new problem, or it is one the storylines already cover.' } };
+  questions.easy_fix = { type: 'noul', instructions: 'Did the latest reply solve a problem too easily: in one go, at no real cost, through money, luck, or someone fixing it for the player character?',
+    criteria: { true: 'Yes, a problem was solved too easily.', false: 'No, or the solution took real effort or cost something.' } };
   questions.rhythm = { type: 'choice', instructions: 'Which best describes the scene at the end of the latest reply?', criteria: RHYTHMS };
   questions.new_turn = { type: 'noul', instructions: 'Did the latest exchange bring in something the story notes do not cover yet: a new named person who matters, a new problem or goal, a big change of place or time, or a choice that changes where the story is heading?',
     criteria: { true: 'Yes, something important is new.', false: 'No, it continues what the notes already cover.' } };
@@ -106,7 +111,7 @@ export function quickState(notebook: Notebook, clock: StoryClock, playerMessage:
 
 const yes = (answer: DecisionAnswer | undefined) => answer?.type === 'noul' && answer.noul >= QUICK.yes;
 
-export interface QuickOutcome { notebook: Notebook; changed: boolean; marked: number; needsCheckup: boolean; /** The reply hurried past things that needed room. */ rushing: boolean; /** An intimate scene is under way. */ intimate: boolean; /** The story changed direction: rework the notebook. */ shifted: boolean; /** Threads that clearly no longer fit for now. */ held: string[] }
+export interface QuickOutcome { notebook: Notebook; changed: boolean; marked: number; needsCheckup: boolean; /** A new problem came up that no storyline covers. */ problem: boolean; /** A problem was solved too easily. */ easyFix: boolean; /** The reply hurried past things that needed room. */ rushing: boolean; /** An intimate scene is under way. */ intimate: boolean; /** The story changed direction: rework the notebook. */ shifted: boolean; /** Threads that clearly no longer fit for now. */ held: string[] }
 /**
  * Apply answers onto the notebook as it is now (it may have changed while the
  * question was out). Only waiting steps and possible beats can be marked.
@@ -135,7 +140,8 @@ export function applyQuick(current: Notebook, plan: QuickPlan, result: DecisionR
   if (rhythm?.type === 'choice' && rhythm.confidence >= QUICK.rhythm && rhythm.choice in RHYTHMS && rhythm.choice !== notebook.rhythm) { notebook.rhythm = rhythm.choice as Rhythm; changed = true; }
   const held = Object.entries(plan.marks).flatMap(([key, mark]) => mark.kind === 'fits' && answers[key]?.type === 'noul' && (answers[key] as { noul: number }).noul <= QUICK.no ? [mark.thread] : []);
   const cameOut = Object.entries(plan.marks).some(([key, mark]) => mark.kind === 'truth' && yes(answers[key]));
-  return { notebook, changed, marked, needsCheckup: yes(answers.new_turn) || held.length > 0 || cameOut, rushing: yes(answers.rushing), intimate: yes(answers.intimate), shifted: yes(answers.story_shift), held };
+  const problem = yes(answers.new_problem), easyFix = yes(answers.easy_fix);
+  return { notebook, changed, marked, needsCheckup: yes(answers.new_turn) || held.length > 0 || cameOut || problem || easyFix, problem, easyFix, rushing: yes(answers.rushing), intimate: yes(answers.intimate), shifted: yes(answers.story_shift), held };
 }
 
 /** Fixed wording only: provider errors can echo what was sent. */

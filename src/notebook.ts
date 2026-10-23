@@ -10,7 +10,7 @@ export type Speed = 'urgent' | 'steady' | 'slow';
 export type StepStatus = 'waiting' | 'shown' | 'offscreen' | 'skipped';
 export type Rhythm = 'calm' | 'rising' | 'peak' | 'aftermath' | 'stalled';
 export type Pace = 'auto' | 'quiet' | 'fast';
-export interface Step { id: string; text: string; sign: string; afterHours: number; status: StepStatus; at?: number; /** Code-owned: how many replies the chat had when it happened. */ atReply?: number; /** Marked by a quick check; the next check-up confirms or corrects it. */ quick?: true }
+export interface Step { id: string; text: string; sign: string; afterHours: number; status: StepStatus; at?: number; /** Code-owned: how many replies the chat had when it happened. */ atReply?: number; /** Marked by a quick check; the next check-up confirms or corrects it. */ quick?: true; /** Code-owned: meant to arrive at once (an opening moment, a push), so no minimum gap. */ now?: true }
 export interface Thread {
   id: string; title: string; speed: Speed; why: string; hint: string; people: string[];
   status: 'open' | 'paused' | 'closed'; closedReason: string; ifFollowed: string; ifIgnored: string;
@@ -160,7 +160,7 @@ export function validateNotebook(value: unknown): Notebook {
       const s = record(raw), at = s.at, after = s.afterHours, p = `${path}.steps[${j}]`;
       if (typeof after !== 'number' || !Number.isFinite(after) || after < 0 || after > 24 * 365) fail(`${p}.afterHours must be a number of story hours.`);
       return { id: id(s.id, `${p}.id`), text: text(s.text, `${p}.text`, LIMITS.text, false), sign: text(s.sign, `${p}.sign`), afterHours: after as number,
-        status: choice(s.status, ['waiting', 'shown', 'offscreen', 'skipped'] as const, `${p}.status`, 'waiting'), ...(typeof at === 'number' && Number.isFinite(at) ? { at } : {}), ...(count(s.atReply) !== undefined ? { atReply: count(s.atReply) } : {}), ...(s.quick === true ? { quick: true as const } : {}) };
+        status: choice(s.status, ['waiting', 'shown', 'offscreen', 'skipped'] as const, `${p}.status`, 'waiting'), ...(typeof at === 'number' && Number.isFinite(at) ? { at } : {}), ...(count(s.atReply) !== undefined ? { atReply: count(s.atReply) } : {}), ...(s.quick === true ? { quick: true as const } : {}), ...(s.now === true ? { now: true as const } : {}) };
     }), `${path}.steps`);
     const peopleIds = list(t.people, `${path}.people`, 8).map((x, j) => id(x, `${path}.people[${j}]`)).filter(x => personIds.has(x));
     return {
@@ -242,7 +242,7 @@ export function mergeRevision(previous: Notebook, revised: Notebook, now: number
     const old = previous.threads.find(t => t.id === thread.id);
     return { ...thread, ...(old?.startAt !== undefined ? { startAt: old.startAt } : {}), ...(old?.startReply !== undefined ? { startReply: old.startReply } : {}), steps: thread.steps.map(step => {
       const before = old?.steps.find(s => s.id === step.id);
-      if (step.status === 'waiting') return step;
+      if (step.status === 'waiting') return before?.now && before.status === 'waiting' && step.afterHours === 0 ? { ...step, now: true as const } : step;
       return { ...step, ...(before?.at !== undefined ? { at: before.at } : {}), ...(before?.atReply !== undefined ? { atReply: before.atReply } : {}) };
     }) };
   }) }, now);
@@ -382,6 +382,8 @@ export function overdue(notebook: Notebook, thread: Thread, now: number | Moment
   return Math.max(0, m.reply - from - wait);
 }
 
+/** The fewest replies between two steps of a storyline: a third of its usual wait. */
+export function minGap(waits: Waits, speed: Speed): number { return Math.max(1, Math.ceil(waits[speed] / 3)); }
 /** The next step of a thread, and whether enough story time, or enough replies, have passed for it. */
 export function nextStep(thread: Thread, now: number | Moment): { step: Step; due: boolean } | null {
   if (thread.status !== 'open') return null;
@@ -392,9 +394,14 @@ export function nextStep(thread: Thread, now: number | Moment): { step: Step; du
   // (the notebook assumed noon, then the tracker said 11:20) counts from now.
   const base = Math.min(earlier.find(step => step.at !== undefined)?.at ?? thread.startAt ?? m.hours, m.hours);
   const step = thread.steps[index];
-  const byTime = m.hours >= base + step.afterHours;
   const fromReply = earlier.find(step => step.atReply !== undefined)?.atReply ?? thread.startReply;
-  const byReplies = m.reply !== undefined && m.waits !== undefined && fromReply !== undefined && m.reply - fromReply >= m.waits[thread.speed];
+  const since = m.reply !== undefined && fromReply !== undefined ? m.reply - fromReply : undefined;
+  // Story time alone isn't enough: a roleplay can spend a hundred replies in one story day, so steps planned
+  // an hour apart would all arrive at once. A step also waits a minimum number of replies after the last one,
+  // a third of its usual wait. An opening moment or a push arrives at once.
+  const gap = step.now || since === undefined || !m.waits ? true : since >= minGap(m.waits, thread.speed);
+  const byTime = m.hours >= base + step.afterHours && gap;
+  const byReplies = since !== undefined && m.waits !== undefined && since >= m.waits[thread.speed];
   return { step, due: byTime || byReplies };
 }
 export function dueThreads(notebook: Notebook, now: number | Moment): Array<{ thread: Thread; step: Step }> {

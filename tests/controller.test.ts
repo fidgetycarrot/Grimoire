@@ -404,7 +404,7 @@ describe('the quick check', () => {
     h.add('user', 'I look at the sky.'); h.add('assistant', `<div style="color:red">Shutters bang all along the street.</div>${tracker('Day 1, 18:10', 'The ferry')}`);
     await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
     const sent = h.decisionCalls[0];
-    expect(Object.keys(sent.questions)).toEqual(['due_1', 'moment_1', 'moment_2', 'detail_mentioned', 'fits_1', 'truth_1', 'story_shift', 'rushing', 'intimate', 'rhythm', 'new_turn']);
+    expect(Object.keys(sent.questions)).toEqual(['due_1', 'moment_1', 'moment_2', 'detail_mentioned', 'fits_1', 'truth_1', 'story_shift', 'rushing', 'intimate', 'new_problem', 'easy_fix', 'rhythm', 'new_turn']);
     expect(sent.questions.due_1.instructions).toContain('Shutters bang');
     expect(sent.state.latestReply).toContain('Shutters bang all along the street.');
     expect(sent.state.latestReply).not.toContain('style');
@@ -1323,5 +1323,24 @@ describe('when the story runs out', () => {
     const view = (await c.view('chat-1'))!;
     expect(view.spent).toBe(false);
     expect(view.notebook!.arc).toMatchObject({ main: 'new-trouble', opening: 'chapter' });
+  });
+});
+
+describe('problems that come up', () => {
+  test('a new problem, or one solved too easily, asks for a check-up that makes it a storyline', async () => {
+    const quickHost = (answer: Record<string, number>) => host({ decide: (input: any) => ({ answers: Object.fromEntries(Object.keys(input.questions).map(k => [k, k === 'rhythm' ? { type: 'choice', choice: 'calm', confidence: 0.9 } : { type: 'noul', noul: answer[k] ?? 0 }])) }) });
+    for (const [answer, reason] of [[{ new_problem: 0.9 }, 'A new problem came up'], [{ easy_fix: 0.85 }, 'A problem was solved too easily']] as const) {
+      const h = quickHost(answer);
+      const m = model({ create: created, checkup: (input: any) => ({ notebook: input.notebook, tracker: null }) });
+      h.add('assistant', `The ferry bell rings.${tracker('Day 1, 18:00', 'The ferry')}`);
+      await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 50, quick: { enabled: true, connectionId: '', model: '' } }, {});
+      const c = new NotebookController(h.api, undefined, () => {}, m.ask);
+      await c.create('chat-1', {}); await c.waitForJobs();
+      h.add('user', 'I owe a gang money.'); h.add('assistant', `Mira pays it off for you.${tracker('Day 1, 18:10', 'The ferry')}`);
+      await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+      const checkup = m.calls.find(x => x.task === 'grimoire-checkup-v1')!;
+      expect(checkup.input.reason).toBe(reason);
+      expect(checkup.messages[0].content).toContain('give it a catch, a cost, a delay, or someone it angers');
+    }
   });
 });

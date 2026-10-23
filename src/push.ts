@@ -69,7 +69,7 @@ export function launchPush(notebook: Notebook, push: Push): Notebook {
     return { ...thread, speed: busy ? (thread.speed === 'urgent' ? 'steady' : thread.speed === 'slow' ? 'steady' : thread.speed) : 'urgent', steps: thread.steps.map(step => {
       if (step.status !== 'waiting' || !first) return step;
       first = false;
-      return { ...step, afterHours: 0 };
+      return { ...step, afterHours: 0, now: true as const };
     }) };
   }) };
 }

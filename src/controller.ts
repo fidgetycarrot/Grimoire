@@ -963,7 +963,7 @@ export class NotebookController {
             state.versions = prune(state.versions);
             now = (await this.live(state, messages))!;
           }
-          if (outcome.needsCheckup) extra = 'Something new happened in the story';
+          if (outcome.needsCheckup) extra = outcome.easyFix ? 'A problem was solved too easily' : outcome.problem ? 'A new problem came up' : 'Something new happened in the story';
           // An intimate scene: its replies don't count toward storyline waits, and hurrying is the scene's own business.
           const judged = live.prints.at(-1);
           state.intimateNow = outcome.intimate;

@@ -165,7 +165,7 @@ describe('the note before each reply', () => {
     expect(text).not.toContain('gambling debt');
     expect(text).not.toContain('Oswin stole it');
     expect(text).toContain('Never write the player character');
-    expect(text.length).toBeLessThanOrEqual(2400);
+    expect(text.length).toBeLessThanOrEqual(2800);
   });
   test('quiet holds slower developments but lets urgent ones play out', () => {
     const quiet = note('quiet', 13);
@@ -305,7 +305,7 @@ describe('quick check answers', () => {
     nb.threads[1].steps[0].afterHours = 0;
     nb.beats[1].status = 'dropped';
     const plan = quickQuestions(nb, absoluteHours({ day: 1, hour: 18 }));
-    expect(Object.keys(plan.questions)).toEqual(['due_1', 'moment_1', 'detail_mentioned', 'fits_1', 'truth_1', 'story_shift', 'rushing', 'intimate', 'rhythm', 'new_turn']);
+    expect(Object.keys(plan.questions)).toEqual(['due_1', 'moment_1', 'detail_mentioned', 'fits_1', 'truth_1', 'story_shift', 'rushing', 'intimate', 'new_problem', 'easy_fix', 'rhythm', 'new_turn']);
     const out = applyQuick(nb, plan, { model: 'm', answers: { due_1: { type: 'noul', noul: 0.9 }, moment_1: { type: 'noul', noul: 0.69 }, rhythm: { type: 'choice', choice: 'nonsense', probabilities: {}, confidence: 1 }, new_turn: { type: 'noul', noul: 0.2 } } }, 99);
     expect(out.notebook.threads[1].steps[0]).toMatchObject({ status: 'shown', at: 99 });
     expect(out.notebook.beats[0].status).toBe('possible');
@@ -371,8 +371,11 @@ describe('replies as well as story time', () => {
     expect(waits).toEqual({ urgent: 4, steady: 15, slow: 40 });
     expect(nextStep(steady, { hours: 43, reply: 24, waits })!.due).toBe(false);
     expect(nextStep(steady, { hours: 43, reply: 25, waits })!.due).toBe(true);
-    // Story time still works alone, as before.
-    expect(nextStep(steady, { hours: 54, reply: 11, waits })!.due).toBe(true);
+    // Story time brings it sooner, but never closer than a third of the wait (5 replies) to the last step.
+    expect(nextStep(steady, { hours: 54, reply: 14, waits })!.due).toBe(false);
+    expect(nextStep(steady, { hours: 54, reply: 15, waits })!.due).toBe(true);
+    // An opening moment or a push comes at once.
+    expect(nextStep({ ...steady, steps: steady.steps.map((s, i) => i === 0 ? { ...s, now: true as const } : s) }, { hours: 54, reply: 11, waits })!.due).toBe(true);
     expect(nextStep(steady, 43)!.due).toBe(false);
   });
   test('fast pace halves the waits, and the size setting scales them', () => {
@@ -499,7 +502,7 @@ describe('arc shapes and breadcrumbs', () => {
   test('a long note drops extra lines, never its rules', () => {
     const nb: any = base(); nb.story.question = 'Q '.repeat(1100);
     const text = note(nb, 10);
-    expect(text.length).toBeLessThanOrEqual(2400 + 400);
+    expect(text.length).toBeLessThanOrEqual(2800 + 400);
     expect(text).toContain("Never write the player character's actions");
   });
 });
@@ -726,7 +729,7 @@ describe('keeping the pacing on plan', () => {
     const after = { ...before, threads: before.threads.map(t => t.id === 'stolen-ring' ? { ...t, steps: t.steps.map((s, i) => i < 2 ? { ...s, status: 'shown' as const } : s) } : t) };
     expect(earlySteps(before, after, { hours: 41, reply: 11, waits: paceWaits('medium', 'auto') })).toBe(2);
     // The step that was due is on plan.
-    expect(earlySteps(before, { ...after, threads: after.threads.map(t => t.id === 'stolen-ring' ? { ...t, steps: t.steps.map((s, i) => i === 0 ? s : { ...s, status: 'waiting' as const }) } : t) }, { hours: 60, reply: 11, waits: paceWaits('medium', 'auto') })).toBe(0);
+    expect(earlySteps(before, { ...after, threads: after.threads.map(t => t.id === 'stolen-ring' ? { ...t, steps: t.steps.map((s, i) => i === 0 ? s : { ...s, status: 'waiting' as const }) } : t) }, { hours: 60, reply: 15, waits: paceWaits('medium', 'auto') })).toBe(0);
   });
 });
 

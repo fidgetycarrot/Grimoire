@@ -64,6 +64,8 @@ const STAGE: Record<string, string> = {
 const INTIMATE = 'Pace: an intimate scene is under way. Let it play out at its own pace, for as long as the player wants. Nothing from outside interrupts it: planned developments wait until it is over.';
 const GUIDED = 'The player gave guidance for this reply. It comes first: follow it, and where anything below disagrees, the guidance wins. No new developments this time.';
 const DEEPENING = 'Pace: the scene is deepening. Let it grow through what people say and do; there is no need to escalate.';
+/** Narrators like to fix things for the player at once. Every note pushes back. */
+export const PROBLEMS = 'Problems take time. Nothing gets solved in the scene it comes up in: a solution costs something, takes more than one step, and can fail. Nobody produces the money, the answer, the rescue, or the perfect plan out of nowhere, and no one fixes the player\'s trouble for them. Let problems weigh on people and grow until they are dealt with through effort.';
 const OPENING = 'The story is just starting: keep the main storyline in front and moving, and keep side matters small for now.';
 /** Replies a due main-storyline step may wait before the world brings it to the player. */
 export const BRING_AFTER = 2;
@@ -193,9 +195,9 @@ export function buildNote(input: NoteInput): string {
   if (newcomer && lines.length < 16) lines.push(`Someone who could appear if it fits: ${newcomer.name}${newcomer.role ? `, ${newcomer.role}` : ''}. Wants ${newcomer.wants || 'something of their own'}.`);
   // Fuller sheets for the people here who have one, like short character cards: kept apart from the length limit above.
   const sheets = present.filter(p => p.sheet || p.own).slice(0, 3).map(p => `${p.name}:${p.own ? ` ${end(p.own)}` : ''}${p.sheet ? ` ${end(p.sheet)}` : ''}`.slice(0, 2600));
-  const rules = 'The latest messages decide what actually happened; skip anything they have made impossible. Never write the player character\'s actions, words, thoughts, or feelings. Keep secrets hidden and let them show only through small details.';
+  const rules = 'The latest messages decide what actually happened; skip anything they have made impossible. Never write the player character\'s actions, words, thoughts, or feelings. Keep secrets hidden and let them show only through small details.\n' + PROBLEMS;
   // Too long: drop whole lines from the end of the guidance, never the rules.
-  while (lines.length > 4 && lines.join('\n').length + rules.length + 1 > 2400) lines.pop();
+  while (lines.length > 4 && lines.join('\n').length + rules.length + 1 > 2800) lines.pop();
   const cast = sheets.length ? `\nWho they are, in full (play them true to this, and let it show in what they do, not in explanations):\n${sheets.join('\n')}` : '';
   return `${lines.join('\n')}${cast}\n${rules}`;
 }
