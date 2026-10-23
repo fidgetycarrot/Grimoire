@@ -1005,13 +1005,17 @@ function secretsLeft(notebook) {
 // src/lore.ts
 var LORE_ROOM = {
   create: { rules: 24000, rule: 6000, entries: 130000, entry: 8000, index: 16000, fill: true },
-  update: { rules: 15000, rule: 3000, entries: 1e4, entry: 4000, index: 9000 }
+  update: { rules: 15000, rule: 3000, entries: 14000, entry: 3000, index: 6000 }
 };
 var NO_LORE = { rules: [], entries: [], index: [], more: 0 };
 var hasLore = (lore) => lore.rules.length + lore.entries.length + lore.index.length > 0;
 var record4 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
 var strings = (v) => Array.isArray(v) ? v.filter((k) => typeof k === "string").map((k) => k.trim()).filter(Boolean) : [];
 var oneLine = (s) => s.replace(/\s+/g, " ").trim();
+function chapterOf(title) {
+  const m = /^(.{2,60}?)\s+[\u2013\u2014-]\s+(.+)$/.exec(title) ?? /^(.{2,40}?):\s+(.+)$/.exec(title);
+  return m ? { chapter: m[1].trim(), section: m[2].trim() } : { chapter: "", section: title };
+}
 function toEntry(raw, fallbackId) {
   const e = record4(raw);
   if (e.disabled === true || e.disable === true)
@@ -1021,25 +1025,28 @@ function toEntry(raw, fallbackId) {
     return null;
   const keys = strings(e.key ?? e.keys);
   const comment = typeof e.comment === "string" ? oneLine(e.comment) : "";
+  const title = comment || keys.slice(0, 3).join(", ") || oneLine(content).slice(0, 60);
   return {
     id: typeof e.id === "string" && e.id ? e.id : fallbackId,
-    title: comment || keys.slice(0, 3).join(", ") || oneLine(content).slice(0, 60),
+    title,
     keys,
     content,
     constant: e.constant === true,
     caseSensitive: e.case_sensitive === true,
     wholeWords: e.match_whole_words !== false,
-    regex: e.use_regex === true
+    regex: e.use_regex === true,
+    ...chapterOf(title)
   };
 }
+var escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+var word = (s, caseSensitive = false) => new RegExp(`(?<![\\p{L}\\p{N}])${escape(s)}(?![\\p{L}\\p{N}])`, `u${caseSensitive ? "" : "i"}`);
 function matcher(key, entry) {
   try {
     if (entry.regex) {
       const m = /^\/(.+)\/([a-z]*)$/s.exec(key);
       return m ? new RegExp(m[1], m[2].replace(/[gy]/g, "")) : new RegExp(key, entry.caseSensitive ? "" : "i");
     }
-    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return new RegExp(entry.wholeWords ? `(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])` : escaped, `u${entry.caseSensitive ? "" : "i"}`);
+    return entry.wholeWords ? word(key, entry.caseSensitive) : new RegExp(escape(key), `u${entry.caseSensitive ? "" : "i"}`);
   } catch {
     return null;
   }
@@ -1055,7 +1062,7 @@ function mentions(entry, text) {
   }
   return found;
 }
-function pickLore(all, focus, active, room) {
+function pickLore(all, focus, active, room, meaning) {
   const used = new Set;
   const rules = [], entries = [];
   let left = room.rules;
@@ -1067,16 +1074,27 @@ function pickLore(all, focus, active, room) {
     used.add(entry.id);
     left -= piece.length;
   }
+  const chapters = new Map;
+  if (!meaning)
+    for (const chapter of new Set(all.map((e) => e.chapter).filter((c) => c.length >= 4)))
+      chapters.set(chapter, focus.map((text) => word(chapter).test(text) ? 1 : 0));
   const scored = all.filter((e) => !e.constant).map((entry, order) => {
     let score = active.has(entry.id) ? 1000 : 0;
     focus.forEach((text, i) => {
       score += mentions(entry, text) * (focus.length - i);
     });
+    if (meaning)
+      score += (meaning.get(entry.id) ?? 0) * 10;
+    else
+      focus.forEach((_, i) => {
+        score += (chapters.get(entry.chapter)?.[i] ?? 0) * (focus.length - i) * 0.25;
+      });
     return { entry, order, score };
-  }).filter((s) => s.score > 0).sort((a, b) => b.score - a.score || a.order - b.order);
+  });
+  const ranked = scored.filter((s) => s.score > 0).sort((a, b) => b.score - a.score || a.order - b.order);
+  const rest = room.fill ? scored.filter((s) => s.score <= 0).sort((a, b) => a.order - b.order) : [];
   left = room.entries;
-  const order = [...scored.map((s) => s.entry), ...room.fill ? all.filter((e) => !e.constant && !scored.some((s) => s.entry === e)) : []];
-  for (const entry of order) {
+  for (const { entry } of [...ranked, ...rest]) {
     const piece = `${entry.title}: ${entry.content}`.slice(0, room.entry);
     if (piece.length > left)
       continue;
@@ -1084,21 +1102,42 @@ function pickLore(all, focus, active, room) {
     used.add(entry.id);
     left -= piece.length;
   }
-  const index = [];
-  let more = 0;
-  left = room.index;
-  for (const entry of all) {
-    if (used.has(entry.id))
-      continue;
-    const line = entry.title.slice(0, 90);
-    if (line.length + 1 > left) {
-      more++;
-      continue;
-    }
-    index.push(line);
-    left -= line.length + 1;
+  return { rules, entries, ...indexOf(all.filter((e) => !used.has(e.id)), room.index) };
+}
+function indexOf(left, room) {
+  const groups = new Map;
+  for (const entry of left) {
+    const key = entry.chapter || entry.title;
+    groups.set(key, [...groups.get(key) ?? [], entry]);
   }
-  return { rules, entries, index, more };
+  const line = (name, list, cap) => {
+    if (list.length === 1 && !list[0].chapter)
+      return list[0].title.slice(0, Math.min(90, cap));
+    let text = `${name}: `, shown = 0;
+    for (const e of list) {
+      const part = `${shown ? "; " : ""}${e.section.slice(0, 60)}`, tail = ` (and ${list.length - shown - 1} more)`;
+      if (text.length + part.length + (shown + 1 < list.length ? tail.length : 0) > cap)
+        break;
+      text += part;
+      shown++;
+    }
+    return shown === list.length ? text : shown ? `${text} (and ${list.length - shown} more)` : `${name} (${list.length} ${list.length === 1 ? "section" : "sections"})`;
+  };
+  const all = [...groups];
+  const full = all.map(([name, list]) => line(name, list, 1e4));
+  const lines = full.join(`
+`).length <= room ? full : all.map(([name, list]) => line(name, list, Math.max(40, Math.floor(room / all.length) - 1)));
+  const index = [];
+  let more = 0, used = 0;
+  all.forEach(([, list], i) => {
+    if (used + lines[i].length + 1 > room) {
+      more += list.length;
+      return;
+    }
+    index.push(lines[i]);
+    used += lines[i].length + 1;
+  });
+  return { index, more };
 }
 
 // src/prompts.ts
@@ -1483,6 +1522,80 @@ function openArc(notebook, kind) {
     first = false;
     return { ...step, afterHours: 0 };
   }) }) };
+}
+
+// src/meaning.ts
+var MAX_TEXT = 8000;
+var BATCH = 128;
+var KEEP = 4000;
+function sig(text) {
+  let h = 5381;
+  for (let i = 0;i < text.length; i++)
+    h = (h << 5) + h + text.charCodeAt(i) | 0;
+  return `${text.length}:${h}`;
+}
+function unit(v) {
+  let n = 0;
+  for (const x of v)
+    n += x * x;
+  n = Math.sqrt(n) || 1;
+  return Float32Array.from(v, (x) => x / n);
+}
+function dot(a, b) {
+  let s = 0;
+  const n = Math.min(a.length, b.length);
+  for (let i = 0;i < n; i++)
+    s += a[i] * b[i];
+  return s;
+}
+var passageText = (e) => `${e.title}
+${e.content}`.slice(0, MAX_TEXT);
+
+class MeaningIndex {
+  embed;
+  store = new Map;
+  constructor(embed) {
+    this.embed = embed;
+  }
+  async scores(entries, queries, signal) {
+    const wanted = queries.map((q) => ({ ...q, text: q.text.trim().slice(0, MAX_TEXT) })).filter((q) => q.text && q.weight > 0).slice(0, 12);
+    const pool = entries.filter((e) => !e.constant);
+    if (!wanted.length || !pool.length)
+      return new Map;
+    const asked = await this.embed(wanted.map((q) => q.text), "query", signal);
+    const qv = asked.vectors.map(unit);
+    const stale = pool.filter((e) => {
+      const s = this.store.get(e.id);
+      return !s || s.model !== asked.model || s.sig !== sig(passageText(e));
+    });
+    for (let i = 0;i < stale.length; i += BATCH) {
+      const batch = stale.slice(i, i + BATCH);
+      const done = await this.embed(batch.map(passageText), "passage", signal);
+      batch.forEach((e, j) => {
+        this.store.delete(e.id);
+        this.store.set(e.id, { sig: sig(passageText(e)), model: done.model, vec: unit(done.vectors[j]) });
+      });
+    }
+    while (this.store.size > KEEP)
+      this.store.delete(this.store.keys().next().value);
+    const out = new Map, best = wanted.map(() => []);
+    for (const e of pool) {
+      const v = this.store.get(e.id)?.vec;
+      if (!v)
+        continue;
+      let top = 0;
+      qv.forEach((q, i) => {
+        const c = dot(q, v);
+        top = Math.max(top, c * wanted[i].weight);
+        best[i].push([e.id, c]);
+      });
+      out.set(e.id, top);
+    }
+    for (const list of best)
+      for (const [id] of list.sort((a, b) => b[1] - a[1]).slice(0, 2))
+        out.set(id, (out.get(id) ?? 0) + 0.3);
+    return out;
+  }
 }
 
 // src/tidy.ts
@@ -2027,14 +2140,14 @@ function validateRecipe(value) {
   const note = typeof input.note === "string" ? input.note.slice(0, 400) : "";
   return { recipe: { fields, note }, dropped };
 }
-function escape(text) {
+function escape2(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 function areas(text, area) {
   if (area.kind === "whole")
     return [text];
   if (area.kind === "tag")
-    return [...text.matchAll(new RegExp(`<${escape(area.tag)}(?:\\s[^>]*)?>([\\s\\S]*?)</${escape(area.tag)}>`, "gi"))].map((m) => m[1]).reverse();
+    return [...text.matchAll(new RegExp(`<${escape2(area.tag)}(?:\\s[^>]*)?>([\\s\\S]*?)</${escape2(area.tag)}>`, "gi"))].map((m) => m[1]).reverse();
   return [...text.matchAll(/```([\w-]*)[^\n]*\n([\s\S]*?)```/g)].filter((m) => !area.lang || m[1].toLowerCase() === area.lang.toLowerCase()).map((m) => m[2]).reverse();
 }
 function plain2(text) {
@@ -2057,17 +2170,17 @@ function readField(field, raw, variables) {
   }
   for (const part of areas(reply, from.region)) {
     if (from.kind === "line") {
-      const line = new RegExp(`^[\\s>*_\\-\u2022|#]*(?:\\*\\*|__)?${escape(from.label)}(?:\\*\\*|__)?\\s*(?::|\uFF1A|=|-|\u2013|\u2014)\\s*(.+)$`, "im").exec(part);
+      const line = new RegExp(`^[\\s>*_\\-\u2022|#]*(?:\\*\\*|__)?${escape2(from.label)}(?:\\*\\*|__)?\\s*(?::|\uFF1A|=|-|\u2013|\u2014)\\s*(.+)$`, "im").exec(part);
       if (line && plain2(line[1]))
         return plain2(line[1]);
     } else if (from.kind === "attribute") {
-      const pattern = new RegExp(`<${escape(from.tag)}\\b[^>]*?\\s${escape(from.attribute)}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "gi");
+      const pattern = new RegExp(`<${escape2(from.tag)}\\b[^>]*?\\s${escape2(from.attribute)}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "gi");
       const found = [...part.matchAll(pattern)].at(-1);
       const value = found ? plain2(found[1] ?? found[2] ?? "") : "";
       if (value)
         return value;
     } else if (from.kind === "tag") {
-      const tag = new RegExp(`<${escape(from.tag)}(?:\\s[^>]*)?>([\\s\\S]*?)</${escape(from.tag)}>`, "i").exec(part);
+      const tag = new RegExp(`<${escape2(from.tag)}(?:\\s[^>]*)?>([\\s\\S]*?)</${escape2(from.tag)}>`, "i").exec(part);
       if (tag && plain2(tag[1]))
         return plain2(tag[1]);
     } else {
@@ -2132,7 +2245,7 @@ function trackerText(recipe, raw) {
     if (from.kind === "variable")
       continue;
     if (from.kind === "attribute") {
-      const tag = [...reply.matchAll(new RegExp(`<${escape(from.tag)}\\b[^>]*>`, "gi"))].at(-1)?.[0];
+      const tag = [...reply.matchAll(new RegExp(`<${escape2(from.tag)}\\b[^>]*>`, "gi"))].at(-1)?.[0];
       if (tag)
         pieces.add(tag);
     }
@@ -2180,7 +2293,7 @@ function guessRecipe(replies) {
       }
     }
     for (const label of want.labels) {
-      const line = new RegExp(`^[\\s>*_\\-\u2022|#]*(?:\\*\\*|__)?${escape(label)}(?:\\*\\*|__)?\\s*[:\uFF1A]`, "gim");
+      const line = new RegExp(`^[\\s>*_\\-\u2022|#]*(?:\\*\\*|__)?${escape2(label)}(?:\\*\\*|__)?\\s*[:\uFF1A]`, "gim");
       for (const m of newest.matchAll(line)) {
         const tag = wrapping(newest, m.index);
         candidates.push({ kind: "line", label, region: tag ? { kind: "tag", tag } : { kind: "whole" } });
@@ -2201,7 +2314,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.15.0";
+var VERSION = "0.16.0";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, lines: 40, notes: 8, note: 200 };
@@ -2618,7 +2731,17 @@ class NotebookController {
     }
     return out;
   }
-  async lore(chatId, characterId, focus, room) {
+  meaningIndex = null;
+  meaning() {
+    const caps = record7(record7(this.api.host).capabilities);
+    if (!this.api.permissions.has("embeddings") || !caps["embeddings-v1"] || !this.api.embeddings)
+      return null;
+    return this.meaningIndex ??= new MeaningIndex(async (texts, kind, signal) => {
+      const result = await this.api.embeddings.embed({ texts, input_type: kind, ...this.userId ? { userId: this.userId } : {} }, { signal });
+      return { vectors: result.embeddings, model: `${result.connection_id}:${result.model}:${result.dimensions}` };
+    });
+  }
+  async lore(chatId, characterId, focus, room, queries = []) {
     const entries = await this.loreEntries(chatId, characterId);
     if (!entries.length)
       return NO_LORE;
@@ -2626,7 +2749,15 @@ class NotebookController {
     try {
       active = new Set((await this.api.world_books.getActivated(chatId, this.userId)).map((e) => e.id));
     } catch {}
-    return pickLore(entries, focus, active, room);
+    let meaning;
+    const index = this.meaning();
+    if (index && queries.length)
+      try {
+        meaning = await index.scores(entries, queries, AbortSignal.timeout(90000));
+      } catch {
+        meaning = undefined;
+      }
+    return pickLore(entries, focus, active, room, meaning?.size ? meaning : undefined);
   }
   async loreFor(chatId, chat, notebook) {
     try {
@@ -2634,9 +2765,15 @@ class NotebookController {
       if (!info.characterId)
         return NO_LORE;
       const plans = JSON.stringify({ story: notebook.story, people: notebook.people, threads: notebook.threads.filter((t) => t.status === "open"), beats: notebook.beats.filter((b) => b.status === "possible"), seeds: notebook.seeds });
-      return await this.lore(chatId, info.characterId, [chat.slice(-6).map((t) => t.content).join(`
-`), chat.map((t) => t.content).join(`
-`), plans], LORE_ROOM.update);
+      const recent = chat.slice(-6).map((t) => t.content).join(`
+`);
+      const queries = [
+        { text: recent.slice(-6000), weight: 1 },
+        ...notebook.threads.filter((t) => t.status === "open").slice(0, 6).map((t) => ({ text: `${t.title}. ${t.why} ${t.steps.filter((s) => s.status === "waiting").map((s) => s.text).join(" ")}`, weight: t.id === notebook.arc.main ? 1 : 0.9 })),
+        { text: `${notebook.story.question} ${notebook.story.direction} ${notebook.story.stakes}`, weight: 0.8 }
+      ];
+      return await this.lore(chatId, info.characterId, [recent, chat.map((t) => t.content).join(`
+`), plans], LORE_ROOM.update, queries);
     } catch {
       return NO_LORE;
     }
@@ -2646,9 +2783,11 @@ class NotebookController {
     const persona = await this.persona();
     const chatText = recent.map((p) => p.content).join(`
 `);
-    const lore = await this.lore(chatId, characterId, [ideas, `${character.scenario}
+    const focus = [ideas, `${character.scenario}
 ${character.first_mes}`, chatText, `${character.description}
-${character.personality}`, persona?.description ?? "", storySoFar], LORE_ROOM.create);
+${character.personality}`, persona?.description ?? "", storySoFar];
+    const queries = [{ text: ideas, weight: 1 }, { text: focus[1], weight: 1 }, { text: chatText.slice(-6000), weight: 0.9 }, { text: focus[3], weight: 0.8 }, { text: focus[4], weight: 0.6 }, { text: storySoFar, weight: 0.7 }];
+    const lore = await this.lore(chatId, characterId, focus, LORE_ROOM.create, queries);
     const turns = conversation(messages);
     let variables = {};
     try {

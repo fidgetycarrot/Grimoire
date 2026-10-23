@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { SpindleAPI } from 'lumiverse-spindle-types';
 import { NotebookController } from '../src/controller';
 import { ModelError, type Message } from '../src/model';
-import { sampleNotebook } from './fixtures';
+import { fakeEmbed, sampleNotebook } from './fixtures';
 
 const tracker = (time: string, place: string) => `\n<status>\nTime: ${time}\nLocation: ${place}\nPresent: Mira\n</status>`;
 const recipe = { fields: [
@@ -1189,5 +1189,39 @@ describe('Grimoire leads the story', () => {
     // Letting Grimoire choose again.
     await c.setShape('chat-1', 'auto', false);
     expect((await c.view('chat-1'))!.preferences).toMatchObject({ shape: 'kishotenketsu', lockShape: false });
+  });
+});
+
+describe('lore found by meaning', () => {
+  const book = [
+    { id: 'rule', comment: 'Core – Rules', content: 'A river world.', constant: true },
+    { id: 'storms', comment: 'Weather – Storms on the River', content: 'A storm will close the river crossing for days; ferries stop and the banks flood.', key: [] },
+    { id: 'stews', comment: 'Food – Stews', content: 'Thick stews with bread are served at every inn.', key: [] },
+    { id: 'songs', comment: 'Culture – Songs', content: 'Bargemen sing work songs while poling upstream.', key: [] },
+  ];
+  function withBook(embed: (input: any) => Promise<any>) {
+    const h = host({ granted: ['generation', 'interceptor', 'chats', 'chat_mutation', 'characters', 'personas', 'world_books', 'decisions', 'embeddings'] });
+    const api = h.api as any;
+    api.host.capabilities['embeddings-v1'] = 1;
+    api.world_books = { entries: { list: async () => ({ data: book, total: book.length }) } };
+    api.embeddings = { embed };
+    return h;
+  }
+  test('a check-up reads the entries closest to its storylines, even without keywords', async () => {
+    const fake = fakeEmbed();
+    const h = withBook(async (input: any) => { const r = await fake.embed(input.texts, input.input_type); return { embeddings: r.vectors, connection_id: 'qwen', model: r.model, dimensions: 64 }; });
+    const { m, c } = await ready(h);
+    await c.checkup('chat-1', 'test'); await c.waitForJobs();
+    const lore = m.calls.find(x => x.task === 'grimoire-checkup-v1')!.input.lore;
+    expect(lore.entries[0]).toContain('Storms on the River');
+    // The book was embedded once, at the first notebook; the check-up only embedded its questions.
+    expect(fake.calls.filter(x => x.kind === 'passage')).toEqual([{ kind: 'passage', count: 3 }]);
+  });
+  test('when embeddings fail, lore still comes in by keywords and chapter names', async () => {
+    const h = withBook(async () => { throw new Error('Embeddings are off'); });
+    const { m } = await ready(h);
+    const lore = m.calls[0].input.lore;
+    expect(lore.rules).toEqual(['Core – Rules: A river world.']);
+    expect(lore.entries).toHaveLength(3);
   });
 });

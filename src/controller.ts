@@ -11,6 +11,7 @@ import { checkPush, launchPush, PUSH_KINDS, secretsLeft, type PushKind } from '.
 import { earlySteps, fixPace, paceProblems, type PaceRules } from './pacing';
 import { fixLead, leadProblems, openArc } from './lead';
 import { LORE_ROOM, NO_LORE, pickLore, toEntry, type Lore, type LoreEntry, type LoreRoom } from './lore';
+import { MeaningIndex, type Query } from './meaning';
 import { plain, plainBlock, tidyNotebook } from './tidy';
 import { applyQuick, quickError, quickQuestions, quickState } from './quick';
 import { glance, skipOffer } from './skip';
@@ -319,13 +320,27 @@ export class NotebookController {
     }
     return out;
   }
-  /** The lore that matters now: `focus` texts first to last by importance. */
-  private async lore(chatId: string, characterId: string, focus: string[], room: LoreRoom): Promise<Lore> {
+  /** Search by meaning with the player's embedding connection, when Lumiverse offers it and the permission is granted. */
+  private meaningIndex: MeaningIndex | null = null;
+  private meaning(): MeaningIndex | null {
+    const caps = record(record(this.api.host).capabilities);
+    if (!this.api.permissions.has('embeddings') || !caps['embeddings-v1'] || !this.api.embeddings) return null;
+    return this.meaningIndex ??= new MeaningIndex(async (texts, kind, signal) => {
+      const result = await this.api.embeddings.embed({ texts, input_type: kind, ...(this.userId ? { userId: this.userId } : {}) }, { signal });
+      return { vectors: result.embeddings, model: `${result.connection_id}:${result.model}:${result.dimensions}` };
+    });
+  }
+  /** The lore that matters now: `focus` texts first to last by importance, and `queries` to search by meaning. */
+  private async lore(chatId: string, characterId: string, focus: string[], room: LoreRoom, queries: Query[] = []): Promise<Lore> {
     const entries = await this.loreEntries(chatId, characterId);
     if (!entries.length) return NO_LORE;
     let active = new Set<string>();
     try { active = new Set((await this.api.world_books.getActivated(chatId, this.userId)).map(e => e.id)); } catch { /* not available */ }
-    return pickLore(entries, focus, active, room);
+    let meaning: Map<string, number> | undefined;
+    const index = this.meaning();
+    // A search that fails or takes too long falls back to keywords and chapter names.
+    if (index && queries.length) try { meaning = await index.scores(entries, queries, AbortSignal.timeout(90_000)); } catch { meaning = undefined; }
+    return pickLore(entries, focus, active, room, meaning?.size ? meaning : undefined);
   }
   /** For check-ups and talk: lore touched by the recent chat, then by the notebook's own plans. */
   private async loreFor(chatId: string, chat: Array<{ content: string }>, notebook: Notebook): Promise<Lore> {
@@ -333,14 +348,21 @@ export class NotebookController {
       const info = await this.chatInfo(chatId);
       if (!info.characterId) return NO_LORE;
       const plans = JSON.stringify({ story: notebook.story, people: notebook.people, threads: notebook.threads.filter(t => t.status === 'open'), beats: notebook.beats.filter(b => b.status === 'possible'), seeds: notebook.seeds });
-      return await this.lore(chatId, info.characterId, [chat.slice(-6).map(t => t.content).join('\n'), chat.map(t => t.content).join('\n'), plans], LORE_ROOM.update);
+      const recent = chat.slice(-6).map(t => t.content).join('\n');
+      // Searched by meaning: the scene now, each open storyline and where it goes next, and what the story is about.
+      const queries: Query[] = [{ text: recent.slice(-6000), weight: 1 },
+        ...notebook.threads.filter(t => t.status === 'open').slice(0, 6).map(t => ({ text: `${t.title}. ${t.why} ${t.steps.filter(s => s.status === 'waiting').map(s => s.text).join(' ')}`, weight: t.id === notebook.arc.main ? 1 : 0.9 })),
+        { text: `${notebook.story.question} ${notebook.story.direction} ${notebook.story.stakes}`, weight: 0.8 }];
+      return await this.lore(chatId, info.characterId, [recent, chat.map(t => t.content).join('\n'), plans], LORE_ROOM.update, queries);
     } catch { return NO_LORE; }
   }
   private async material(chatId: string, characterId: string, messages: Messages, recent: Piece[], storySoFar: string, ideas = ''): Promise<Material> {
     const character = await this.character(characterId);
     const persona = await this.persona();
     const chatText = recent.map(p => p.content).join('\n');
-    const lore = await this.lore(chatId, characterId, [ideas, `${character.scenario}\n${character.first_mes}`, chatText, `${character.description}\n${character.personality}`, persona?.description ?? '', storySoFar], LORE_ROOM.create);
+    const focus = [ideas, `${character.scenario}\n${character.first_mes}`, chatText, `${character.description}\n${character.personality}`, persona?.description ?? '', storySoFar];
+    const queries: Query[] = [{ text: ideas, weight: 1 }, { text: focus[1], weight: 1 }, { text: chatText.slice(-6000), weight: 0.9 }, { text: focus[3], weight: 0.8 }, { text: focus[4], weight: 0.6 }, { text: storySoFar, weight: 0.7 }];
+    const lore = await this.lore(chatId, characterId, focus, LORE_ROOM.create, queries);
     const turns = conversation(messages);
     let variables: Record<string, string> = {};
     try { variables = Object.fromEntries(Object.entries(await this.api.variables.chat.list(chatId)).slice(0, 40).map(([k, v]) => [k, String(v).slice(0, 500)])); } catch { /* none */ }

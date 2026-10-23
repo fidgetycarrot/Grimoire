@@ -1,3 +1,4 @@
+import type { Embed } from '../src/meaning';
 import type { Notebook } from '../src/notebook';
 
 /** An original, neutral sample notebook used across tests. */
@@ -33,4 +34,11 @@ export function sampleNotebook(): Notebook {
     rhythm: 'calm',
     summary: 'Notebook written.',
   };
+}
+
+/** A stand-in for an embedding model: words hashed into a small vector, so shared words mean closeness. */
+export function fakeEmbed(model = 'fake'): { embed: Embed; calls: Array<{ kind: string; count: number }> } {
+  const calls: Array<{ kind: string; count: number }> = [];
+  const vec = (text: string) => { const v = new Array(64).fill(0); for (const w of text.toLowerCase().match(/[a-z]{4,}/g) ?? []) { let h = 0; for (const c of w) h = (h * 31 + c.charCodeAt(0)) % 64; v[h] += 1; } return v; };
+  return { calls, embed: async (texts, kind) => { calls.push({ kind, count: texts.length }); return { vectors: texts.map(vec), model }; } };
 }
