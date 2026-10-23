@@ -765,3 +765,20 @@ describe('character sheets', () => {
     expect(() => validateNotebook(n)).toThrow('at most 6 people');
   });
 });
+
+describe('waits pulled closer', () => {
+  test('need a reason from the player; without one they are sent back, then put back', () => {
+    const { paceProblems, fixPace } = require('../src/pacing');
+    const { validateNotebook } = require('../src/notebook');
+    const before = validateNotebook(sampleNotebook());
+    const after = structuredClone(before);
+    after.threads[0].steps = after.threads[0].steps.map((s: any, i: number) => ({ ...s, afterHours: [2, 4, 6][i] }));
+    expect(paceProblems(before, after).join(' ')).toContain('pulled closer together (84 to 12 story hours in all)');
+    expect(paceProblems(before, after, { speedUps: { 'stolen-ring': 'The player told the owner.' } })).toEqual([]);
+    expect(paceProblems(before, after, { playerAsked: true })).toEqual([]);
+    expect(fixPace(before, after).threads[0].steps.map((s: any) => s.afterHours)).toEqual([12, 24, 48]);
+    // A small nudge is fine.
+    const nudged = structuredClone(before); nudged.threads[0].steps[0].afterHours = 10;
+    expect(paceProblems(before, nudged)).toEqual([]);
+  });
+});

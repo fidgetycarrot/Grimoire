@@ -1236,7 +1236,7 @@ You keep a private story notebook up to date while a roleplay chat goes on. You 
 Return {"notebook": ${SHAPE}, "tracker": null or {"fields": [...], "note": ""}, "speedUps": {}}.
 Rules for the update:
 ${LORE(input.lore) ? `- ${LORE(input.lore)}` : ""}${input.notes.length ? NOTES : ""}${input.replan ? REPLAN : ""}${input.resync ? RESYNC(input.held) : ""}${input.part ? `- This part of the story is about ${input.part.elapsed} replies in, of roughly ${input.part.length}. Spread what is left across the rest of it: the climax and the biggest moments belong in the last third, and new storylines should fit the time that is left rather than pile on. If the player picks up the pace (Fast), parts are shorter. If everything resolves early anyway, open the next part as usual.
-` : ""}- Speed: never make an existing storyline faster unless something the player did made it more pressing; then say what in "speedUps": {"thread-id": "what the player did"}. Only one storyline may be urgent at a time.
+` : ""}- Speed: never make an existing storyline faster, or pull its waiting steps closer together (lower afterHours), unless something the player did made it more pressing; then say what in "speedUps": {"thread-id": "what the player did"}. Only one storyline may be urgent at a time.
 - The chat decides what actually happened. Record only what the messages establish. Lines marked out of character are the player talking to the narrator outside the story: never record them as events, but take what the player wants from them into account. "I try to return the ring" is an attempt, not a return.
 - Steps: mark "shown" when the player saw or heard the sign in the chat, "offscreen" when it happened where the player could not see, "skipped" when it no longer applies. A step that is merely due has not happened. Never mark shown something the chat does not show.
 - Keep every person and thread. Mark people "gone" and close threads with a closedReason instead of removing them. Something that happened cannot un-happen.
@@ -1423,6 +1423,17 @@ function applyChanges(base, changes) {
 
 // src/pacing.ts
 var RANK = { urgent: 0, steady: 1, slow: 2 };
+function tightened(was, now) {
+  let before = 0, after = 0;
+  for (const step of now.steps) {
+    const old = was.steps.find((s) => s.id === step.id);
+    if (step.status !== "waiting" || old?.status !== "waiting")
+      continue;
+    before += old.afterHours;
+    after += step.afterHours;
+  }
+  return before - after >= 2 && after < before * 0.75 ? { before, after } : null;
+}
 function keeper(previous, revised) {
   const urgent = revised.threads.filter((t) => t.status === "open" && t.speed === "urgent");
   return (urgent.find((t) => previous?.threads.some((p) => p.id === t.id && p.status === "open" && p.speed === "urgent")) ?? urgent[0])?.id;
@@ -1442,6 +1453,14 @@ function paceProblems(previous, revised, rules = {}) {
       if (!(rules.speedUps?.[thread.id] ?? "").trim())
         problems.push(`"${thread.id}" got faster (${was.speed} to ${thread.speed}). Only make a storyline faster when something the player did made it more pressing, and say what in "speedUps": {"${thread.id}": "what the player did"}. Otherwise keep it ${was.speed}.`);
     }
+    for (const thread of revised.threads) {
+      const was = previous.threads.find((t) => t.id === thread.id);
+      if (!was || thread.status !== "open" || (rules.speedUps?.[thread.id] ?? "").trim())
+        continue;
+      const pulled = tightened(was, thread);
+      if (pulled)
+        problems.push(`"${thread.id}" had its waiting steps pulled closer together (${pulled.before} to ${pulled.after} story hours in all). Only do that when something the player did made it more pressing, and say what in "speedUps": {"${thread.id}": "what the player did"}. Otherwise keep the waits as they were, or make them longer.`);
+    }
   }
   return problems;
 }
@@ -1451,8 +1470,14 @@ function fixPace(previous, revised, rules = {}) {
     const was = previous?.threads.find((t) => t.id === thread.id);
     if (thread.status !== "open")
       return thread;
-    if (was && !rules.playerAsked && RANK[thread.speed] < RANK[was.speed] && !(rules.speedUps?.[thread.id] ?? "").trim())
+    const unexplained = !!was && !rules.playerAsked && !(rules.speedUps?.[thread.id] ?? "").trim();
+    if (unexplained && RANK[thread.speed] < RANK[was.speed])
       thread = { ...thread, speed: was.speed };
+    if (unexplained && tightened(was, thread))
+      thread = { ...thread, steps: thread.steps.map((step) => {
+        const old = was.steps.find((s) => s.id === step.id);
+        return step.status === "waiting" && old?.status === "waiting" ? { ...step, afterHours: Math.max(step.afterHours, old.afterHours) } : step;
+      }) };
     if (thread.speed === "urgent" && thread.id !== keep) {
       thread = { ...thread, speed: "steady", steps: thread.steps.map((step) => step.status === "waiting" ? { ...step, afterHours: Math.max(step.afterHours * 4, step.afterHours + 6) } : step) };
     }
@@ -2345,7 +2370,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.17.1";
+var VERSION = "0.17.2";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
