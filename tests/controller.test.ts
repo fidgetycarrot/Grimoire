@@ -1225,3 +1225,10 @@ describe('lore found by meaning', () => {
     expect(lore.entries).toHaveLength(3);
   });
 });
+
+describe('narrator cards', () => {
+  test('a card that is a narrator or a world is the voice of the story, not a person in it', async () => {
+    const { m } = await ready();
+    expect(m.calls[0].messages[0].content).toContain('That card is the voice that runs the story, not a character in it: never add it to people');
+  });
+});
