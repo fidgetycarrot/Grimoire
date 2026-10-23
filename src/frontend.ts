@@ -229,10 +229,12 @@ export function setup(ctx: SpindleFrontendContext) {
     // A stalled story: say so in the box above, or tap one of these.
     const stuck = el('div', 'gm-sub gm-stack');
     stuck.append(el('p', 'gm-label', 'Story feeling stuck?'), el('p', 'gm-hint', 'Say “I’m bored” above, or tap one. Grimoire sets something already in your story in motion. It starts small, and you won’t be told what it is. You can undo it until the next reply.'));
+    if (view.spent) stuck.append(el('p', 'gm-notice', 'This part of the story has wrapped up. Start a new chapter to begin the next one.'));
     const chips = el('div', 'gm-chips');
     for (const [kind, label] of [...PUSHES, ['chapter', 'Start a new chapter'] as [string, string]]) {
       const b = button(label, async () => { await act('push', { chatId: view.chatId, kind }); notify(kind === 'chapter' ? 'Starting a new chapter. One model request.' : 'Setting something in motion. One model request.'); });
       b.disabled = busy || offline; chips.append(b);
+      if (kind === 'chapter' && view.spent) b.classList.add('primary');
       if (kind === 'chapter') b.title = 'Wraps up what’s run its course and starts the next part from where things stand, sometimes after a jump in time.';
     }
     stuck.append(chips);

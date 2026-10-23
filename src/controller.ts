@@ -9,7 +9,7 @@ import { checkupMessages, creationMessages, digestMessages, talkMessages, type M
 import { applyChanges, describeChanges, openExchange } from './talk';
 import { checkPush, launchPush, PUSH_KINDS, secretsLeft, type PushKind } from './push';
 import { earlySteps, fixPace, paceProblems, type PaceRules } from './pacing';
-import { fixLead, leadProblems, openArc } from './lead';
+import { fixLead, leadProblems, openArc, spentProblems, storyLeft } from './lead';
 import { LORE_ROOM, NO_LORE, pickLore, toEntry, type Lore, type LoreEntry, type LoreRoom } from './lore';
 import { MeaningIndex, type Query } from './meaning';
 import { plain, plainBlock, tidyNotebook } from './tidy';
@@ -92,9 +92,10 @@ function withOwnWords(notebook: Notebook, value: unknown, ideas: string): Notebo
  * chosen shape at the start of each part. A first answer that breaks one is
  * sent back; a second gets the plainest fix from code.
  */
-function storyRules(previous: Notebook | null, revised: Notebook, round: number, pace: PaceRules, prefs: Preferences): Notebook {
+function storyRules(previous: Notebook | null, revised: Notebook, round: number, pace: PaceRules, prefs: Preferences, checkup = false): Notebook {
   if (round === 1) {
-    const problems = [...paceProblems(previous, revised, pace), ...leadProblems(previous, revised, prefs)];
+    // A check-up that leaves nothing to happen is asked once to open the next part; if it still doesn't, the panel offers a new chapter.
+    const problems = [...paceProblems(previous, revised, pace), ...leadProblems(previous, revised, prefs), ...(checkup && previous ? spentProblems(previous, revised) : [])];
     if (problems.length) throw new NotebookError(problems.join(' '), 'The update broke a story rule, so it was sent back once.');
   }
   return fixLead(previous, round === 1 ? revised : fixPace(previous, revised, pace), prefs);
@@ -280,7 +281,7 @@ export class NotebookController {
         checks: live ? state.checks : [], needsCheck: state.needsCheck || (live && !live.matched ? 'The chat changed before the notebook was written.' : ''),
         job: state.job, updatedAt: state.updatedAt, repliesSinceCheck: live ? this.repliesSince(live) : 0, skipHours: state.skipHours, notebook, behind: !!live && live.index !== state.versions.length - 1, earlierParts, quick: state.quick, dueIds: live ? dueThreads(live.version.notebook, live.moment).map(d => d.thread.id) : [],
         glance: live ? glance(live.version.notebook, live.moment) : null, reworking: !!live && this.reworking(state, live),
-        talk: state.talk, notes: state.notes, quickLog: state.quickLog, canUndo: this.undoable(state) !== null,
+        talk: state.talk, notes: state.notes, quickLog: state.quickLog, canUndo: this.undoable(state) !== null, spent: !!notebook && !storyLeft(notebook),
         skipOffer: live && state.enabled && state.job?.status !== 'running' && !state.skipHours && !state.intimateNow && !this.reworking(state, live) ? skipOffer(live.version.notebook, live.moment, live.clock, state.skipDismissedAt) : null,
       };
     });
@@ -548,7 +549,7 @@ export class NotebookController {
           let revised = validateNotebook(tidyNotebook(output.notebook, base.notebook));
           // Pacing rules: the first answer that breaks one is sent back; a second gets the plainest fix.
           const rules = { speedUps: Object.fromEntries(Object.entries(record(output.speedUps)).map(([k, v]) => [k, typeof v === 'string' ? v : ''])) };
-          revised = storyRules(base.notebook, revised, round, rules, state.preferences);
+          revised = storyRules(base.notebook, revised, round, rules, state.preferences, true);
           let merged = mergeRevision(base.notebook, revised, live.moment);
           // A new part of the story opens with its main storyline's first moment.
           if (isNewArc(base.notebook, merged)) merged = openArc(merged, 'chapter');

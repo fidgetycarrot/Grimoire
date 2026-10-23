@@ -6,7 +6,7 @@ import type { FieldCheck, Recipe } from './tracker';
 import type { Glance, SkipOffer } from './skip';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.17.3';
+export const VERSION = '0.17.4';
 export const MAX_VERSIONS = 16;
 
 /** One saved state of the notebook and the chat history it describes. */
@@ -105,6 +105,8 @@ export interface ChatView {
   talk: TalkLine[]; notes: PlayerNote[]; quickLog: QuickRecord[];
   /** The newest answer changed the notebook and nothing came after it, so it can be undone. */
   canUndo: boolean;
+  /** This part of the story has nothing left to happen: a new chapter is offered. */
+  spent: boolean;
 }
 /** A chat with a notebook, for the home page and the drawer. Names and times only. */
 export interface StoryListing { chatId: string; character: string; chatName: string; playedAt: number; enabled: boolean }

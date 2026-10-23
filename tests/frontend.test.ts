@@ -24,7 +24,7 @@ function harness(chat: Partial<NonNullable<Snapshot['chat']>> | null = {}, setti
     decisions: { available: true, reason: '', connections: [{ id: 'dec', name: 'Jev', provider: 'typesafe', model: '~typesafe/jev-latest', isDefault: true }] },
     chat: chat === null ? null : { chatId: 'chat-1', name: 'Low Water', supported: true, reason: '', enabled: true, pace: 'auto', preferences: { tone: 'balanced', twist: true, shape: 'auto', lockShape: false }, hasNotebook: true,
       summary: 'Notebook updated after the tavern.', clock: { day: 2, hour: 21, label: '' }, clockText: 'Day 2, 21:00', sources: { day: 'notebook', hour: 'notebook', exact: false }, checks: [],
-      needsCheck: '', job: null, updatedAt: Date.now(), repliesSinceCheck: 2, skipHours: 0, notebook: stamp(validateNotebook(sampleNotebook()), 40), behind: false, earlierParts: 0, quick: null, dueIds: [], skipOffer: null, glance: null, reworking: false, talk: [], notes: [], quickLog: [], canUndo: false, ...chat },
+      needsCheck: '', job: null, updatedAt: Date.now(), repliesSinceCheck: 2, skipHours: 0, notebook: stamp(validateNotebook(sampleNotebook()), 40), behind: false, earlierParts: 0, quick: null, dueIds: [], skipOffer: null, glance: null, reworking: false, talk: [], notes: [], quickLog: [], canUndo: false, spent: false, ...chat },
   };
   const requests: Array<{ action: string; input: any }> = [];
   let receive: (m: unknown) => void = () => {};

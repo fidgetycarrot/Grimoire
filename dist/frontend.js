@@ -54,7 +54,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.17.3";
+var VERSION = "0.17.4";
 
 // src/frontend.ts
 var ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8 3v18"/><path d="M12 8h3M12 12h3"/></svg>';
@@ -458,6 +458,8 @@ function setup(ctx) {
       card.append(el("p", "gm-hint", "Grimoire is updating the notebook. You can send once it’s done."));
     const stuck = el("div", "gm-sub gm-stack");
     stuck.append(el("p", "gm-label", "Story feeling stuck?"), el("p", "gm-hint", "Say “I’m bored” above, or tap one. Grimoire sets something already in your story in motion. It starts small, and you won’t be told what it is. You can undo it until the next reply."));
+    if (view.spent)
+      stuck.append(el("p", "gm-notice", "This part of the story has wrapped up. Start a new chapter to begin the next one."));
     const chips = el("div", "gm-chips");
     for (const [kind, label] of [...PUSHES, ["chapter", "Start a new chapter"]]) {
       const b = button(label, async () => {
@@ -466,6 +468,8 @@ function setup(ctx) {
       });
       b.disabled = busy || offline;
       chips.append(b);
+      if (kind === "chapter" && view.spent)
+        b.classList.add("primary");
       if (kind === "chapter")
         b.title = "Wraps up what’s run its course and starts the next part from where things stand, sometimes after a jump in time.";
     }

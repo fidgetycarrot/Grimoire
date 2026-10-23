@@ -1290,3 +1290,38 @@ describe('blank and narrator cards', () => {
     expect(m.calls.filter(x => x.task === 'grimoire-checkup-v1')).toHaveLength(0);
   });
 });
+
+describe('when the story runs out', () => {
+  const allClosed = (input: any) => {
+    const notebook = structuredClone(input.notebook);
+    for (const t of notebook.threads) { t.status = 'closed'; t.closedReason = 'It played out.'; }
+    return { notebook, tracker: null };
+  };
+  test('a check-up that leaves nothing to happen is asked to open the next part, then the panel offers a new chapter', async () => {
+    const m = model({ create: created, checkup: allClosed });
+    const { c } = await ready(host(), m);
+    await c.checkup('chat-1', 'test'); await c.waitForJobs();
+    const checkups = m.calls.filter(x => x.task === 'grimoire-checkup-v1');
+    expect(checkups).toHaveLength(2);
+    expect(checkups[1].messages.at(-1)!.content).toContain('This part of the story has run out');
+    expect((await c.view('chat-1'))!.spent).toBe(true);
+  });
+  test('opening the next part when asked clears it', async () => {
+    let round = 0;
+    const late = () => ({ notebook: { ...sampleNotebook(), arc: { shape: 'conflict', stage: 'resolution', turn: '', main: 'storm' } }, tracker: recipe });
+    const m = model({ create: late, checkup: (input: any) => {
+      round++;
+      const out: any = allClosed(input);
+      if (round === 2) {
+        out.notebook.threads.push({ id: 'new-trouble', title: 'New trouble', speed: 'steady', why: 'Cole is back for his silver.', hint: 'old debts', people: ['cole'], status: 'open', closedReason: '', ifFollowed: '', ifIgnored: '', steps: [{ id: 'cole-returns', text: 'Cole comes back.', sign: 'Heavy boots on the ferry ramp.', afterHours: 4, status: 'waiting' }] });
+        out.notebook.arc = { shape: 'conflict', stage: 'setup', turn: '', main: 'new-trouble' };
+      }
+      return out;
+    } });
+    const { c } = await ready(host(), m);
+    await c.checkup('chat-1', 'test'); await c.waitForJobs();
+    const view = (await c.view('chat-1'))!;
+    expect(view.spent).toBe(false);
+    expect(view.notebook!.arc).toMatchObject({ main: 'new-trouble', opening: 'chapter' });
+  });
+});

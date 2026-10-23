@@ -1562,6 +1562,14 @@ function openArc(notebook, kind) {
     return { ...step, afterHours: 0 };
   }) }) };
 }
+function storyLeft(notebook) {
+  return notebook.threads.some((t) => ready(t) && t.speed !== "slow");
+}
+function spentProblems(previous, revised) {
+  if (storyLeft(revised))
+    return [];
+  return ["This part of the story has run out: every storyline is over, or only slow ones are left. Open the next part now: a new story question if the old one is answered, arc.stage set to the first stage of its shape, a main storyline (arc.main) whose first waiting step arrives at once, and two to four new storylines grown from what has happened and from what people want now. Keep everything that already happened."];
+}
 
 // src/meaning.ts
 var MAX_TEXT = 8000;
@@ -2370,7 +2378,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.17.3";
+var VERSION = "0.17.4";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -2462,9 +2470,9 @@ function withOwnWords(notebook, value, ideas) {
   }
   return own.size ? { ...notebook, people: notebook.people.map((p) => own.has(p.id) ? { ...p, own: own.get(p.id) } : p) } : notebook;
 }
-function storyRules(previous, revised, round, pace, prefs) {
+function storyRules(previous, revised, round, pace, prefs, checkup = false) {
   if (round === 1) {
-    const problems = [...paceProblems(previous, revised, pace), ...leadProblems(previous, revised, prefs)];
+    const problems = [...paceProblems(previous, revised, pace), ...leadProblems(previous, revised, prefs), ...checkup && previous ? spentProblems(previous, revised) : []];
     if (problems.length)
       throw new NotebookError(problems.join(" "), "The update broke a story rule, so it was sent back once.");
   }
@@ -2705,6 +2713,7 @@ class NotebookController {
         notes: state.notes,
         quickLog: state.quickLog,
         canUndo: this.undoable(state) !== null,
+        spent: !!notebook && !storyLeft(notebook),
         skipOffer: live && state.enabled && state.job?.status !== "running" && !state.skipHours && !state.intimateNow && !this.reworking(state, live) ? skipOffer(live.version.notebook, live.moment, live.clock, state.skipDismissedAt) : null
       };
     });
@@ -3066,7 +3075,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
           const output = record7(value);
           let revised = validateNotebook(tidyNotebook(output.notebook, base.notebook));
           const rules = { speedUps: Object.fromEntries(Object.entries(record7(output.speedUps)).map(([k, v]) => [k, typeof v === "string" ? v : ""])) };
-          revised = storyRules(base.notebook, revised, round, rules, state.preferences);
+          revised = storyRules(base.notebook, revised, round, rules, state.preferences, true);
           let merged = mergeRevision(base.notebook, revised, live.moment);
           if (isNewArc(base.notebook, merged))
             merged = openArc(merged, "chapter");

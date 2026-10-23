@@ -86,3 +86,13 @@ export function openArc(notebook: Notebook, kind: 'story' | 'chapter'): Notebook
     return { ...step, afterHours: 0 };
   }) }) };
 }
+
+/** Whether this part still has story to tell: an open storyline, not just a slow one, with a step still to come. */
+export function storyLeft(notebook: Notebook): boolean {
+  return notebook.threads.some(t => ready(t) && t.speed !== 'slow');
+}
+/** A check-up that leaves the story with nothing left to happen is asked to open the next part. */
+export function spentProblems(previous: Notebook, revised: Notebook): string[] {
+  if (storyLeft(revised)) return [];
+  return ['This part of the story has run out: every storyline is over, or only slow ones are left. Open the next part now: a new story question if the old one is answered, arc.stage set to the first stage of its shape, a main storyline (arc.main) whose first waiting step arrives at once, and two to four new storylines grown from what has happened and from what people want now. Keep everything that already happened.'];
+}
