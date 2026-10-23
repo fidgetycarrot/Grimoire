@@ -782,3 +782,14 @@ describe('waits pulled closer', () => {
     expect(paceProblems(before, nudged)).toEqual([]);
   });
 });
+
+describe('stages only move forward', () => {
+  test('a part can’t slide back from resolution to rising; a new part starts at the first stage', () => {
+    const { holdStage, validateNotebook } = require('../src/notebook');
+    const before = validateNotebook({ ...sampleNotebook(), arc: { shape: 'conflict', stage: 'resolution', turn: '', main: '', startReply: 5 } });
+    const back = { ...before, arc: { ...before.arc, stage: 'rising' } };
+    expect(holdStage(before, back, { hours: 1, reply: 70, waits: { urgent: 4, steady: 15, slow: 40 } }).arc.stage).toBe('resolution');
+    const fresh = { ...before, arc: { ...before.arc, stage: 'setup' } };
+    expect(holdStage(before, fresh, { hours: 1, reply: 70, waits: { urgent: 4, steady: 15, slow: 40 } }).arc.stage).toBe('setup');
+  });
+});

@@ -340,7 +340,8 @@ export function holdStage(previous: Notebook, revised: Notebook, m: Moment): Not
   const stages = STAGES[revised.arc.shape], marks = STAGE_AT[revised.arc.shape];
   const allowed = marks.reduce((best, mark, i) => progress.elapsed >= mark * progress.length ? i : best, 0);
   const was = stages.indexOf(previous.arc.stage), wants = stages.indexOf(revised.arc.stage);
-  const stage = stages[Math.min(wants, Math.max(allowed, was))];
+  // Going back to an earlier stage only happens by starting a new part; otherwise the stage stays where it was.
+  const stage = wants < was ? stages[was] : stages[Math.min(wants, Math.max(allowed, was))];
   return stage === revised.arc.stage ? revised : { ...revised, arc: { ...revised.arc, stage } };
 }
 /** The part keeps the reply it began at, unless a new part began. */

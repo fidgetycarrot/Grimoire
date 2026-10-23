@@ -699,7 +699,7 @@ function holdStage(previous, revised, m) {
   const stages = STAGES[revised.arc.shape], marks = STAGE_AT[revised.arc.shape];
   const allowed = marks.reduce((best, mark, i) => progress.elapsed >= mark * progress.length ? i : best, 0);
   const was = stages.indexOf(previous.arc.stage), wants = stages.indexOf(revised.arc.stage);
-  const stage = stages[Math.min(wants, Math.max(allowed, was))];
+  const stage = wants < was ? stages[was] : stages[Math.min(wants, Math.max(allowed, was))];
   return stage === revised.arc.stage ? revised : { ...revised, arc: { ...revised.arc, stage } };
 }
 function carryArc(previous, arc) {
@@ -2370,7 +2370,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.17.2";
+var VERSION = "0.17.3";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
