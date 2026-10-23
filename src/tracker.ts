@@ -201,9 +201,20 @@ export function guessRecipe(replies: string[]): Recipe {
         candidates.push({ kind: 'line', label, region: tag ? { kind: 'tag', tag } : { kind: 'whole' } });
       }
     }
+    // Facts as their own small tags, like <time>Day 2, 08:40</time> inside a scene card.
+    for (const tag of want.attributes) {
+      const at = newest.search(new RegExp(`<${escape(tag)}>[^<]{1,80}</${escape(tag)}>`, 'i'));
+      if (at < 0) continue;
+      const wrap = wrapping(newest, at), name = newest.slice(at + 1, at + 1 + tag.length);
+      candidates.push({ kind: 'tag', tag: name, region: wrap ? { kind: 'tag', tag: wrap } : { kind: 'whole' } });
+    }
     for (const source of candidates) {
       const field: RecipeField = { name: want.name, type: want.type, source };
-      if (sample.every(reply => { const v = readField(field, reply, {}); return v !== undefined && fits(field.type, v); })) { fields.push(field); break; }
+      if (sample.every(reply => { const v = readField(field, reply, {}); return v !== undefined && fits(field.type, v); })) {
+        // A time that also names the day ("Day 2, Morning") is the whole story date and time.
+        const both = want.name === 'time' && !fields.some(f => f.name === 'date') && sample.every(reply => { const v = readField(field, reply, {}); return v !== undefined && readDay(v) !== null; });
+        fields.push(both ? { ...field, name: 'datetime', type: 'datetime' } : field); break;
+      }
     }
   }
   return { fields, note: fields.length ? 'Found by Grimoire in your replies.' : '' };

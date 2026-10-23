@@ -2319,13 +2319,24 @@ function guessRecipe(replies) {
         candidates.push({ kind: "line", label, region: tag ? { kind: "tag", tag } : { kind: "whole" } });
       }
     }
+    for (const tag of want.attributes) {
+      const at = newest.search(new RegExp(`<${escape2(tag)}>[^<]{1,80}</${escape2(tag)}>`, "i"));
+      if (at < 0)
+        continue;
+      const wrap = wrapping(newest, at), name = newest.slice(at + 1, at + 1 + tag.length);
+      candidates.push({ kind: "tag", tag: name, region: wrap ? { kind: "tag", tag: wrap } : { kind: "whole" } });
+    }
     for (const source of candidates) {
       const field = { name: want.name, type: want.type, source };
       if (sample.every((reply) => {
         const v = readField(field, reply, {});
         return v !== undefined && fits(field.type, v);
       })) {
-        fields.push(field);
+        const both = want.name === "time" && !fields.some((f) => f.name === "date") && sample.every((reply) => {
+          const v = readField(field, reply, {});
+          return v !== undefined && readDay(v) !== null;
+        });
+        fields.push(both ? { ...field, name: "datetime", type: "datetime" } : field);
         break;
       }
     }
@@ -2334,7 +2345,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.17.0";
+var VERSION = "0.17.1";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -2595,11 +2606,25 @@ class NotebookController {
     }
     return live.state.versions[0];
   }
-  trackerSamples(turns) {
-    return turns.filter((t, i) => t.role === "assistant" && !t.ooc && !(i === 0)).map((t) => t.content).reverse();
+  trackerSamples(turns, chatId) {
+    const greetings = this.greetingsOf.get(chatId);
+    const greeting = (_t, i) => i === 0 && (!greetings || greetings.length > 0);
+    return turns.filter((t, i) => t.role === "assistant" && !t.ooc && !greeting(t, i)).map((t) => t.content).reverse();
+  }
+  greetingsOf = new Map;
+  async loadGreetings(chatId) {
+    if (this.greetingsOf.has(chatId))
+      return;
+    try {
+      const info = await this.chatInfo(chatId);
+      if (!info.characterId)
+        return;
+      const card = await this.character(info.characterId);
+      this.greetingsOf.set(chatId, [card.first_mes, ...card.alternate_greetings ?? []].map((g) => (g ?? "").trim()).filter(Boolean));
+    } catch {}
   }
   learnTracker(state, turns) {
-    const found = guessRecipe(this.trackerSamples(turns));
+    const found = guessRecipe(this.trackerSamples(turns, state.chatId));
     const broken = new Set(state.checks.filter((c) => c.status === "unavailable").map((c) => c.name));
     const covers = (name) => found.fields.some((g) => g.name === name || name === "datetime" && (g.name === "date" || g.name === "time"));
     const kept = state.recipe.fields.filter((f) => !broken.has(f.name) || !covers(f.name));
@@ -2892,6 +2917,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
             }
             await this.progress(chatId, job, "Writing the notebook");
           }
+          await this.loadGreetings(chatId);
           const material = await this.material(chatId, info.characterId, messages, plan.recent, storySoFar, ideas);
           let round = 0;
           const result = await askJson(ask, creationMessages(material, state.preferences, ideas, pin), (value) => {
@@ -2972,6 +2998,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
   async startCheckup(chatId, reason) {
     if (this.running.has(chatId))
       return null;
+    await this.loadGreetings(chatId);
     const state = await this.load(chatId);
     if (!state?.versions.length || !state.enabled)
       throw new Error("Turn the notebook on for this chat first.");
@@ -3003,7 +3030,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
       notes: state.notes.map((n) => n.text),
       part: partProgress(base.notebook, live.moment),
       replan: state.replan,
-      replies: learning ? this.trackerSamples(live.turns).slice(0, 2).map((r) => r.slice(0, 20000)) : [],
+      replies: learning ? this.trackerSamples(live.turns, chatId).slice(0, 2).map((r) => r.slice(0, 20000)) : [],
       lore: await this.loreFor(chatId, chat, base.notebook)
     };
     this.track((async () => {
@@ -3392,6 +3419,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
     return { messages: [...messages.slice(0, at), { role: "system", content: note }, ...messages.slice(at)], breakdown: [{ messageIndex: at, name: "Grimoire" }] };
   }
   async afterReply(chatId, generationType) {
+    await this.loadGreetings(chatId);
     const quick = await this.serial(chatId, async () => {
       const state = await this.load(chatId);
       if (!state?.enabled || !state.versions.length || this.running.has(chatId))
@@ -3430,7 +3458,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
       await this.save(state);
       return;
     }
-    const findTracker = !state.recipe.fields.length && !state.trackerTried && since >= 1;
+    const findTracker = !state.recipe.fields.length && !state.trackerTried && since >= 1 && this.trackerSamples(live.turns, chatId).length > 0;
     const urgent = !(settings.quick.enabled && this.decisionsReady()) && since >= 2 && full.reason !== "Checking on an urgent development" && dueThreads(live.version.notebook, live.moment).some((d) => d.thread.speed === "urgent");
     const reason = state.needsCheck ? state.needsCheck.startsWith("The chat changed") ? "Caught up after the chat changed" : state.needsCheck : unmatched ? "The chat changed before the notebook was written" : extra ? extra : state.replan ? "The story ran ahead of its plan" : moved ? "The scene moved" : jumped ? "Time moved on" : findTracker ? "Looking for your preset\u2019s tracker" : urgent ? "Checking on an urgent development" : since >= settings.every ? `${since} replies since the last update` : "";
     if (findTracker)

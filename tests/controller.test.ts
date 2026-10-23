@@ -1272,3 +1272,21 @@ describe('people with depth', () => {
     expect(text).not.toContain('three wars');
   });
 });
+
+describe('blank and narrator cards', () => {
+  test('with no greeting on the card, the narrator’s opening teaches the tracker, even inside a scene card', async () => {
+    const h = host();
+    (h.api as any).characters.get = async () => ({ id: 'card', name: 'Glimmerland', description: '{{char}} is the narrator.', personality: '', scenario: '', first_mes: '', alternate_greetings: [], world_book_ids: [] });
+    const card = (time: string, place: string) => `\n<scenecard><sc-scene><time>${time}</time><location>${place}</location><mood>calm</mood></sc-scene></scenecard>`;
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 8 }, {});
+    const m = model({ create: () => ({ notebook: sampleNotebook(), tracker: { fields: [], note: '' } }), checkup: (input: any) => ({ notebook: input.notebook, tracker: null }) });
+    const c = new NotebookController(h.api, undefined, () => {}, m.ask);
+    await c.create('chat-1', {}); await c.waitForJobs();
+    h.add('assistant', `The docks wake up.${card('Day 1, Morning Shift', 'Brackport docks')}`);
+    await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+    const view = (await c.view('chat-1'))!;
+    expect(view.checks.map(x => [x.name, x.status])).toEqual([['datetime', 'verified'], ['location', 'verified']]);
+    // Found for free, so no check-up was spent looking for it.
+    expect(m.calls.filter(x => x.task === 'grimoire-checkup-v1')).toHaveLength(0);
+  });
+});

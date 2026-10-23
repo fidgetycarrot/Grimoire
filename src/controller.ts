@@ -228,12 +228,28 @@ export class NotebookController {
     return live.state.versions[0];
   }
   /** Replies to learn a tracker from, newest first. An opening message seldom has one, so it doesn't count. */
-  private trackerSamples(turns: Turn[]): string[] {
-    return turns.filter((t, i) => t.role === 'assistant' && !t.ooc && !(i === 0)).map(t => t.content).reverse();
+  /** Replies to learn the tracker from. The card's greeting is left out (presets seldom add a tracker to it), but an opening the narrator wrote counts. */
+  private trackerSamples(turns: Turn[], chatId: string): string[] {
+    // A card with a greeting opens with it. A card without one (a blank or narrator card) opens with a reply the narrator wrote,
+    // which carries the preset's tracker like any other. Unknown (the card couldn't be read): as if it had a greeting.
+    const greetings = this.greetingsOf.get(chatId);
+    const greeting = (_t: Turn, i: number) => i === 0 && (!greetings || greetings.length > 0);
+    return turns.filter((t, i) => t.role === 'assistant' && !t.ooc && !greeting(t, i)).map(t => t.content).reverse();
+  }
+  /** The card's greetings, so an opening the narrator wrote (a blank or narrator card) isn't mistaken for one. */
+  private greetingsOf = new Map<string, string[]>();
+  private async loadGreetings(chatId: string) {
+    if (this.greetingsOf.has(chatId)) return;
+    try {
+      const info = await this.chatInfo(chatId);
+      if (!info.characterId) return;
+      const card = await this.character(info.characterId);
+      this.greetingsOf.set(chatId, [card.first_mes, ...(card.alternate_greetings ?? [])].map(g => (g ?? '').trim()).filter(Boolean));
+    } catch { /* unknown */ }
   }
   /** Try to find the tracker in code, for free. Returns true if one was found. */
   private learnTracker(state: ChatState, turns: Turn[]): boolean {
-    const found = guessRecipe(this.trackerSamples(turns));
+    const found = guessRecipe(this.trackerSamples(turns, state.chatId));
     // A field that stopped reading (a new preset, a changed format) may be replaced; one that still reads stays as it is.
     const broken = new Set(state.checks.filter(c => c.status === 'unavailable').map(c => c.name));
     const covers = (name: string) => found.fields.some(g => g.name === name || (name === 'datetime' && (g.name === 'date' || g.name === 'time')));
@@ -432,6 +448,7 @@ export class NotebookController {
             }
             await this.progress(chatId, job, 'Writing the notebook');
           }
+          await this.loadGreetings(chatId);
           const material = await this.material(chatId, info.characterId, messages, plan.recent, storySoFar, ideas);
           let round = 0;
           const result = await askJson(ask, creationMessages(material, state.preferences, ideas, pin), value => {
@@ -502,6 +519,7 @@ export class NotebookController {
   /** Must run inside the chat's queue. */
   private async startCheckup(chatId: string, reason: string): Promise<Job | null> {
     if (this.running.has(chatId)) return null;
+    await this.loadGreetings(chatId);
     const state = await this.load(chatId);
     if (!state?.versions.length || !state.enabled) throw new Error('Turn the notebook on for this chat first.');
     const settings = await this.settings(), ask = this.asker(settings);
@@ -518,7 +536,7 @@ export class NotebookController {
     const input = {
       notebook: { ...base.notebook, clock: live.clock }, pace: state.pace, chat, trackerText: live.text, trackerValues: live.values, trackerChecks: live.state.checks, recipe: state.recipe,
       clockOwner: { day: live.sources.day, hour: live.sources.hour }, due: dueThreads(base.notebook, live.moment).map(d => ({ thread: d.thread.id, step: d.step.id })),
-      skipHours: state.skipHours, reason, preferences: state.preferences, resync: state.resync !== null, held: state.held, notes: state.notes.map(n => n.text), part: partProgress(base.notebook, live.moment), replan: state.replan, replies: learning ? this.trackerSamples(live.turns).slice(0, 2).map(r => r.slice(0, 20_000)) : [],
+      skipHours: state.skipHours, reason, preferences: state.preferences, resync: state.resync !== null, held: state.held, notes: state.notes.map(n => n.text), part: partProgress(base.notebook, live.moment), replan: state.replan, replies: learning ? this.trackerSamples(live.turns, chatId).slice(0, 2).map(r => r.slice(0, 20_000)) : [],
       lore: await this.loreFor(chatId, chat, base.notebook),
     };
     this.track((async () => {
@@ -844,6 +862,7 @@ export class NotebookController {
    * it is on, and start a check-up when the story has moved.
    */
   async afterReply(chatId: string, generationType: string | undefined): Promise<void> {
+    await this.loadGreetings(chatId);
     const quick = await this.serial(chatId, async () => {
       const state = await this.load(chatId);
       if (!state?.enabled || !state.versions.length || this.running.has(chatId)) return null;
@@ -875,7 +894,8 @@ export class NotebookController {
     // After a failed check-up, wait for the story to move on before paying for another try. Check now always works.
     if (state.job?.kind === 'checkup' && state.job.status === 'failed' && state.job.failedAtTurn !== undefined && live.turns.length < state.job.failedAtTurn + 2 * Math.min(settings.every, 4)) { await this.save(state); return; }
     // A tracker that only shows up once the narrator starts writing replies is looked for once, early.
-    const findTracker = !state.recipe.fields.length && !state.trackerTried && since >= 1;
+    // Only once there is a reply to learn from: a greeting alone doesn't count.
+    const findTracker = !state.recipe.fields.length && !state.trackerTried && since >= 1 && this.trackerSamples(live.turns, chatId).length > 0;
     // An urgent development was offered: see whether it happened before offering it again, once per stretch.
     // The quick check answers this itself, so it is only needed without one.
     const urgent = !(settings.quick.enabled && this.decisionsReady()) && since >= 2 && full.reason !== 'Checking on an urgent development' && dueThreads(live.version.notebook, live.moment).some(d => d.thread.speed === 'urgent');
