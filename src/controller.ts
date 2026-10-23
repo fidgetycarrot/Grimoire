@@ -17,7 +17,7 @@ import { applyQuick, quickError, quickQuestions, quickState } from './quick';
 import { glance, skipOffer } from './skip';
 import type { DecisionResult } from 'lumiverse-spindle-types';
 import { checkRecipe, guessRecipe, readField, readTracker, trackerText, validateRecipe, type FieldType, type Recipe } from './tracker';
-import { DEFAULT_PREFERENCES, DEFAULT_SETTINGS, MAX_VERSIONS, QUICK_LOG, TALK_LIMITS, type QuickRecord, VERSION, type ChatState, type PlayerNote, type TalkLine, type ChatView, type Job, type Settings, type Snapshot, type StoryListing, type Version } from './types';
+import { CHAPTER_DONE, CHAPTER_WORKING, DEFAULT_PREFERENCES, DEFAULT_SETTINGS, MAX_VERSIONS, QUICK_LOG, TALK_LIMITS, type QuickRecord, VERSION, type ChatState, type PlayerNote, type TalkLine, type ChatView, type Job, type Settings, type Snapshot, type StoryListing, type Version } from './types';
 
 const record = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
 const PACES: Pace[] = ['auto', 'quiet', 'fast'];
@@ -619,7 +619,7 @@ export class NotebookController {
       const live = await this.live(state, await this.api.chat.getMessages(chatId));
       if (!live) throw new Error('Write a notebook for this chat first.');
       state.talk = [...state.talk, { from: 'you' as const, text: message, at: Date.now(), ...(keep ? { keep: true as const } : {}) }].slice(-TALK_LIMITS.lines);
-      const { job, signal } = this.startJob(state, 'talk', push ? 'Grimoire is setting something in motion' : 'Grimoire is thinking');
+      const { job, signal } = this.startJob(state, 'talk', push === 'chapter' ? CHAPTER_WORKING : push ? 'Grimoire is setting something in motion' : 'Grimoire is thinking');
       await this.save(state); this.changed();
       const base = live.version, read = live.prints.slice();
       // A button press is its own request, not part of a conversation.
@@ -692,7 +692,7 @@ export class NotebookController {
               }
             }
             current.talk = [...current.talk, line].slice(-TALK_LIMITS.lines);
-            current.job = { ...job, status: 'complete', label: result.kind ? 'Something is in motion' : 'Grimoire answered' };
+            current.job = { ...job, status: 'complete', label: result.kind === 'chapter' ? CHAPTER_DONE : result.kind ? 'Something is in motion' : 'Grimoire answered' };
             await this.save(current);
           });
         } catch (error) { await this.failJob(chatId, job, error); }

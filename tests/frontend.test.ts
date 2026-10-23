@@ -61,6 +61,17 @@ describe('the panel', () => {
     h.button('Start a new chapter')!.click(); await tick();
     expect(h.requests.filter(r => r.action === 'push').at(-1)!.input).toEqual({ chatId: 'chat-1', kind: 'chapter' });
   });
+  test('a new chapter sits up top: highlighted when the story has wrapped up, lively while it is written', async () => {
+    const spent = harness({ spent: true }); await tick();
+    expect(spent.root.textContent).toContain('This part of the story has wrapped up.');
+    expect(spent.button('Start a new chapter')!.className).toContain('gm-primary');
+    const working = harness({ job: { id: 'j', kind: 'talk', status: 'running', label: 'Starting a new chapter', startedAt: Date.now() - 5000 } }); await tick();
+    expect(working.root.textContent).toContain('Writing the next chapter…');
+    expect(working.root.querySelector('.gm-live .gm-dot')).not.toBeNull();
+    expect(working.button('Start a new chapter')).toBeFalsy();
+    const done = harness({ job: { id: 'j', kind: 'talk', status: 'complete', label: 'New chapter ready', startedAt: Date.now() - 60_000 } }); await tick();
+    expect(done.root.textContent).toContain('A new chapter is set. It begins with the next reply.');
+  });
   test('quick check answers show as numbers with plain labels', async () => {
     const h = harness({ quickLog: [{ reply: 7, at: Date.now(), ok: true, answers: { due_1: 0.91, new_turn: 0.82, story_shift: 0.03, rhythm: { choice: 'peak', confidence: 0.7 } }, marked: 1, checkup: true, shifted: false, held: 0 }] }, { quick: { enabled: true, connectionId: '', model: '' } }); await tick();
     const text = h.root.textContent!;

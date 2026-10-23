@@ -32,7 +32,13 @@ var styles = `
 .gm-sub{border-top:1px solid var(--gm-rule);padding-top:12px}.gm-part{border-top:1px solid var(--gm-rule);padding-top:12px}.gm-part:first-child{border:0;padding-top:0}
 .gm-chips{display:flex;flex-wrap:wrap;gap:6px}.gm-chips .gm-button{padding:6px 11px;font-size:12px;border-radius:999px}
 .gm-quiet .gm-button{border-color:transparent;color:var(--gm-muted);padding:4px 8px;font-size:11.5px}.gm-quiet .gm-button:hover:not(:disabled){color:var(--gm-ink)}
-.gm-since{font-variant-numeric:tabular-nums;color:var(--gm-muted)}.gm-waiting{opacity:.85;border:1px dashed var(--gm-line)}
+.gm-since{font-variant-numeric:tabular-nums;color:var(--gm-muted)}
+.gm-live{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;border:1px solid color-mix(in srgb,var(--gm-accent) 50%,transparent);background:color-mix(in srgb,var(--gm-accent) 10%,transparent);animation:gm-breathe 2.6s ease-in-out infinite}.gm-live-words{flex:1;min-width:0;font-size:13px;font-weight:600;overflow-wrap:normal;word-break:normal;hyphens:none}.gm-live .gm-since{display:block;font-weight:500}
+.gm-dot{width:9px;height:9px;flex:none;border-radius:50%;background:var(--gm-accent);animation:gm-pulse 1.1s ease-in-out infinite}
+.gm-done{font-size:13px;color:var(--gm-good);font-weight:600}
+@keyframes gm-pulse{0%,100%{transform:scale(.7);opacity:.55}50%{transform:scale(1.15);opacity:1}}
+@keyframes gm-breathe{0%,100%{background:color-mix(in srgb,var(--gm-accent) 7%,transparent)}50%{background:color-mix(in srgb,var(--gm-accent) 16%,transparent)}}
+@media (prefers-reduced-motion:reduce){.gm-live,.gm-dot{animation:none}}.gm-waiting{opacity:.85;border:1px dashed var(--gm-line)}
 @media(prefers-color-scheme:light){.gm-app{--gm-bg:var(--lumiverse-bg,#faf8f3);--gm-card:var(--lumiverse-bg-secondary,#fffdf8);--gm-ink:var(--lumiverse-text,#25231e);--gm-muted:var(--lumiverse-text-muted,#6f6a60);--gm-accent:#2f6699;--gm-accent-ink:#f5f9fd;--gm-warn:#a06d10;--gm-good:#2f7a45;color-scheme:light}}
 @container(max-width:380px){.gm-grid{grid-template-columns:1fr}.gm-app h1{font-size:26px}}
 `;
@@ -54,7 +60,9 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.18.0";
+var VERSION = "0.18.1";
+var CHAPTER_WORKING = "Starting a new chapter";
+var CHAPTER_DONE = "New chapter ready";
 
 // src/frontend.ts
 var ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8 3v18"/><path d="M12 8h3M12 12h3"/></svg>';
@@ -347,8 +355,35 @@ function setup(ctx) {
     const quick = snapshot?.settings.quick.enabled ? view.quick : undefined;
     if (snapshot?.settings.quick.enabled)
       status.append(el("p", quick && !quick.ok ? "gm-notice" : "gm-hint", !quick ? "Quick check is on. It runs after the next reply." : quick.ok ? `Quick check ran ${ago(quick.at)}.` : `The last quick check didn’t run: ${quick.error}`));
-    card.append(pace, status);
+    card.append(pace, renderChapter(view), status);
     return card;
+  }
+  function renderChapter(view) {
+    const box = el("div", "gm-sub gm-stack");
+    box.append(el("h4", "", "Chapter"));
+    const job = view.job, offline = !snapshot?.settings.connectionId;
+    if (job?.status === "running" && job.label === CHAPTER_WORKING) {
+      const live = el("div", "gm-live"), words = el("span", "gm-live-words");
+      words.append(document.createTextNode("Writing the next chapter… "), since(job.startedAt));
+      live.append(el("span", "gm-dot"), words, button("Stop", async () => {
+        await act("cancel", { chatId: view.chatId });
+        notify("Stopped. Nothing was changed.");
+      }));
+      box.append(live, el("p", "gm-hint", "Grimoire is wrapping up what’s run its course and planning what comes next. This takes a minute or two."));
+      return box;
+    }
+    if (job?.status === "complete" && job.label === CHAPTER_DONE && Date.now() - job.startedAt < 10 * 60000)
+      box.append(el("p", "gm-done", "A new chapter is set. It begins with the next reply."));
+    else if (view.spent)
+      box.append(el("p", "gm-notice", "This part of the story has wrapped up. Start a new chapter to begin the next one."));
+    const start = button("Start a new chapter", async () => {
+      await act("push", { chatId: view.chatId, kind: "chapter" });
+      notify("Starting a new chapter. One model request.");
+    }, view.spent ? "primary" : "");
+    start.classList.add("gm-wide");
+    start.disabled = job?.status === "running" || offline || !view.enabled;
+    box.append(start, el("p", "gm-hint", "Wraps up what’s run its course and starts the next part from where things stand, sometimes after a jump in time. You won’t be told what’s coming."));
+    return box;
   }
   const PUSHES = [["person", "Someone makes a move"], ["secret", "A secret starts to surface"], ["consequence", "Something catches up with me"], ["surprise", "Surprise me"]];
   function renderSteer(view) {
@@ -393,7 +428,8 @@ function setup(ctx) {
           item.append(el("p", "gm-meta", "Undone"));
         log.append(item);
       }
-      if (busy && view.job?.kind === "talk") {
+      const talking = busy && view.job?.kind === "talk" && view.job.label !== CHAPTER_WORKING;
+      if (talking) {
         const wait = el("div", "gm-line gm-line-grimoire gm-waiting");
         const words = el("p", "gm-small");
         words.append(document.createTextNode(`${view.job.label}… `), since(view.job.startedAt));
@@ -401,7 +437,7 @@ function setup(ctx) {
         log.append(wait);
       }
       const actions = el("div", "gm-row gm-quiet");
-      if (busy && view.job?.kind === "talk")
+      if (talking)
         actions.append(button("Stop", async () => {
           await act("cancel", { chatId: view.chatId });
           notify("Stopped. Nothing was changed.");
@@ -458,20 +494,14 @@ function setup(ctx) {
       card.append(el("p", "gm-hint", "Grimoire is updating the notebook. You can send once it’s done."));
     const stuck = el("div", "gm-sub gm-stack");
     stuck.append(el("p", "gm-label", "Story feeling stuck?"), el("p", "gm-hint", "Say “I’m bored” above, or tap one. Grimoire sets something already in your story in motion. It starts small, and you won’t be told what it is. You can undo it until the next reply."));
-    if (view.spent)
-      stuck.append(el("p", "gm-notice", "This part of the story has wrapped up. Start a new chapter to begin the next one."));
     const chips = el("div", "gm-chips");
-    for (const [kind, label] of [...PUSHES, ["chapter", "Start a new chapter"]]) {
+    for (const [kind, label] of PUSHES) {
       const b = button(label, async () => {
         await act("push", { chatId: view.chatId, kind });
-        notify(kind === "chapter" ? "Starting a new chapter. One model request." : "Setting something in motion. One model request.");
+        notify("Setting something in motion. One model request.");
       });
       b.disabled = busy || offline;
       chips.append(b);
-      if (kind === "chapter" && view.spent)
-        b.classList.add("primary");
-      if (kind === "chapter")
-        b.title = "Wraps up what’s run its course and starts the next part from where things stand, sometimes after a jump in time.";
     }
     stuck.append(chips);
     card.append(stuck);

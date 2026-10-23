@@ -2400,12 +2400,14 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.18.0";
+var VERSION = "0.18.1";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
 var DEFAULT_SETTINGS = { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true, intimate: "protect" };
 var DEFAULT_PREFERENCES = { tone: "balanced", twist: true, shape: "auto", lockShape: false };
+var CHAPTER_WORKING = "Starting a new chapter";
+var CHAPTER_DONE = "New chapter ready";
 
 // src/controller.ts
 var record7 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
@@ -3177,7 +3179,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
       if (!live)
         throw new Error("Write a notebook for this chat first.");
       state.talk = [...state.talk, { from: "you", text: message, at: Date.now(), ...keep ? { keep: true } : {} }].slice(-TALK_LIMITS.lines);
-      const { job, signal } = this.startJob(state, "talk", push ? "Grimoire is setting something in motion" : "Grimoire is thinking");
+      const { job, signal } = this.startJob(state, "talk", push === "chapter" ? CHAPTER_WORKING : push ? "Grimoire is setting something in motion" : "Grimoire is thinking");
       await this.save(state);
       this.changed();
       const base = live.version, read = live.prints.slice();
@@ -3265,7 +3267,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
               }
             }
             current.talk = [...current.talk, line].slice(-TALK_LIMITS.lines);
-            current.job = { ...job, status: "complete", label: result.kind ? "Something is in motion" : "Grimoire answered" };
+            current.job = { ...job, status: "complete", label: result.kind === "chapter" ? CHAPTER_DONE : result.kind ? "Something is in motion" : "Grimoire answered" };
             await this.save(current);
           });
         } catch (error) {

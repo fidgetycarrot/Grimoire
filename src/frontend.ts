@@ -2,7 +2,7 @@ import type { SpindleFrontendContext } from 'lumiverse-spindle-types';
 import { styles } from './styles';
 import { describeDuration } from './clock';
 import type { Notebook, Pace } from './notebook';
-import { VERSION, type ChatView, type Settings, type Snapshot, type StoryListing } from './types';
+import { CHAPTER_DONE, CHAPTER_WORKING, VERSION, type ChatView, type Settings, type Snapshot, type StoryListing } from './types';
 
 const ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8 3v18"/><path d="M12 8h3M12 12h3"/></svg>';
 const PACE_ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 16a8 8 0 0 1 16 0"/><path d="M12 16l4-5"/></svg>';
@@ -166,8 +166,27 @@ export function setup(ctx: SpindleFrontendContext) {
       el('p', 'gm-hint', `${view.repliesSinceCheck} ${view.repliesSinceCheck === 1 ? 'reply' : 'replies'} since the last update${view.updatedAt ? ` · saved ${ago(view.updatedAt)}` : ''}`));
     const quick = snapshot?.settings.quick.enabled ? view.quick : undefined;
     if (snapshot?.settings.quick.enabled) status.append(el('p', quick && !quick.ok ? 'gm-notice' : 'gm-hint', !quick ? 'Quick check is on. It runs after the next reply.' : quick.ok ? `Quick check ran ${ago(quick.at)}.` : `The last quick check didn’t run: ${quick.error}`));
-    card.append(pace, status);
+    card.append(pace, renderChapter(view), status);
     return card;
+  }
+  /** A new chapter: easy to find, and visibly at work while it's being written. */
+  function renderChapter(view: ChatView) {
+    const box = el('div', 'gm-sub gm-stack');
+    box.append(el('h4', '', 'Chapter'));
+    const job = view.job, offline = !snapshot?.settings.connectionId;
+    if (job?.status === 'running' && job.label === CHAPTER_WORKING) {
+      const live = el('div', 'gm-live'), words = el('span', 'gm-live-words');
+      words.append(document.createTextNode('Writing the next chapter… '), since(job.startedAt));
+      live.append(el('span', 'gm-dot'), words, button('Stop', async () => { await act('cancel', { chatId: view.chatId }); notify('Stopped. Nothing was changed.'); }));
+      box.append(live, el('p', 'gm-hint', 'Grimoire is wrapping up what’s run its course and planning what comes next. This takes a minute or two.'));
+      return box;
+    }
+    if (job?.status === 'complete' && job.label === CHAPTER_DONE && Date.now() - job.startedAt < 10 * 60_000) box.append(el('p', 'gm-done', 'A new chapter is set. It begins with the next reply.'));
+    else if (view.spent) box.append(el('p', 'gm-notice', 'This part of the story has wrapped up. Start a new chapter to begin the next one.'));
+    const start = button('Start a new chapter', async () => { await act('push', { chatId: view.chatId, kind: 'chapter' }); notify('Starting a new chapter. One model request.'); }, view.spent ? 'primary' : '');
+    start.classList.add('gm-wide'); start.disabled = job?.status === 'running' || offline || !view.enabled;
+    box.append(start, el('p', 'gm-hint', 'Wraps up what’s run its course and starts the next part from where things stand, sometimes after a jump in time. You won’t be told what’s coming.'));
+    return box;
   }
   const PUSHES: Array<[string, string]> = [['person', 'Someone makes a move'], ['secret', 'A secret starts to surface'], ['consequence', 'Something catches up with me'], ['surprise', 'Surprise me']];
   /** Your say as co-author: talk, pinned notes, and the buttons for a stalled story. */
@@ -197,14 +216,16 @@ export function setup(ctx: SpindleFrontendContext) {
         if (line.undone) item.append(el('p', 'gm-meta', 'Undone'));
         log.append(item);
       }
-      if (busy && view.job?.kind === 'talk') {
+      // A new chapter shows its progress up top, by its button.
+      const talking = busy && view.job?.kind === 'talk' && view.job.label !== CHAPTER_WORKING;
+      if (talking) {
         const wait = el('div', 'gm-line gm-line-grimoire gm-waiting');
-        const words = el('p', 'gm-small'); words.append(document.createTextNode(`${view.job.label}… `), since(view.job.startedAt));
+        const words = el('p', 'gm-small'); words.append(document.createTextNode(`${view.job!.label}… `), since(view.job!.startedAt));
         wait.append(el('p', 'gm-line-who', 'Grimoire'), words, el('p', 'gm-meta', 'Changing the plans can take a minute or two.'));
         log.append(wait);
       }
       const actions = el('div', 'gm-row gm-quiet');
-      if (busy && view.job?.kind === 'talk') actions.append(button('Stop', async () => { await act('cancel', { chatId: view.chatId }); notify('Stopped. Nothing was changed.'); }));
+      if (talking) actions.append(button('Stop', async () => { await act('cancel', { chatId: view.chatId }); notify('Stopped. Nothing was changed.'); }));
       if (view.canUndo) actions.append(button('Undo the last change', async () => { await act('undo-talk', { chatId: view.chatId }); notify('The plans are back the way they were.'); }));
       actions.append(button('Clear conversation', async () => { await act('clear-talk', { chatId: view.chatId }); }));
       card.append(log, actions);
@@ -229,13 +250,10 @@ export function setup(ctx: SpindleFrontendContext) {
     // A stalled story: say so in the box above, or tap one of these.
     const stuck = el('div', 'gm-sub gm-stack');
     stuck.append(el('p', 'gm-label', 'Story feeling stuck?'), el('p', 'gm-hint', 'Say “I’m bored” above, or tap one. Grimoire sets something already in your story in motion. It starts small, and you won’t be told what it is. You can undo it until the next reply.'));
-    if (view.spent) stuck.append(el('p', 'gm-notice', 'This part of the story has wrapped up. Start a new chapter to begin the next one.'));
     const chips = el('div', 'gm-chips');
-    for (const [kind, label] of [...PUSHES, ['chapter', 'Start a new chapter'] as [string, string]]) {
-      const b = button(label, async () => { await act('push', { chatId: view.chatId, kind }); notify(kind === 'chapter' ? 'Starting a new chapter. One model request.' : 'Setting something in motion. One model request.'); });
+    for (const [kind, label] of PUSHES) {
+      const b = button(label, async () => { await act('push', { chatId: view.chatId, kind }); notify('Setting something in motion. One model request.'); });
       b.disabled = busy || offline; chips.append(b);
-      if (kind === 'chapter' && view.spent) b.classList.add('primary');
-      if (kind === 'chapter') b.title = 'Wraps up what’s run its course and starts the next part from where things stand, sometimes after a jump in time.';
     }
     stuck.append(chips);
     card.append(stuck);
