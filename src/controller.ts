@@ -9,6 +9,7 @@ import { checkupMessages, creationMessages, digestMessages, talkMessages, type M
 import { applyChanges, describeChanges, openExchange } from './talk';
 import { checkPush, launchPush, PUSH_KINDS, secretsLeft, type PushKind } from './push';
 import { earlySteps, enforcePace, fixPace } from './pacing';
+import { LORE_ROOM, NO_LORE, pickLore, toEntry, type Lore, type LoreEntry, type LoreRoom } from './lore';
 import { plain, plainBlock, tidyNotebook } from './tidy';
 import { applyQuick, quickError, quickQuestions, quickState } from './quick';
 import { glance, skipOffer } from './skip';
@@ -285,20 +286,47 @@ export class NotebookController {
     if (!this.api.permissions.has('personas')) return null;
     try { const p = await this.api.personas.getActive(this.userId); return p ? { name: p.name, description: p.description.slice(0, 6000) } : null; } catch { return null; }
   }
-  private async material(chatId: string, characterId: string, messages: Messages, recent: Piece[], storySoFar: string): Promise<Material> {
+  /** Every entry in the card's and the chat's lorebooks, in book order. */
+  private async loreEntries(chatId: string, characterId: string): Promise<LoreEntry[]> {
+    if (!this.api.permissions.has('world_books')) return [];
+    const books: string[] = [];
+    try { books.push(...(await this.character(characterId)).world_book_ids); } catch { /* none */ }
+    try { const meta = record((await this.api.chats.get(chatId, this.userId))?.metadata); if (Array.isArray(meta.chat_world_book_ids)) books.push(...meta.chat_world_book_ids.filter((id): id is string => typeof id === 'string')); } catch { /* none */ }
+    const out: LoreEntry[] = [];
+    for (const bookId of [...new Set(books)].slice(0, 8)) {
+      try {
+        // Big setting books run past one page.
+        for (let offset = 0; offset < 1000; offset += 100) {
+          const page = await this.api.world_books.entries.list(bookId, { limit: 100, offset, userId: this.userId });
+          page.data.forEach((raw, i) => { const entry = toEntry(raw, `${bookId}:${offset + i}`); if (entry) out.push(entry); });
+          if (page.data.length < 100 || offset + page.data.length >= page.total) break;
+        }
+      } catch { /* optional */ }
+    }
+    return out;
+  }
+  /** The lore that matters now: `focus` texts first to last by importance. */
+  private async lore(chatId: string, characterId: string, focus: string[], room: LoreRoom): Promise<Lore> {
+    const entries = await this.loreEntries(chatId, characterId);
+    if (!entries.length) return NO_LORE;
+    let active = new Set<string>();
+    try { active = new Set((await this.api.world_books.getActivated(chatId, this.userId)).map(e => e.id)); } catch { /* not available */ }
+    return pickLore(entries, focus, active, room);
+  }
+  /** For check-ups and talk: lore touched by the recent chat, then by the notebook's own plans. */
+  private async loreFor(chatId: string, chat: Array<{ content: string }>, notebook: Notebook): Promise<Lore> {
+    try {
+      const info = await this.chatInfo(chatId);
+      if (!info.characterId) return NO_LORE;
+      const plans = JSON.stringify({ story: notebook.story, people: notebook.people, threads: notebook.threads.filter(t => t.status === 'open'), beats: notebook.beats.filter(b => b.status === 'possible'), seeds: notebook.seeds });
+      return await this.lore(chatId, info.characterId, [chat.slice(-6).map(t => t.content).join('\n'), chat.map(t => t.content).join('\n'), plans], LORE_ROOM.update);
+    } catch { return NO_LORE; }
+  }
+  private async material(chatId: string, characterId: string, messages: Messages, recent: Piece[], storySoFar: string, ideas = ''): Promise<Material> {
     const character = await this.character(characterId);
     const persona = await this.persona();
-    const lore: string[] = [];
-    if (this.api.permissions.has('world_books')) {
-      let room = 12_000;
-      for (const bookId of character.world_book_ids.slice(0, 4)) {
-        try {
-          const page = await this.api.world_books.entries.list(bookId, { limit: 100, userId: this.userId });
-          const entries = [...page.data].filter(e => !record(e).disabled).sort((a, b) => Number(record(b).constant === true) - Number(record(a).constant === true));
-          for (const entry of entries) { const piece = `${entry.comment ? `${entry.comment}: ` : ''}${entry.content}`.slice(0, 2000); if (piece.length > room) break; lore.push(piece); room -= piece.length; }
-        } catch { /* optional */ }
-      }
-    }
+    const chatText = recent.map(p => p.content).join('\n');
+    const lore = await this.lore(chatId, characterId, [ideas, `${character.scenario}\n${character.first_mes}`, chatText, `${character.description}\n${character.personality}`, persona?.description ?? '', storySoFar], LORE_ROOM.create);
     const turns = conversation(messages);
     let variables: Record<string, string> = {};
     try { variables = Object.fromEntries(Object.entries(await this.api.variables.chat.list(chatId)).slice(0, 40).map(([k, v]) => [k, String(v).slice(0, 500)])); } catch { /* none */ }
@@ -355,7 +383,7 @@ export class NotebookController {
             }
             await this.progress(chatId, job, 'Writing the notebook');
           }
-          const material = await this.material(chatId, info.characterId, messages, plan.recent, storySoFar);
+          const material = await this.material(chatId, info.characterId, messages, plan.recent, storySoFar, ideas);
           let round = 0;
           const result = await askJson(ask, creationMessages(material, state.preferences, ideas, pin), value => {
             round++;
@@ -441,6 +469,7 @@ export class NotebookController {
       notebook: { ...base.notebook, clock: live.clock }, pace: state.pace, chat, trackerText: live.text, trackerValues: live.values, trackerChecks: live.state.checks, recipe: state.recipe,
       clockOwner: { day: live.sources.day, hour: live.sources.hour }, due: dueThreads(base.notebook, live.moment).map(d => ({ thread: d.thread.id, step: d.step.id })),
       skipHours: state.skipHours, reason, preferences: state.preferences, resync: state.resync !== null, held: state.held, notes: state.notes.map(n => n.text), part: partProgress(base.notebook, live.moment), replan: state.replan, replies: learning ? this.trackerSamples(live.turns).slice(0, 2).map(r => r.slice(0, 20_000)) : [],
+      lore: await this.loreFor(chatId, chat, base.notebook),
     };
     this.track((async () => {
       try {
@@ -530,7 +559,9 @@ export class NotebookController {
         chat: live.turns.slice(-12).map(t => ({ role: t.role, content: told(t, 4000) })),
         earlier: earlier.map(l => ({ from: l.from, text: l.text })), exchange: open.map(l => ({ from: l.from, text: l.text })),
         notes: state.notes.map(n => n.text), keep: pinning, push, mustAct: open.filter(l => l.from === 'grimoire' && l.asked).length >= 2,
+        lore: NO_LORE as Lore,
       };
+      input.lore = await this.loreFor(chatId, input.chat, base.notebook);
       this.track((async () => {
         try {
           let round = 0;

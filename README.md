@@ -16,7 +16,8 @@ New features should keep these promises: they make play more fun, they keep the 
 
 ## What it does
 
-- **Writes a notebook from your card.** It reads the card, your persona, the card's lorebook, and anything already said, then plans the story: the central question, the hidden truth, a small supporting cast with their own goals, a few threads, and moments the story could reach.
+- **Writes a notebook from your card.** It reads the card, your persona, the card's and the chat's lorebooks, and anything already said, then plans the story: the central question, the hidden truth, a small supporting cast with their own goals, a few threads, and moments the story could reach.
+- **Big setting lorebooks.** A lorebook with a whole world in it (cities, factions, a hundred-plus entries) is read the smart way rather than first-come. Grimoire gets the always-on entries, the full text of the entries that matter right now (the ones the narrator has in play, then the ones the card, the chat, or Grimoire's own plans mention), and a short index of the titles of everything else. So it knows the whole world exists, builds from its places and people instead of inventing its own, and can plan toward parts you haven't seen yet; once a plan heads somewhere, that place's full entry comes in at the next check-up. The lorebook is canon: Grimoire invents only small things, and when you go after a mystery, the answer is earned over time and fits everything the lore says. Lore is read from the card's lorebooks and the chat's, not global ones.
 - **Works on old chats too.** A long chat is read from the very first message, in parts, into a record of the story so far. The notebook then picks up the threads and people the chat already has, and plans what comes next from there. The panel tells you how many parts it will read before you start.
 - **Paced by story time and by your play.** Threads move at their own speed (urgent, steady, or slow burn). Story time keeps it plausible: ignore the stolen ring for one evening and nothing happens; leave it for days and the search reaches you. But a roleplay can spend a hundred replies in one story day, so a thread also moves on after a number of replies (Settings → Longest a story thread waits), whichever comes first. Warning signs come before consequences, and big scenes aren't interrupted for slow threads.
 - **Pacing that stays on plan.** Three rules keep the plan from speeding up on its own. Only one storyline is urgent at a time: a second emergency is sent back to be rethought as something that builds (prepared with a breadcrumb or two), and if it comes back anyway, code slows it and spaces its steps out. An existing storyline only gets faster when something you did made it more pressing, and the check-up has to say what. Each part of the story has a rough length (about 60 replies at the default wait, half that on Fast), so the climax waits for the last part of it and new storylines fit the time that's left. When the narrator keeps running ahead (steps happening before they were offered, or the quick check seeing it hurry past things), Grimoire re-plans the rest of the part's timing, at most once in a while. Your Fast pace still means faster: shorter waits and shorter parts.
@@ -64,7 +65,7 @@ Requires **Lumiverse 1.2.0 or newer**. The built files are included; no build st
 | `chat_mutation` | Reading the chat's messages so the notebook matches them. Lumiverse puts message reading under this permission; Grimoire never changes, adds, or deletes messages. |
 | `characters` | Reading the card |
 | `personas` | Reading your active persona (optional) |
-| `world_books` | Reading the card's lorebook (optional) |
+| `world_books` | Reading the card's and the chat's lorebooks (optional) |
 | `decisions` | The quick check, on your decision connection (optional) |
 
 ## Quick check
@@ -86,7 +87,7 @@ The note is added for you, just before the reply (any prefill is kept last). Pro
 ## Costs
 
 - Writing a notebook: one larger model request. A long chat adds one request per part of its earlier history (at most 12, shown before you start).
-- Each check-up: one request.
+- Each check-up: one request. With a big lorebook, check-ups and talk carry up to about 8,000 more tokens of lore (writing the notebook, up to about 15,000).
 - Ordinary replies: no extra request. The note adds a few hundred tokens to the prompt.
 - With the quick check on: one small decision request per reply (a few questions, answers only). It replaces some check-ups, since those then run only when needed or after the set number of replies.
 

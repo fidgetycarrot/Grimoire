@@ -95,7 +95,7 @@ export function setup(ctx: SpindleFrontendContext) {
   // ----- This chat -----
   function renderStart(view: ChatView) {
     const card = el('section', 'gm-card gm-stack');
-    card.append(el('h2', '', 'Start a story notebook'), el('p', 'gm-small', 'Grimoire reads this chat’s card, your persona, the card’s lorebook, and anything already said. It writes a private plan for the story: what is really going on, what people want, and the threads that will move over time. You won’t see it unless you open it.'));
+    card.append(el('h2', '', 'Start a story notebook'), el('p', 'gm-small', 'Grimoire reads this chat’s card, your persona, the card’s and the chat’s lorebooks, and anything already said. It writes a private plan for the story: what is really going on, what people want, and the threads that will move over time. You won’t see it unless you open it.'));
     const tone = select([['light', 'Light'], ['balanced', 'Balanced'], ['dark', 'Dark']], view.preferences.tone);
     const twist = el('input'); twist.type = 'checkbox'; twist.checked = view.preferences.twist; twist.style.width = 'auto';
     const twistRow = el('label', 'gm-row gm-small'); twistRow.append(twist, document.createTextNode('A twist is allowed, if one fits'));

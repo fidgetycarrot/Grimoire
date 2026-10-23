@@ -72,7 +72,7 @@ describe('writing a notebook', () => {
     const sent = m.calls[0].input;
     expect(sent.character).toMatchObject({ name: 'Mira', scenario: 'A stranger arrives.', firstMessage: 'The ferry bell rings.' });
     expect(sent.persona).toEqual({ name: 'Traveler', description: 'A tired traveler with a ring.' });
-    expect(sent.lore).toEqual(['Low Water: A river town.']);
+    expect(sent.lore).toEqual({ rules: ['Low Water: A river town.'], entries: [], index: [], more: 0 });
     expect(sent.chat).toHaveLength(3);
     expect(sent.replies).toHaveLength(2);
     expect(m.calls[0].messages[0].content).toContain('Do not plan a twist');
@@ -1093,5 +1093,51 @@ describe('talk asks what kind when a request is open-ended', () => {
     expect(third.messages[0].content).toContain('Do not ask again');
     // A third question is treated as an answer, so the conversation closes.
     expect((await c.view('chat-1'))!.talk.at(-1)!.asked).toBeUndefined();
+  });
+});
+
+describe('big setting lorebooks', () => {
+  /** A card book with a short rule, plus a chat book of 150 entries, more than one page. */
+  function world(h: ReturnType<typeof host>, activated: string[] = []) {
+    const big = Array.from({ length: 150 }, (_, i) => ({ id: `e${i}`, comment: `Place ${i}`, key: [`Place${i}`], content: `About place ${i}.`, constant: false }));
+    big[120] = { id: 'e120', comment: 'Oswin’s guild', key: ['Oswin'], content: 'The guild Oswin answers to.', constant: false };
+    big[7] = { id: 'e7', comment: 'The far bank', key: ['far bank'], content: 'A muddy landing.', constant: false };
+    const api = h.api as any;
+    const chats = api.chats.get;
+    api.chats.get = async (id: string) => { const chat = await chats(id); return chat ? { ...chat, metadata: { chat_world_book_ids: ['world'] } } : null; };
+    api.world_books = {
+      entries: { list: async (book: string, o: { limit: number; offset?: number }) => {
+        const all = book === 'world' ? big : [{ id: 'rule', comment: 'Low Water', content: 'A river town.', constant: true }];
+        return { data: all.slice(o.offset ?? 0, (o.offset ?? 0) + o.limit), total: all.length };
+      } },
+      getActivated: async () => activated.map(id => ({ id, comment: '', keys: [], source: 'keyword' })),
+    };
+  }
+  test('the notebook reads the chat’s lorebook too, past the first page, with an index of the rest', async () => {
+    const h = host(); world(h);
+    const { m } = await ready(h);
+    const lore = m.calls[0].input.lore;
+    expect(lore.rules).toEqual(['Low Water: A river town.']);
+    expect(lore.entries).toEqual([]);
+    expect(lore.index).toContain('Place 149');
+    expect(lore.index).toContain('Oswin’s guild');
+    expect(m.calls[0].messages[0].content).toContain('this world\'s canon');
+  });
+  test('check-ups read what is in play and what the plans head toward', async () => {
+    const h = host(); world(h, ['e7']);
+    const { m, c } = await ready(h);
+    await c.checkup('chat-1', 'test'); await c.waitForJobs();
+    const lore = m.calls.find(x => x.task === 'grimoire-checkup-v1')!.input.lore;
+    // In play for the narrator first, then what the notebook's plans mention (Oswin is in a storyline).
+    expect(lore.entries).toEqual(['The far bank: A muddy landing.', 'Oswin’s guild: The guild Oswin answers to.']);
+    expect(lore.index).not.toContain('Oswin’s guild');
+    expect(lore.index.length + lore.more).toBe(148);
+    expect(m.calls.find(x => x.task === 'grimoire-checkup-v1')!.messages[0].content).toContain('Mysteries the player goes after get answers');
+  });
+  test('without a lorebook, nothing about lore is said', async () => {
+    const h = host(); (h.api as any).world_books = { entries: { list: async () => ({ data: [], total: 0 }) } };
+    const { m, c } = await ready(h);
+    await c.checkup('chat-1', 'test'); await c.waitForJobs();
+    for (const call of m.calls) expect(call.messages[0].content).not.toContain('canon');
   });
 });

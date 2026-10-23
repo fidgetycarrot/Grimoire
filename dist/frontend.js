@@ -54,7 +54,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.13.3";
+var VERSION = "0.14.0";
 
 // src/frontend.ts
 var ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8 3v18"/><path d="M12 8h3M12 12h3"/></svg>';
@@ -230,7 +230,7 @@ function setup(ctx) {
   }
   function renderStart(view) {
     const card = el("section", "gm-card gm-stack");
-    card.append(el("h2", "", "Start a story notebook"), el("p", "gm-small", "Grimoire reads this chat’s card, your persona, the card’s lorebook, and anything already said. It writes a private plan for the story: what is really going on, what people want, and the threads that will move over time. You won’t see it unless you open it."));
+    card.append(el("h2", "", "Start a story notebook"), el("p", "gm-small", "Grimoire reads this chat’s card, your persona, the card’s and the chat’s lorebooks, and anything already said. It writes a private plan for the story: what is really going on, what people want, and the threads that will move over time. You won’t see it unless you open it."));
     const tone = select([["light", "Light"], ["balanced", "Balanced"], ["dark", "Dark"]], view.preferences.tone);
     const twist = el("input");
     twist.type = "checkbox";
