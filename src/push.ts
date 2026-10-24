@@ -1,4 +1,5 @@
 import { NotebookError, STAGES, type Notebook } from './notebook';
+import { slug } from './tidy';
 
 /**
  * Getting a stalled story moving, believably.
@@ -11,7 +12,7 @@ import { NotebookError, STAGES, type Notebook } from './notebook';
  */
 export type PushKind = 'person' | 'secret' | 'consequence' | 'surprise' | 'chapter';
 export const PUSH_KINDS: PushKind[] = ['person', 'secret', 'consequence', 'surprise', 'chapter'];
-export interface PushTie { kind: 'person' | 'thread' | 'seed' | 'event' | 'truth'; ref: string }
+export interface PushTie { kind: 'person' | 'thread' | 'seed' | 'event' | 'truth' | 'revealed'; ref: string }
 export interface Push { thread: string; from: PushTie }
 
 /** What the model is told: one shared rule set for the buttons and for talk. */
@@ -21,7 +22,7 @@ export const PUSH_RULES = `How to move the story:
 - It arrives as a small sign first: a message, a visitor, a rumor, a noticed change. The bigger part comes over the next few replies. Put it in one thread: an existing one (rewrite its next waiting step as the sign if needed) or a new one; that thread's first waiting step must be the sign.
 - The world moves; the player's character does not. Never plan what they do, say, or feel.
 - Keep it in the story's tone and setting, and respect the player's notes.
-- Return "push": {"thread": "the thread id that carries it", "from": {"kind": "person|thread|seed|event|truth", "ref": "the existing id it grows from, or for event and truth the index in events or hiddenTruth, counting from 0"}}.`;
+- Return "push": {"thread": "the thread id that carries it", "from": {"kind": "person|thread|seed|event|truth|revealed", "ref": "the existing id it grows from, or for event, truth, and revealed the index in events, hiddenTruth, or cameOut, counting from 0"}}.`;
 
 export const PUSH_ASKS: Record<PushKind, string> = {
   person: 'Someone the player knows, or knows of, makes a move: a person already in the notebook acts on what they want.',
@@ -32,29 +33,43 @@ export const PUSH_ASKS: Record<PushKind, string> = {
 };
 
 const ALLOWED: Record<PushKind, PushTie['kind'][]> = {
-  person: ['person'], secret: ['truth', 'seed'], consequence: ['event', 'thread', 'seed'],
-  surprise: ['person', 'thread', 'seed', 'event', 'truth'], chapter: ['person', 'thread', 'seed', 'event', 'truth'],
+  person: ['person'], secret: ['truth', 'seed'], consequence: ['event', 'thread', 'seed', 'revealed'],
+  surprise: ['person', 'thread', 'seed', 'event', 'truth', 'revealed'], chapter: ['person', 'thread', 'seed', 'event', 'truth', 'revealed'],
 };
+const TIE_KINDS: PushTie['kind'][] = ['person', 'thread', 'seed', 'event', 'truth', 'revealed'];
 const record = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
 const bad = (message: string): never => { throw new NotebookError(message, 'The model’s push wasn’t tied to anything already in the story, so nothing was changed.'); };
 
-/** Read and check the push against the notebook from before. */
-export function checkPush(previous: Notebook, revised: Notebook, value: unknown, kind: PushKind): Push {
+/**
+ * Read and check the push against the notebook from before. Ids are matched
+ * loosely (a title or name works too). A new chapter grows from everything
+ * that has happened, so it may bring in new people, and on a second try a
+ * tie that still doesn't check out is let go rather than failing the chapter.
+ */
+export function checkPush(previous: Notebook, revised: Notebook, value: unknown, kind: PushKind, lenient = false): Push {
   const input = record(value), from = record(input.from);
-  const thread = typeof input.thread === 'string' ? input.thread : '';
-  const tie: PushTie = { kind: from.kind as PushTie['kind'], ref: String(from.ref ?? '') };
+  const named = (list: Array<{ id: string; title?: string; name?: string; aliases?: string[] }>, ref: string) =>
+    list.find(x => x.id === ref) ?? list.find(x => [x.id, x.title, x.name, ...(x.aliases ?? [])].some(k => k && slug(k) === slug(ref)));
+  const thread = named(revised.threads, typeof input.thread === 'string' ? input.thread : '')?.id ?? (typeof input.thread === 'string' ? input.thread : '');
+  const rawKind = typeof from.kind === 'string' ? from.kind.toLowerCase() : '';
+  const tie: PushTie = { kind: (TIE_KINDS.includes(rawKind as PushTie['kind']) ? rawKind : rawKind === 'cameout' ? 'revealed' : rawKind) as PushTie['kind'], ref: String(from.ref ?? '') };
+  if (tie.kind === 'person' || tie.kind === 'thread' || tie.kind === 'seed') tie.ref = named((tie.kind === 'person' ? previous.people : tie.kind === 'thread' ? previous.threads : previous.seeds) as Array<{ id: string }>, tie.ref)?.id ?? tie.ref;
   const carrier = revised.threads.find(t => t.id === thread);
   if (!carrier) bad('"push.thread" must name a thread in the returned notebook.');
   if (carrier!.status !== 'open' || !carrier!.steps.some(s => s.status === 'waiting')) bad(`Thread "${thread}" must be open with a waiting step: its first waiting step is the sign.`);
-  if (!ALLOWED[kind].includes(tie.kind)) bad(`"push.from.kind" must be one of: ${ALLOWED[kind].join(', ')}.`);
-  const exists = tie.kind === 'person' ? previous.people.some(p => p.id === tie.ref && p.status === 'active')
+  const index = (n: number) => /^\d+$/.test(tie.ref) && Number(tie.ref) < n;
+  const exists = ALLOWED[kind].includes(tie.kind) && (tie.kind === 'person' ? previous.people.some(p => p.id === tie.ref && (p.status === 'active' || kind !== 'person'))
     : tie.kind === 'thread' ? previous.threads.some(t => t.id === tie.ref)
     : tie.kind === 'seed' ? previous.seeds.some(s => s.id === tie.ref)
-    : tie.kind === 'event' ? /^\d+$/.test(tie.ref) && Number(tie.ref) < previous.events.length
-    : /^\d+$/.test(tie.ref) && Number(tie.ref) < previous.story.hiddenTruth.length;
-  if (!exists) bad(`"push.from" must point at something already in the notebook before this change (${tie.kind} "${tie.ref}" isn't there).`);
+    : tie.kind === 'event' ? index(previous.events.length)
+    : tie.kind === 'revealed' ? index(previous.story.cameOut.length)
+    : index(previous.story.hiddenTruth.length));
+  if (!exists && !(lenient && kind === 'chapter')) {
+    if (!ALLOWED[kind].includes(tie.kind)) bad(`"push.from.kind" must be one of: ${ALLOWED[kind].join(', ')}.`);
+    bad(`"push.from" must point at something already in the notebook before this change (${tie.kind} "${tie.ref}" isn't there). For people, threads, and seeds use their id; for event, truth, and revealed use the index in events, hiddenTruth, or cameOut, counting from 0.`);
+  }
   const old = previous.threads.find(t => t.id === thread);
-  if (!old && !carrier!.people.some(id => previous.people.some(p => p.id === id))) bad(`New thread "${thread}" must involve at least one person already in the notebook.`);
+  if (!old && kind !== 'chapter' && !carrier!.people.some(id => previous.people.some(p => p.id === id))) bad(`New thread "${thread}" must involve at least one person already in the notebook.`);
   if (kind === 'chapter' && revised.arc.stage !== STAGES[revised.arc.shape][0]) bad(`A new chapter starts at arc.stage "${STAGES[revised.arc.shape][0]}".`);
   return { thread, from: tie };
 }

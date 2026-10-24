@@ -649,7 +649,7 @@ export class NotebookController {
             let notebook: Notebook | null = null, skip = 0, moment = live.moment, clock = live.clock;
             if (proposed) {
               let revised = validateNotebook(tidyNotebook(proposed, base.notebook));
-              if (kind) revised = launchPush(revised, checkPush(base.notebook, revised, output.push, kind));
+              if (kind) revised = launchPush(revised, checkPush(base.notebook, revised, output.push, kind, round > 1));
               revised = storyRules(base.notebook, revised, round, { playerAsked: true }, state.preferences);
               // A new chapter may open after a jump in time. Only the parts of the clock Grimoire owns move; the narrator is told.
               if (kind === 'chapter') skip = Math.min(720, Math.max(0, Math.round(Number(output.skipHours) || 0)));

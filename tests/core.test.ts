@@ -796,3 +796,27 @@ describe('stages only move forward', () => {
     expect(holdStage(before, fresh, { hours: 1, reply: 70, waits: { urgent: 4, steady: 15, slow: 40 } }).arc.stage).toBe('setup');
   });
 });
+
+describe('pushes tie to the story, loosely enough for a new chapter', () => {
+  const { checkPush } = require('../src/push');
+  const { validateNotebook } = require('../src/notebook');
+  const before = () => { const nb = validateNotebook(sampleNotebook()); nb.story.cameOut = [{ text: 'Oswin stole the ring.' }]; return nb; };
+  const chapter = () => {
+    const nb = structuredClone(before());
+    nb.threads.push({ id: 'new-rival', title: 'A new rival', speed: 'steady', why: 'A buyer wants the ring back from whoever has it.', hint: '', people: [], status: 'open', closedReason: '', ifFollowed: '', ifIgnored: '', steps: [{ id: 'buyer', text: 'A buyer arrives.', sign: 'A stranger in a red coat.', afterHours: 0, status: 'waiting' }] });
+    nb.arc = { ...nb.arc, stage: 'setup', main: 'new-rival' };
+    return nb;
+  };
+  test('a chapter can grow from a secret that came out, with new people', () => {
+    expect(checkPush(before(), chapter(), { thread: 'new-rival', from: { kind: 'revealed', ref: 0 } }, 'chapter').from).toEqual({ kind: 'revealed', ref: '0' });
+    // An ordinary push still needs someone known in a new storyline.
+    expect(() => checkPush(before(), chapter(), { thread: 'new-rival', from: { kind: 'revealed', ref: 0 } }, 'surprise')).toThrow();
+  });
+  test('names and titles work in place of ids', () => {
+    expect(checkPush(before(), chapter(), { thread: 'A new rival', from: { kind: 'person', ref: 'Oswin' } }, 'chapter').from).toEqual({ kind: 'person', ref: 'harbor-master' });
+  });
+  test('on a second try, a chapter whose tie still does not check out goes ahead', () => {
+    expect(() => checkPush(before(), chapter(), { thread: 'new-rival', from: { kind: 'truth', ref: 7 } }, 'chapter')).toThrow();
+    expect(checkPush(before(), chapter(), { thread: 'new-rival', from: { kind: 'truth', ref: 7 } }, 'chapter', true).thread).toBe('new-rival');
+  });
+});

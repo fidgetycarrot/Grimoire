@@ -955,6 +955,236 @@ function paceLine(pace, notebook) {
   return pace === "auto" ? RHYTHM[notebook.rhythm] : PACE[pace];
 }
 
+// src/tidy.ts
+var record3 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
+var array = (v) => Array.isArray(v) ? v : v === undefined || v === null || v === "" ? [] : [v];
+var CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
+function plain(value, max = LIMITS.text) {
+  let s = typeof value === "string" ? value : typeof value === "number" || typeof value === "boolean" ? String(value) : Array.isArray(value) ? value.filter((x) => typeof x === "string" || typeof x === "number").join("; ") : "";
+  s = s.replace(/<\s*\/?\s*[a-z][a-z0-9:-]*(?:\s[^>]*|\/?)>/gi, " ").replace(/\{\{[^{}]*\}\}|<%[^%]*%>/g, " ").replace(/\{\{|\}\}|<%|%>/g, "").replace(CONTROL, "").replace(/\s+/g, " ").trim();
+  if (s.length <= max)
+    return s;
+  const cut = s.slice(0, max - 1), word = cut.replace(/\s+\S*$/, "");
+  return `${(word.length > max * 0.6 ? word : cut).replace(/[\s,;:.-]+$/, "")}\u2026`;
+}
+function plainBlock(value, max) {
+  const s = (typeof value === "string" ? value : "").replace(/<\s*\/?\s*[a-z][a-z0-9:-]*(?:\s[^>]*|\/?)>/gi, " ").replace(/\{\{[^{}]*\}\}|<%[^%]*%>/g, " ").replace(/\{\{|\}\}|<%|%>/g, "").replace(/\r\n?/g, `
+`).replace(CONTROL, "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, `
+
+`).trim();
+  return s.length <= max ? s : `${s.slice(0, max - 1).replace(/\s+\S*$/, "")}\u2026`;
+}
+function slug(value) {
+  return String(typeof value === "string" || typeof value === "number" ? value : "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036F]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+/, "").slice(0, 41).replace(/-+$/, "");
+}
+function ids(items, prefix) {
+  const seen = new Set;
+  return items.map((item, i) => {
+    let id = item.id || `${prefix}-${i + 1}`, n = 2;
+    while (seen.has(id))
+      id = `${(item.id || prefix).slice(0, 37)}-${n++}`;
+    seen.add(id);
+    return id === item.id ? item : { ...item, id };
+  });
+}
+function pick(value, options, synonyms, fallback) {
+  const v = typeof value === "string" ? value.trim().toLowerCase().replace(/[\s_]+/g, "-") : "";
+  if (options.includes(v))
+    return v;
+  return synonyms[v] ?? fallback;
+}
+function cap(items, max, score) {
+  if (items.length <= max)
+    return items;
+  const keep = new Set(items.map((item, i) => ({ item, i, s: score(item) })).sort((a, b) => b.s - a.s || a.i - b.i).slice(0, max).map((x) => x.i));
+  return items.filter((_, i) => keep.has(i));
+}
+var truthy = (v) => v === true || /^(true|yes|1)$/i.test(String(v ?? ""));
+var human = (id) => id ? id.replace(/-/g, " ").replace(/^./, (c) => c.toUpperCase()) : "";
+var DEFAULT_AFTER = { urgent: 2, steady: 24, slow: 72 };
+var SPEED = { fast: "urgent", immediate: "urgent", high: "urgent", quick: "urgent", medium: "steady", normal: "steady", moderate: "steady", "slow-burn": "slow", slowburn: "slow", low: "slow", gradual: "slow" };
+var STEP = { done: "shown", happened: "shown", complete: "shown", completed: "shown", seen: "shown", revealed: "shown", hidden: "offscreen", background: "offscreen", "off-screen": "offscreen", dropped: "skipped", cancelled: "skipped", canceled: "skipped", pending: "waiting", planned: "waiting", upcoming: "waiting", due: "waiting" };
+var THREAD = { active: "open", ongoing: "open", resolved: "closed", done: "closed", finished: "closed", complete: "closed", "on-hold": "paused", dormant: "paused", hold: "paused" };
+var BEAT = { done: "happened", complete: "happened", shown: "happened", planned: "possible", pending: "possible", waiting: "possible", cancelled: "dropped", canceled: "dropped", skipped: "dropped" };
+var PERSON = { dead: "gone", left: "gone", departed: "gone", inactive: "gone", absent: "gone" };
+var RHYTHM2 = { climax: "peak", building: "rising", tense: "rising", cooldown: "aftermath", resolution: "aftermath", quiet: "calm", stuck: "stalled" };
+function tidyNotebook(value, previous) {
+  const input = record3(value), story = record3(input.story);
+  let people = ids(array(input.people).map((raw) => {
+    const p = record3(raw), name = plain(p.name, 80) || human(slug(p.id)), id = slug(p.id) || slug(name);
+    return {
+      id,
+      name,
+      aliases: [...new Set(array(p.aliases).map((a) => plain(a, 80)).filter(Boolean))].slice(0, 8),
+      role: plain(p.role, LIMITS.short),
+      wants: plain(p.wants),
+      doing: plain(p.doing),
+      hint: plain(p.hint),
+      voice: plain(p.voice, 300) || (previous?.people.find((x) => x.id === id)?.voice ?? ""),
+      depth: plain(p.depth, 400) || (previous?.people.find((x) => x.id === id)?.depth ?? ""),
+      sheet: plain(p.sheet, LIMITS.sheet) || (previous?.people.find((x) => x.id === id)?.sheet ?? ""),
+      own: plain(p.own, LIMITS.own) || (previous?.people.find((x) => x.id === id)?.own ?? ""),
+      met: truthy(p.met),
+      status: pick(p.status, ["active", "gone"], PERSON, "active")
+    };
+  }).filter((p) => p.name), "person");
+  if (previous) {
+    for (const old of previous.people)
+      if (!people.some((p) => p.id === old.id))
+        people.push(structuredClone(old));
+  }
+  const earlier = new Set(previous?.people.map((p) => p.id));
+  people = cap(people, LIMITS.people, (p) => (earlier.has(p.id) ? 4 : 0) + (p.met ? 2 : 0) + (p.status === "active" ? 1 : 0));
+  const sheeted = people.filter((p) => p.sheet).sort((a, b) => Number(!!b.own) - Number(!!a.own) || Number(!!previous?.people.find((x) => x.id === b.id)?.sheet) - Number(!!previous?.people.find((x) => x.id === a.id)?.sheet) || Number(b.met) - Number(a.met));
+  for (const p of sheeted.slice(LIMITS.sheets))
+    p.sheet = "";
+  const who = new Map;
+  for (const p of people)
+    for (const key of [p.id, p.name, ...p.aliases])
+      who.set(slug(key), p.id);
+  let threads = ids(array(input.threads).map((raw) => {
+    const t = record3(raw), id = slug(t.id) || slug(t.title), speed = pick(t.speed, ["urgent", "steady", "slow"], SPEED, "steady");
+    const status = pick(t.status, ["open", "paused", "closed"], THREAD, "open");
+    const steps = ids(array(t.steps).map((rawStep) => {
+      const s = record3(rawStep), hours = typeof s.afterHours === "number" ? s.afterHours : parseFloat(String(s.afterHours ?? ""));
+      const text = plain(s.text) || plain(s.sign);
+      return {
+        id: slug(s.id) || slug(text).slice(0, 30),
+        text,
+        sign: plain(s.sign),
+        afterHours: Number.isFinite(hours) ? Math.min(Math.max(hours, 0), 24 * 365) : DEFAULT_AFTER[speed],
+        status: pick(s.status, ["waiting", "shown", "offscreen", "skipped"], STEP, "waiting")
+      };
+    }).filter((s) => s.text), "step");
+    return {
+      id,
+      title: plain(t.title, LIMITS.short) || human(id),
+      speed,
+      why: plain(t.why),
+      hint: plain(t.hint),
+      people: [...new Set(array(t.people).map((x) => who.get(slug(x))).filter((x) => !!x))].slice(0, 8),
+      status,
+      closedReason: plain(t.closedReason, LIMITS.short) || (status === "closed" ? "Resolved in the story" : ""),
+      ifFollowed: plain(t.ifFollowed),
+      ifIgnored: plain(t.ifIgnored),
+      steps
+    };
+  }).filter((t) => t.title), "thread");
+  if (previous) {
+    for (const old of previous.threads) {
+      const next = threads.find((t) => t.id === old.id);
+      if (!next) {
+        threads.push(structuredClone(old));
+        continue;
+      }
+      old.steps.forEach((step, i) => {
+        if (!next.steps.some((s) => s.id === step.id))
+          next.steps.splice(Math.min(i, next.steps.length), 0, structuredClone(step));
+      });
+      next.steps = next.steps.map((s) => {
+        const before = old.steps.find((o) => o.id === s.id);
+        return before && before.status !== "waiting" && !before.quick && s.status === "waiting" ? { ...s, status: before.status } : s;
+      });
+    }
+  }
+  const knownThreads = new Set(previous?.threads.map((t) => t.id));
+  threads = cap(threads, LIMITS.threads, (t) => (knownThreads.has(t.id) ? 4 : 0) + (t.status === "open" ? 2 : t.status === "paused" ? 1 : 0));
+  for (const t of threads) {
+    const kept = new Set(previous?.threads.find((o) => o.id === t.id)?.steps.map((s) => s.id));
+    t.steps = cap(t.steps, LIMITS.steps, (s) => (kept.has(s.id) ? 4 : 0) + (s.status !== "waiting" ? 2 : 0));
+    t.people = t.people.filter((id) => people.some((p) => p.id === id));
+  }
+  const threadIds = new Set(threads.map((t) => t.id)), byTitle = new Map(threads.map((t) => [slug(t.title), t.id]));
+  let beats = ids(array(input.beats).map((raw) => {
+    const b = record3(raw), text = plain(b.text), thread = slug(b.thread);
+    return {
+      id: slug(b.id) || slug(text).slice(0, 30),
+      text,
+      purpose: plain(b.purpose),
+      conditions: plain(b.conditions),
+      thread: threadIds.has(thread) ? thread : byTitle.get(thread) ?? "",
+      intensity: pick(b.intensity, ["low", "high"], { big: "high", major: "high", strong: "high", medium: "low", small: "low", minor: "low" }, "low"),
+      status: pick(b.status, ["possible", "happened", "dropped"], BEAT, "possible")
+    };
+  }).filter((b) => b.text), "beat");
+  if (previous)
+    for (const old of previous.beats) {
+      if (old.status !== "happened" || old.quick)
+        continue;
+      const next = beats.find((b) => b.id === old.id);
+      if (!next)
+        beats.push(structuredClone(old));
+      else
+        next.status = "happened";
+    }
+  beats = cap(beats, LIMITS.beats, (b) => b.status === "happened" ? 4 : b.status === "possible" ? 2 : 0);
+  const linkable = new Map([...threads.map((t) => [t.id, t.id]), ...threads.map((t) => [slug(t.title), t.id]), ...beats.map((b) => [b.id, b.id]), ["turn", "turn"]]);
+  let seeds = ids(array(input.seeds).map((raw) => {
+    const s = record3(raw), detail = plain(s.detail, LIMITS.short) || plain(s.text, LIMITS.short);
+    return {
+      id: slug(s.id) || slug(detail).slice(0, 30),
+      detail,
+      payoff: plain(s.payoff),
+      pays: linkable.get(slug(s.pays)) ?? "",
+      status: pick(s.status, ["waiting", "planted", "paid", "echo", "dropped"], { mentioned: "planted", shown: "planted", used: "paid", "paid-off": "paid", resolved: "paid", done: "paid", offscreen: "echo", background: "echo", rumor: "echo", news: "echo", cancelled: "dropped", skipped: "dropped" }, "waiting")
+    };
+  }).filter((s) => s.detail), "seed");
+  if (previous)
+    for (const old of previous.seeds) {
+      const next = seeds.find((s) => s.id === old.id);
+      if (!next)
+        seeds.push(structuredClone(old));
+      else if (old.status !== "waiting" && !old.quick && next.status === "waiting")
+        next.status = old.status;
+    }
+  const keptSeeds = new Set(previous?.seeds.map((s) => s.id));
+  seeds = cap(seeds, LIMITS.seeds, (s) => (keptSeeds.has(s.id) ? 4 : 0) + (s.status === "planted" ? 2 : s.status === "waiting" ? 1 : 0));
+  const a = record3(input.arc), shapeWord = typeof a.shape === "string" ? a.shape.toLowerCase().replace(/[^a-z]/g, "") : "";
+  const shape = shapeWord.startsWith("kish") ? "kishotenketsu" : shapeWord === "conflict" ? "conflict" : previous?.arc.shape ?? "conflict";
+  const stageWord = typeof a.stage === "string" ? a.stage.toLowerCase().normalize("NFKD").replace(/[^a-z]/g, "") : "";
+  const STAGE_WORDS = { introduction: "ki", development: "sho", shou: "sho", turn: "ten", twist: "ten", conclusion: "ketsu", reconciliation: "ketsu", together: "ketsu", risingaction: "rising", build: "rising", resolve: "resolution", aftermath: "resolution" };
+  const named = STAGES[shape].includes(stageWord) ? stageWord : STAGE_WORDS[stageWord];
+  const stage = named && STAGES[shape].includes(named) ? named : previous && previous.arc.shape === shape ? previous.arc.stage : STAGES[shape][0];
+  const mainWord = slug(a.main), main = threadIds.has(mainWord) ? mainWord : byTitle.get(mainWord) ?? (!mainWord && previous && threadIds.has(previous.arc.main) ? previous.arc.main : "");
+  const arc = { shape, stage, turn: plain(a.turn), main };
+  let events = array(input.events).map((e) => plain(typeof e === "string" ? e : record3(e).text)).filter(Boolean);
+  if (events.length > LIMITS.events) {
+    const fold = events.length - LIMITS.events + 1;
+    events = [plain(`Earlier: ${events.slice(0, fold).join("; ")}`), ...events.slice(fold)];
+  }
+  const c = record3(input.clock), day = Math.round(Number(c.day)), hour = Number(c.hour), label = plain(c.label, LIMITS.short);
+  const given = c.hour !== null && c.hour !== undefined && c.hour !== "" && Number.isFinite(hour) && hour >= 0 && hour < 24 ? hour : null;
+  const clock = { day: Number.isFinite(day) && day >= 0 && day <= 1e7 ? day : previous?.clock.day ?? 1, hour: given ?? readTime(label)?.hour ?? null, label };
+  const question = plain(story.question) || plain(story.direction) || plain(story.stakes) || previous?.story.question || "";
+  const cameOut = [];
+  for (const item of array(story.cameOut)) {
+    const t = plain(typeof item === "string" ? item : record3(item).text);
+    if (t && cameOut.length < LIMITS.truths && !cameOut.some((r) => r.text.toLowerCase() === t.toLowerCase()))
+      cameOut.push({ text: t });
+  }
+  const hiddenTruth = array(story.hiddenTruth).map((x) => plain(x)).filter((t) => t && !cameOut.some((r) => r.text.toLowerCase() === t.toLowerCase())).slice(0, LIMITS.truths);
+  return {
+    version: 1,
+    story: {
+      question,
+      stakes: plain(story.stakes),
+      direction: plain(story.direction),
+      hiddenTruth,
+      twist: cameOut.some((r) => r.text.toLowerCase() === plain(story.twist).toLowerCase()) ? "" : plain(story.twist),
+      cameOut
+    },
+    arc,
+    people,
+    threads,
+    beats,
+    seeds,
+    events,
+    clock,
+    rhythm: pick(input.rhythm, ["calm", "rising", "peak", "aftermath", "stalled"], RHYTHM2, "calm"),
+    summary: plain(input.summary, LIMITS.short)
+  };
+}
+
 // src/push.ts
 var PUSH_KINDS = ["person", "secret", "consequence", "surprise", "chapter"];
 var PUSH_RULES = `How to move the story:
@@ -963,7 +1193,7 @@ var PUSH_RULES = `How to move the story:
 - It arrives as a small sign first: a message, a visitor, a rumor, a noticed change. The bigger part comes over the next few replies. Put it in one thread: an existing one (rewrite its next waiting step as the sign if needed) or a new one; that thread's first waiting step must be the sign.
 - The world moves; the player's character does not. Never plan what they do, say, or feel.
 - Keep it in the story's tone and setting, and respect the player's notes.
-- Return "push": {"thread": "the thread id that carries it", "from": {"kind": "person|thread|seed|event|truth", "ref": "the existing id it grows from, or for event and truth the index in events or hiddenTruth, counting from 0"}}.`;
+- Return "push": {"thread": "the thread id that carries it", "from": {"kind": "person|thread|seed|event|truth|revealed", "ref": "the existing id it grows from, or for event, truth, and revealed the index in events, hiddenTruth, or cameOut, counting from 0"}}.`;
 var PUSH_ASKS = {
   person: "Someone the player knows, or knows of, makes a move: a person already in the notebook acts on what they want.",
   secret: "A secret starts to surface: something still in hiddenTruth (never anything in cameOut, which the player already knows), or what a planted breadcrumb really means, begins to come out.",
@@ -974,30 +1204,37 @@ var PUSH_ASKS = {
 var ALLOWED = {
   person: ["person"],
   secret: ["truth", "seed"],
-  consequence: ["event", "thread", "seed"],
-  surprise: ["person", "thread", "seed", "event", "truth"],
-  chapter: ["person", "thread", "seed", "event", "truth"]
+  consequence: ["event", "thread", "seed", "revealed"],
+  surprise: ["person", "thread", "seed", "event", "truth", "revealed"],
+  chapter: ["person", "thread", "seed", "event", "truth", "revealed"]
 };
-var record3 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
+var TIE_KINDS = ["person", "thread", "seed", "event", "truth", "revealed"];
+var record4 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
 var bad = (message) => {
   throw new NotebookError(message, "The model\u2019s push wasn\u2019t tied to anything already in the story, so nothing was changed.");
 };
-function checkPush(previous, revised, value, kind) {
-  const input = record3(value), from = record3(input.from);
-  const thread = typeof input.thread === "string" ? input.thread : "";
-  const tie = { kind: from.kind, ref: String(from.ref ?? "") };
+function checkPush(previous, revised, value, kind, lenient = false) {
+  const input = record4(value), from = record4(input.from);
+  const named = (list, ref) => list.find((x) => x.id === ref) ?? list.find((x) => [x.id, x.title, x.name, ...x.aliases ?? []].some((k) => k && slug(k) === slug(ref)));
+  const thread = named(revised.threads, typeof input.thread === "string" ? input.thread : "")?.id ?? (typeof input.thread === "string" ? input.thread : "");
+  const rawKind = typeof from.kind === "string" ? from.kind.toLowerCase() : "";
+  const tie = { kind: TIE_KINDS.includes(rawKind) ? rawKind : rawKind === "cameout" ? "revealed" : rawKind, ref: String(from.ref ?? "") };
+  if (tie.kind === "person" || tie.kind === "thread" || tie.kind === "seed")
+    tie.ref = named(tie.kind === "person" ? previous.people : tie.kind === "thread" ? previous.threads : previous.seeds, tie.ref)?.id ?? tie.ref;
   const carrier = revised.threads.find((t) => t.id === thread);
   if (!carrier)
     bad('"push.thread" must name a thread in the returned notebook.');
   if (carrier.status !== "open" || !carrier.steps.some((s) => s.status === "waiting"))
     bad(`Thread "${thread}" must be open with a waiting step: its first waiting step is the sign.`);
-  if (!ALLOWED[kind].includes(tie.kind))
-    bad(`"push.from.kind" must be one of: ${ALLOWED[kind].join(", ")}.`);
-  const exists = tie.kind === "person" ? previous.people.some((p) => p.id === tie.ref && p.status === "active") : tie.kind === "thread" ? previous.threads.some((t) => t.id === tie.ref) : tie.kind === "seed" ? previous.seeds.some((s) => s.id === tie.ref) : tie.kind === "event" ? /^\d+$/.test(tie.ref) && Number(tie.ref) < previous.events.length : /^\d+$/.test(tie.ref) && Number(tie.ref) < previous.story.hiddenTruth.length;
-  if (!exists)
-    bad(`"push.from" must point at something already in the notebook before this change (${tie.kind} "${tie.ref}" isn't there).`);
+  const index = (n) => /^\d+$/.test(tie.ref) && Number(tie.ref) < n;
+  const exists = ALLOWED[kind].includes(tie.kind) && (tie.kind === "person" ? previous.people.some((p) => p.id === tie.ref && (p.status === "active" || kind !== "person")) : tie.kind === "thread" ? previous.threads.some((t) => t.id === tie.ref) : tie.kind === "seed" ? previous.seeds.some((s) => s.id === tie.ref) : tie.kind === "event" ? index(previous.events.length) : tie.kind === "revealed" ? index(previous.story.cameOut.length) : index(previous.story.hiddenTruth.length));
+  if (!exists && !(lenient && kind === "chapter")) {
+    if (!ALLOWED[kind].includes(tie.kind))
+      bad(`"push.from.kind" must be one of: ${ALLOWED[kind].join(", ")}.`);
+    bad(`"push.from" must point at something already in the notebook before this change (${tie.kind} "${tie.ref}" isn't there). For people, threads, and seeds use their id; for event, truth, and revealed use the index in events, hiddenTruth, or cameOut, counting from 0.`);
+  }
   const old = previous.threads.find((t) => t.id === thread);
-  if (!old && !carrier.people.some((id) => previous.people.some((p) => p.id === id)))
+  if (!old && kind !== "chapter" && !carrier.people.some((id) => previous.people.some((p) => p.id === id)))
     bad(`New thread "${thread}" must involve at least one person already in the notebook.`);
   if (kind === "chapter" && revised.arc.stage !== STAGES[revised.arc.shape][0])
     bad(`A new chapter starts at arc.stage "${STAGES[revised.arc.shape][0]}".`);
@@ -1028,7 +1265,7 @@ var LORE_ROOM = {
 };
 var NO_LORE = { rules: [], entries: [], index: [], more: 0 };
 var hasLore = (lore) => lore.rules.length + lore.entries.length + lore.index.length > 0;
-var record4 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
+var record5 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
 var strings = (v) => Array.isArray(v) ? v.filter((k) => typeof k === "string").map((k) => k.trim()).filter(Boolean) : [];
 var oneLine = (s) => s.replace(/\s+/g, " ").trim();
 function chapterOf(title) {
@@ -1036,7 +1273,7 @@ function chapterOf(title) {
   return m ? { chapter: m[1].trim(), section: m[2].trim() } : { chapter: "", section: title };
 }
 function toEntry(raw, fallbackId) {
-  const e = record4(raw);
+  const e = record5(raw);
   if (e.disabled === true || e.disable === true)
     return null;
   const content = typeof e.content === "string" ? e.content.trim() : "";
@@ -1656,236 +1893,6 @@ class MeaningIndex {
   }
 }
 
-// src/tidy.ts
-var record5 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
-var array = (v) => Array.isArray(v) ? v : v === undefined || v === null || v === "" ? [] : [v];
-var CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
-function plain(value, max = LIMITS.text) {
-  let s = typeof value === "string" ? value : typeof value === "number" || typeof value === "boolean" ? String(value) : Array.isArray(value) ? value.filter((x) => typeof x === "string" || typeof x === "number").join("; ") : "";
-  s = s.replace(/<\s*\/?\s*[a-z][a-z0-9:-]*(?:\s[^>]*|\/?)>/gi, " ").replace(/\{\{[^{}]*\}\}|<%[^%]*%>/g, " ").replace(/\{\{|\}\}|<%|%>/g, "").replace(CONTROL, "").replace(/\s+/g, " ").trim();
-  if (s.length <= max)
-    return s;
-  const cut = s.slice(0, max - 1), word = cut.replace(/\s+\S*$/, "");
-  return `${(word.length > max * 0.6 ? word : cut).replace(/[\s,;:.-]+$/, "")}\u2026`;
-}
-function plainBlock(value, max) {
-  const s = (typeof value === "string" ? value : "").replace(/<\s*\/?\s*[a-z][a-z0-9:-]*(?:\s[^>]*|\/?)>/gi, " ").replace(/\{\{[^{}]*\}\}|<%[^%]*%>/g, " ").replace(/\{\{|\}\}|<%|%>/g, "").replace(/\r\n?/g, `
-`).replace(CONTROL, "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, `
-
-`).trim();
-  return s.length <= max ? s : `${s.slice(0, max - 1).replace(/\s+\S*$/, "")}\u2026`;
-}
-function slug(value) {
-  return String(typeof value === "string" || typeof value === "number" ? value : "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036F]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+/, "").slice(0, 41).replace(/-+$/, "");
-}
-function ids(items, prefix) {
-  const seen = new Set;
-  return items.map((item, i) => {
-    let id = item.id || `${prefix}-${i + 1}`, n = 2;
-    while (seen.has(id))
-      id = `${(item.id || prefix).slice(0, 37)}-${n++}`;
-    seen.add(id);
-    return id === item.id ? item : { ...item, id };
-  });
-}
-function pick(value, options, synonyms, fallback) {
-  const v = typeof value === "string" ? value.trim().toLowerCase().replace(/[\s_]+/g, "-") : "";
-  if (options.includes(v))
-    return v;
-  return synonyms[v] ?? fallback;
-}
-function cap(items, max, score) {
-  if (items.length <= max)
-    return items;
-  const keep = new Set(items.map((item, i) => ({ item, i, s: score(item) })).sort((a, b) => b.s - a.s || a.i - b.i).slice(0, max).map((x) => x.i));
-  return items.filter((_, i) => keep.has(i));
-}
-var truthy = (v) => v === true || /^(true|yes|1)$/i.test(String(v ?? ""));
-var human = (id) => id ? id.replace(/-/g, " ").replace(/^./, (c) => c.toUpperCase()) : "";
-var DEFAULT_AFTER = { urgent: 2, steady: 24, slow: 72 };
-var SPEED = { fast: "urgent", immediate: "urgent", high: "urgent", quick: "urgent", medium: "steady", normal: "steady", moderate: "steady", "slow-burn": "slow", slowburn: "slow", low: "slow", gradual: "slow" };
-var STEP = { done: "shown", happened: "shown", complete: "shown", completed: "shown", seen: "shown", revealed: "shown", hidden: "offscreen", background: "offscreen", "off-screen": "offscreen", dropped: "skipped", cancelled: "skipped", canceled: "skipped", pending: "waiting", planned: "waiting", upcoming: "waiting", due: "waiting" };
-var THREAD = { active: "open", ongoing: "open", resolved: "closed", done: "closed", finished: "closed", complete: "closed", "on-hold": "paused", dormant: "paused", hold: "paused" };
-var BEAT = { done: "happened", complete: "happened", shown: "happened", planned: "possible", pending: "possible", waiting: "possible", cancelled: "dropped", canceled: "dropped", skipped: "dropped" };
-var PERSON = { dead: "gone", left: "gone", departed: "gone", inactive: "gone", absent: "gone" };
-var RHYTHM2 = { climax: "peak", building: "rising", tense: "rising", cooldown: "aftermath", resolution: "aftermath", quiet: "calm", stuck: "stalled" };
-function tidyNotebook(value, previous) {
-  const input = record5(value), story = record5(input.story);
-  let people = ids(array(input.people).map((raw) => {
-    const p = record5(raw), name = plain(p.name, 80) || human(slug(p.id)), id = slug(p.id) || slug(name);
-    return {
-      id,
-      name,
-      aliases: [...new Set(array(p.aliases).map((a) => plain(a, 80)).filter(Boolean))].slice(0, 8),
-      role: plain(p.role, LIMITS.short),
-      wants: plain(p.wants),
-      doing: plain(p.doing),
-      hint: plain(p.hint),
-      voice: plain(p.voice, 300) || (previous?.people.find((x) => x.id === id)?.voice ?? ""),
-      depth: plain(p.depth, 400) || (previous?.people.find((x) => x.id === id)?.depth ?? ""),
-      sheet: plain(p.sheet, LIMITS.sheet) || (previous?.people.find((x) => x.id === id)?.sheet ?? ""),
-      own: plain(p.own, LIMITS.own) || (previous?.people.find((x) => x.id === id)?.own ?? ""),
-      met: truthy(p.met),
-      status: pick(p.status, ["active", "gone"], PERSON, "active")
-    };
-  }).filter((p) => p.name), "person");
-  if (previous) {
-    for (const old of previous.people)
-      if (!people.some((p) => p.id === old.id))
-        people.push(structuredClone(old));
-  }
-  const earlier = new Set(previous?.people.map((p) => p.id));
-  people = cap(people, LIMITS.people, (p) => (earlier.has(p.id) ? 4 : 0) + (p.met ? 2 : 0) + (p.status === "active" ? 1 : 0));
-  const sheeted = people.filter((p) => p.sheet).sort((a, b) => Number(!!b.own) - Number(!!a.own) || Number(!!previous?.people.find((x) => x.id === b.id)?.sheet) - Number(!!previous?.people.find((x) => x.id === a.id)?.sheet) || Number(b.met) - Number(a.met));
-  for (const p of sheeted.slice(LIMITS.sheets))
-    p.sheet = "";
-  const who = new Map;
-  for (const p of people)
-    for (const key of [p.id, p.name, ...p.aliases])
-      who.set(slug(key), p.id);
-  let threads = ids(array(input.threads).map((raw) => {
-    const t = record5(raw), id = slug(t.id) || slug(t.title), speed = pick(t.speed, ["urgent", "steady", "slow"], SPEED, "steady");
-    const status = pick(t.status, ["open", "paused", "closed"], THREAD, "open");
-    const steps = ids(array(t.steps).map((rawStep) => {
-      const s = record5(rawStep), hours = typeof s.afterHours === "number" ? s.afterHours : parseFloat(String(s.afterHours ?? ""));
-      const text = plain(s.text) || plain(s.sign);
-      return {
-        id: slug(s.id) || slug(text).slice(0, 30),
-        text,
-        sign: plain(s.sign),
-        afterHours: Number.isFinite(hours) ? Math.min(Math.max(hours, 0), 24 * 365) : DEFAULT_AFTER[speed],
-        status: pick(s.status, ["waiting", "shown", "offscreen", "skipped"], STEP, "waiting")
-      };
-    }).filter((s) => s.text), "step");
-    return {
-      id,
-      title: plain(t.title, LIMITS.short) || human(id),
-      speed,
-      why: plain(t.why),
-      hint: plain(t.hint),
-      people: [...new Set(array(t.people).map((x) => who.get(slug(x))).filter((x) => !!x))].slice(0, 8),
-      status,
-      closedReason: plain(t.closedReason, LIMITS.short) || (status === "closed" ? "Resolved in the story" : ""),
-      ifFollowed: plain(t.ifFollowed),
-      ifIgnored: plain(t.ifIgnored),
-      steps
-    };
-  }).filter((t) => t.title), "thread");
-  if (previous) {
-    for (const old of previous.threads) {
-      const next = threads.find((t) => t.id === old.id);
-      if (!next) {
-        threads.push(structuredClone(old));
-        continue;
-      }
-      old.steps.forEach((step, i) => {
-        if (!next.steps.some((s) => s.id === step.id))
-          next.steps.splice(Math.min(i, next.steps.length), 0, structuredClone(step));
-      });
-      next.steps = next.steps.map((s) => {
-        const before = old.steps.find((o) => o.id === s.id);
-        return before && before.status !== "waiting" && !before.quick && s.status === "waiting" ? { ...s, status: before.status } : s;
-      });
-    }
-  }
-  const knownThreads = new Set(previous?.threads.map((t) => t.id));
-  threads = cap(threads, LIMITS.threads, (t) => (knownThreads.has(t.id) ? 4 : 0) + (t.status === "open" ? 2 : t.status === "paused" ? 1 : 0));
-  for (const t of threads) {
-    const kept = new Set(previous?.threads.find((o) => o.id === t.id)?.steps.map((s) => s.id));
-    t.steps = cap(t.steps, LIMITS.steps, (s) => (kept.has(s.id) ? 4 : 0) + (s.status !== "waiting" ? 2 : 0));
-    t.people = t.people.filter((id) => people.some((p) => p.id === id));
-  }
-  const threadIds = new Set(threads.map((t) => t.id)), byTitle = new Map(threads.map((t) => [slug(t.title), t.id]));
-  let beats = ids(array(input.beats).map((raw) => {
-    const b = record5(raw), text = plain(b.text), thread = slug(b.thread);
-    return {
-      id: slug(b.id) || slug(text).slice(0, 30),
-      text,
-      purpose: plain(b.purpose),
-      conditions: plain(b.conditions),
-      thread: threadIds.has(thread) ? thread : byTitle.get(thread) ?? "",
-      intensity: pick(b.intensity, ["low", "high"], { big: "high", major: "high", strong: "high", medium: "low", small: "low", minor: "low" }, "low"),
-      status: pick(b.status, ["possible", "happened", "dropped"], BEAT, "possible")
-    };
-  }).filter((b) => b.text), "beat");
-  if (previous)
-    for (const old of previous.beats) {
-      if (old.status !== "happened" || old.quick)
-        continue;
-      const next = beats.find((b) => b.id === old.id);
-      if (!next)
-        beats.push(structuredClone(old));
-      else
-        next.status = "happened";
-    }
-  beats = cap(beats, LIMITS.beats, (b) => b.status === "happened" ? 4 : b.status === "possible" ? 2 : 0);
-  const linkable = new Map([...threads.map((t) => [t.id, t.id]), ...threads.map((t) => [slug(t.title), t.id]), ...beats.map((b) => [b.id, b.id]), ["turn", "turn"]]);
-  let seeds = ids(array(input.seeds).map((raw) => {
-    const s = record5(raw), detail = plain(s.detail, LIMITS.short) || plain(s.text, LIMITS.short);
-    return {
-      id: slug(s.id) || slug(detail).slice(0, 30),
-      detail,
-      payoff: plain(s.payoff),
-      pays: linkable.get(slug(s.pays)) ?? "",
-      status: pick(s.status, ["waiting", "planted", "paid", "echo", "dropped"], { mentioned: "planted", shown: "planted", used: "paid", "paid-off": "paid", resolved: "paid", done: "paid", offscreen: "echo", background: "echo", rumor: "echo", news: "echo", cancelled: "dropped", skipped: "dropped" }, "waiting")
-    };
-  }).filter((s) => s.detail), "seed");
-  if (previous)
-    for (const old of previous.seeds) {
-      const next = seeds.find((s) => s.id === old.id);
-      if (!next)
-        seeds.push(structuredClone(old));
-      else if (old.status !== "waiting" && !old.quick && next.status === "waiting")
-        next.status = old.status;
-    }
-  const keptSeeds = new Set(previous?.seeds.map((s) => s.id));
-  seeds = cap(seeds, LIMITS.seeds, (s) => (keptSeeds.has(s.id) ? 4 : 0) + (s.status === "planted" ? 2 : s.status === "waiting" ? 1 : 0));
-  const a = record5(input.arc), shapeWord = typeof a.shape === "string" ? a.shape.toLowerCase().replace(/[^a-z]/g, "") : "";
-  const shape = shapeWord.startsWith("kish") ? "kishotenketsu" : shapeWord === "conflict" ? "conflict" : previous?.arc.shape ?? "conflict";
-  const stageWord = typeof a.stage === "string" ? a.stage.toLowerCase().normalize("NFKD").replace(/[^a-z]/g, "") : "";
-  const STAGE_WORDS = { introduction: "ki", development: "sho", shou: "sho", turn: "ten", twist: "ten", conclusion: "ketsu", reconciliation: "ketsu", together: "ketsu", risingaction: "rising", build: "rising", resolve: "resolution", aftermath: "resolution" };
-  const named = STAGES[shape].includes(stageWord) ? stageWord : STAGE_WORDS[stageWord];
-  const stage = named && STAGES[shape].includes(named) ? named : previous && previous.arc.shape === shape ? previous.arc.stage : STAGES[shape][0];
-  const mainWord = slug(a.main), main = threadIds.has(mainWord) ? mainWord : byTitle.get(mainWord) ?? (!mainWord && previous && threadIds.has(previous.arc.main) ? previous.arc.main : "");
-  const arc = { shape, stage, turn: plain(a.turn), main };
-  let events = array(input.events).map((e) => plain(typeof e === "string" ? e : record5(e).text)).filter(Boolean);
-  if (events.length > LIMITS.events) {
-    const fold = events.length - LIMITS.events + 1;
-    events = [plain(`Earlier: ${events.slice(0, fold).join("; ")}`), ...events.slice(fold)];
-  }
-  const c = record5(input.clock), day = Math.round(Number(c.day)), hour = Number(c.hour), label = plain(c.label, LIMITS.short);
-  const given = c.hour !== null && c.hour !== undefined && c.hour !== "" && Number.isFinite(hour) && hour >= 0 && hour < 24 ? hour : null;
-  const clock = { day: Number.isFinite(day) && day >= 0 && day <= 1e7 ? day : previous?.clock.day ?? 1, hour: given ?? readTime(label)?.hour ?? null, label };
-  const question = plain(story.question) || plain(story.direction) || plain(story.stakes) || previous?.story.question || "";
-  const cameOut = [];
-  for (const item of array(story.cameOut)) {
-    const t = plain(typeof item === "string" ? item : record5(item).text);
-    if (t && cameOut.length < LIMITS.truths && !cameOut.some((r) => r.text.toLowerCase() === t.toLowerCase()))
-      cameOut.push({ text: t });
-  }
-  const hiddenTruth = array(story.hiddenTruth).map((x) => plain(x)).filter((t) => t && !cameOut.some((r) => r.text.toLowerCase() === t.toLowerCase())).slice(0, LIMITS.truths);
-  return {
-    version: 1,
-    story: {
-      question,
-      stakes: plain(story.stakes),
-      direction: plain(story.direction),
-      hiddenTruth,
-      twist: cameOut.some((r) => r.text.toLowerCase() === plain(story.twist).toLowerCase()) ? "" : plain(story.twist),
-      cameOut
-    },
-    arc,
-    people,
-    threads,
-    beats,
-    seeds,
-    events,
-    clock,
-    rhythm: pick(input.rhythm, ["calm", "rising", "peak", "aftermath", "stalled"], RHYTHM2, "calm"),
-    summary: plain(input.summary, LIMITS.short)
-  };
-}
-
 // src/quick.ts
 var QUICK = { yes: 0.7, no: 0.3, rhythm: 0.6, maxBeats: 6, maxFits: 6, maxTruths: 4, soon: 5 };
 var RHYTHMS = {
@@ -2400,7 +2407,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.18.1";
+var VERSION = "0.18.2";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -3217,7 +3224,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
             if (proposed) {
               let revised = validateNotebook(tidyNotebook(proposed, base.notebook));
               if (kind)
-                revised = launchPush(revised, checkPush(base.notebook, revised, output.push, kind));
+                revised = launchPush(revised, checkPush(base.notebook, revised, output.push, kind, round > 1));
               revised = storyRules(base.notebook, revised, round, { playerAsked: true }, state.preferences);
               if (kind === "chapter")
                 skip = Math.min(720, Math.max(0, Math.round(Number(output.skipHours) || 0)));
