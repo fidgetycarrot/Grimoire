@@ -67,7 +67,7 @@ describe('the panel', () => {
     expect(spent.button('Start a new chapter')!.className).toContain('gm-primary');
     const working = harness({ job: { id: 'j', kind: 'talk', status: 'running', label: 'Starting a new chapter', startedAt: Date.now() - 5000 } }); await tick();
     expect(working.root.textContent).toContain('Writing the next chapter…');
-    expect(working.root.querySelector('.gm-live .gm-dot')).not.toBeNull();
+    expect(working.root.querySelector('.gm-live .gm-pulse-dot')).not.toBeNull();
     expect(working.button('Start a new chapter')).toBeFalsy();
     const done = harness({ job: { id: 'j', kind: 'talk', status: 'complete', label: 'New chapter ready', startedAt: Date.now() - 60_000 } }); await tick();
     expect(done.root.textContent).toContain('A new chapter is set. It begins with the next reply.');

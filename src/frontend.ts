@@ -177,7 +177,7 @@ export function setup(ctx: SpindleFrontendContext) {
     if (job?.status === 'running' && job.label === CHAPTER_WORKING) {
       const live = el('div', 'gm-live'), words = el('span', 'gm-live-words');
       words.append(document.createTextNode('Writing the next chapter… '), since(job.startedAt));
-      live.append(el('span', 'gm-dot'), words, button('Stop', async () => { await act('cancel', { chatId: view.chatId }); notify('Stopped. Nothing was changed.'); }));
+      live.append(el('span', 'gm-pulse-dot'), words, button('Stop', async () => { await act('cancel', { chatId: view.chatId }); notify('Stopped. Nothing was changed.'); }));
       box.append(live, el('p', 'gm-hint', 'Grimoire is wrapping up what’s run its course and planning what comes next. This takes a minute or two.'));
       return box;
     }
