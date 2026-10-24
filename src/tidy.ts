@@ -99,7 +99,9 @@ export function tidyNotebook(value: unknown, previous?: Notebook): unknown {
     return { id, title: plain(t.title, LIMITS.short) || human(id), speed, why: plain(t.why), hint: plain(t.hint),
       people: [...new Set(array(t.people).map(x => who.get(slug(x))).filter((x): x is string => !!x))].slice(0, 8),
       status, closedReason: plain(t.closedReason, LIMITS.short) || (status === 'closed' ? 'Resolved in the story' : ''),
-      ifFollowed: plain(t.ifFollowed), ifIgnored: plain(t.ifIgnored), steps };
+      ifFollowed: plain(t.ifFollowed), ifIgnored: plain(t.ifIgnored), steps,
+      ...(status === 'closed' ? { outcome: pick(t.outcome, ['won', 'lost', 'faded'] as const, { win: 'won', success: 'won', resolved: 'won', fail: 'lost', failed: 'lost', loss: 'lost', abandoned: 'faded', dropped: 'faded', ignored: 'faded' }, previous?.threads.find(o => o.id === id)?.outcome ?? 'faded') } : {}),
+      ...(plain(t.scar, LIMITS.short) || previous?.threads.find(o => o.id === id)?.scar ? { scar: plain(t.scar, LIMITS.short) || previous!.threads.find(o => o.id === id)!.scar! } : {}) };
   }).filter(t => t.title), 'thread');
 
   if (previous) {

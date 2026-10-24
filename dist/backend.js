@@ -494,6 +494,8 @@ function validateNotebook(value) {
       ifFollowed: text(t.ifFollowed, `${path}.ifFollowed`),
       ifIgnored: text(t.ifIgnored, `${path}.ifIgnored`),
       steps,
+      ...t.outcome === "won" || t.outcome === "lost" || t.outcome === "faded" ? { outcome: t.outcome } : {},
+      ...t.scar ? { scar: text(t.scar, `${path}.scar`, LIMITS.short) } : {},
       ...typeof t.startAt === "number" && Number.isFinite(t.startAt) ? { startAt: t.startAt } : {},
       ...count(t.startReply) !== undefined ? { startReply: count(t.startReply) } : {}
     };
@@ -824,6 +826,7 @@ var STAGE = {
 var INTIMATE = "Pace: an intimate scene is under way. Let it play out at its own pace, for as long as the player wants. Nothing from outside interrupts it: planned developments wait until it is over.";
 var GUIDED = "The player gave guidance for this reply. It comes first: follow it, and where anything below disagrees, the guidance wins. No new developments this time.";
 var DEEPENING = "Pace: the scene is deepening. Let it grow through what people say and do; there is no need to escalate.";
+var GROUND = "People hold their ground: pleading, charm, tears, flirting, or a good speech earn no automatic yes, and closeness does not make anyone more generous, patient, or agreeable. Before anyone speaks, know what they are not saying.";
 var PROBLEMS = "Problems take time. Nothing gets solved in the scene it comes up in: a solution costs something, takes more than one step, and can fail. Nobody produces the money, the answer, the rescue, or the perfect plan out of nowhere, and no one fixes the player's trouble for them. Let problems weigh on people and grow until they are dealt with through effort.";
 var OPENING = "The story is just starting: keep the main storyline in front and moving, and keep side matters small for now.";
 var BRING_AFTER = 2;
@@ -924,6 +927,9 @@ function buildNote(input) {
     const tie = seeds.ready.find((s) => s.pays === beat.id && !used.has(s.id));
     lines.push(`A possible next moment, only if it follows naturally: ${beat.text}${beat.conditions ? ` (only if ${beat.conditions})` : ""}. Purpose: ${beat.purpose}${tie ? ` ${callback(tie)}` : ""}`);
   }
+  const scars = quiet ? [] : notebook.threads.filter((t) => t.status === "closed" && t.outcome === "lost" && t.scar).slice(-2);
+  if (scars.length)
+    lines.push(`Still felt from earlier: ${scars.map((t) => end(t.scar)).join(" ")}`);
   const loose = !developments.length && (notebook.rhythm === "calm" || notebook.rhythm === "stalled") ? seeds.ready.find((s) => !used.has(s.id) && s.pays !== "turn") : undefined;
   if (loose) {
     const line = callback(loose);
@@ -939,7 +945,7 @@ function buildNote(input) {
     lines.push(`Someone who could appear if it fits: ${newcomer.name}${newcomer.role ? `, ${newcomer.role}` : ""}. Wants ${newcomer.wants || "something of their own"}.`);
   const sheets = present.filter((p) => p.sheet || p.own).slice(0, 3).map((p) => `${p.name}:${p.own ? ` ${end(p.own)}` : ""}${p.sheet ? ` ${end(p.sheet)}` : ""}`.slice(0, 2600));
   const rules = `The latest messages decide what actually happened; skip anything they have made impossible. Never write the player character's actions, words, thoughts, or feelings. Keep secrets hidden and let them show only through small details.
-` + PROBLEMS;
+` + PROBLEMS + " " + GROUND;
   while (lines.length > 4 && lines.join(`
 `).length + rules.length + 1 > 2800)
     lines.pop();
@@ -1067,7 +1073,9 @@ function tidyNotebook(value, previous) {
       closedReason: plain(t.closedReason, LIMITS.short) || (status === "closed" ? "Resolved in the story" : ""),
       ifFollowed: plain(t.ifFollowed),
       ifIgnored: plain(t.ifIgnored),
-      steps
+      steps,
+      ...status === "closed" ? { outcome: pick(t.outcome, ["won", "lost", "faded"], { win: "won", success: "won", resolved: "won", fail: "lost", failed: "lost", loss: "lost", abandoned: "faded", dropped: "faded", ignored: "faded" }, previous?.threads.find((o) => o.id === id)?.outcome ?? "faded") } : {},
+      ...plain(t.scar, LIMITS.short) || previous?.threads.find((o) => o.id === id)?.scar ? { scar: plain(t.scar, LIMITS.short) || previous.threads.find((o) => o.id === id).scar } : {}
     };
   }).filter((t) => t.title), "thread");
   if (previous) {
@@ -1427,7 +1435,7 @@ var SHAPE = `{
  "arc": {"shape": "conflict|kishotenketsu", "stage": "setup|rising|climax|resolution for conflict; ki|sho|ten|ketsu for kishotenketsu", "turn": "kishotenketsu only: what the turn is, or empty", "main": "the id of the thread that is this part's main storyline"},
  "seeds": [{"id": "green-wax", "detail": "an ordinary-looking detail the narrator can mention in passing", "payoff": "what it turns out to mean later", "pays": "the thread id, beat id, or turn it pays into", "status": "waiting|planted|paid|echo|dropped"}],
  "people": [{"id": "cole", "name": "Cole", "aliases": [], "role": "short role", "wants": "what they want", "doing": "what they are doing about it right now, on or off screen", "hint": "a narrator-safe note on how to play them, with no secrets", "voice": "how they talk: word choice, sentence length and rhythm, habits and tics, what they never say, and one short sample line that shows the sound (an example, not a catchphrase); no secrets", "depth": "what keeps them from being a stock type: a contradiction (a want that pulls against a fear or a habit), one specific detail that is not the obvious one for their role, and a tie to the world; no secrets", "sheet": "only for the few who matter most: a fuller character sheet, like a short character card (personality, history, habits, relationships, how they treat the player character, what they are like when pushed); no appearance, no secrets; empty for everyone else", "met": false, "status": "active"}],
- "threads": [{"id": "stolen-ring", "title": "The stolen ring", "speed": "urgent|steady|slow", "why": "why it matters, including hidden causes", "hint": "why it matters, in narrator-safe words with no secrets", "people": ["cole"], "status": "open", "closedReason": "", "ifFollowed": "what following it leads to", "ifIgnored": "what happens if it is left alone", "steps": [{"id": "owner-notices", "text": "what happens", "sign": "how the player could notice it", "afterHours": 24, "status": "waiting"}]}],
+ "threads": [{"id": "stolen-ring", "title": "The stolen ring", "speed": "urgent|steady|slow", "why": "why it matters, including hidden causes", "hint": "why it matters, in narrator-safe words with no secrets", "people": ["cole"], "status": "open", "closedReason": "", "outcome": "once closed: won|lost|faded (how it ended for the player)", "scar": "once lost: how it still shows, in narrator-safe words", "ifFollowed": "what following it leads to", "ifIgnored": "what happens if it is left alone", "steps": [{"id": "owner-notices", "text": "what happens", "sign": "how the player could notice it", "afterHours": 24, "status": "waiting"}]}],
  "beats": [{"id": "ring-recognized", "text": "a moment the story could reach", "purpose": "what it sets up or pays off", "conditions": "what must be true first", "thread": "stolen-ring", "intensity": "low|high", "status": "possible"}],
  "events": ["important things that already happened in the chat"],
  "clock": {"day": 1, "hour": null, "label": "how the story describes the time"},
@@ -1443,9 +1451,12 @@ var CRAFT = [
   "3. Give each important person a want and a current plan. They act on it offscreen too.",
   "3b. Give each person a voice of their own, so no two sound alike: how long their sentences run, what words they reach for or avoid, their rhythm and habits (a teenager, a tired detective, and a nervous clerk should be told apart with the names hidden). Take it from the card and the chat when they show it. Avoid the default voice every character slides into (quippy, wry, a little sarcastic) unless that really is the person.",
   `3c. Nobody is a stock character. No one is just their role (the gruff bartender, the wise mentor, the mysterious stranger, the loyal sidekick): give each person in "depth" a contradiction, one specific detail that is not the obvious one for their role, and a tie to the world, its places, groups, and history. For the two to four people who matter most, and anyone the player described, write a "sheet": what a good character card would say about them, so the narrator can play them with depth in every scene. A "sheet" and "depth" are shown to the narrator, so keep secrets out of them. Leave appearance out of sheets; another tool keeps how people look. "own" holds the player's own words about a person; never change it, and never contradict it.`,
+  '3d. Build each important person before naming them, and let the job be a job, not a personality: a dominant trait and a counter-trait that pulls against it; how they are with others (they withdraw, engage, watch, or perform); one thing that reliably irritates them; three hobbies (one they do alone, one they used to do, one they would like to try), specific rather than interesting; a backstory in two or three sentences with one thing they are proud of and one regret; and one small, real thing they never tell anyone, which is texture, not plot. Put these in their sheet when they have one, the most telling ones in "depth" otherwise. Name them last, from the setting and their background. Never use the names AI stories lean on (Elara, Lyra, Seraphina, Lily, Aria, Kael, Marcus, Silas, Elias, Thorne, Vex, Zara, Kira, Finn, Jax); pick names that fit the place.',
+  "3e. People hold their ground. Pleading, charm, tears, flirting, or a good speech earn no automatic yes; closeness does not make anyone more generous, patient, or agreeable, and affection never turns anyone into a pushover. Everyone keeps their pride, vices, and own priorities. Most people are hiding or shading something at any moment; honesty is earned. Write people's wants and plans so they can say no.",
   "4. Plan a small supporting cast (about two to four people beyond the card's character, or three to five when the card is a narrator) so the world is not just the main character. They have their own lives and are met when they fit.",
   "5. Threads are open problems or opportunities, one problem each: an unrelated subplot is its own thread. Each has a speed (urgent: minutes to hours; steady: a day to several days; slow: a week or more) and two to five steps toward its consequence. Most steps are signs the player could notice; only the last is the consequence itself. afterHours is story time after the previous step (or the thread's start) before the step becomes due.",
   "5b. The story is open-ended: plan its first arc (the story question and two to four threads); later check-ups open new arcs as these resolve. Pacing is the shape of the arc, not just the next scene. Stagger the threads so they come to a head at different times, with room between them. The main storyline starts now and builds across the part; side storylines begin with small signs and build. Mix speeds: only one storyline may be urgent at a time (urgent means something bad happens within hours if nobody acts: a fire, a deadline, someone hunting you; feelings and relationships are almost never urgent), and at least one slow one. A later emergency can be prepared with a breadcrumb or two, never started early. Keep story time realistic: Grimoire also moves a thread on after a number of replies, so never squeeze story time to keep things moving. If the card fixes an event at a certain time (a show tonight, a deadline), use it, but let only the threads that truly depend on it peak there.",
+  '5c. Every step is specific: who acts (someone in the notebook), what concretely happens, why it matters, and how it reaches the player (its "sign": something they can see, hear, or be told). "Tension rises" or "things get worse" is not a step.',
   "6. Beats are possible moments, not a script. Each says what it sets up or pays off and what must be true first. Most should be low intensity; plan no more than two high-intensity moments at a time, so big moments stay big.",
   "6a. Arc shape. Choose the shape that fits this arc: conflict when the story runs on danger, rivalry, mystery, or a problem to beat (setup, rising, climax, resolution); kishotenketsu when it runs on people, closeness, comfort, desire, discovery, or everyday life (ki: introduce people, places, routines; sho: develop and deepen them without escalating; ten: a turn, something unexpected that casts what came before in a new light, which need not be a threat; ketsu: bring the turn and what came before together into a new understanding). In a kishotenketsu arc, threads are developments rather than problems: if one is left alone, life simply carries on; its steps are small changes that lead toward the turn. A small conflict can still live inside a kishotenketsu arc, and the next arc may take the other shape. Put the turn in arc.turn; it is the natural place for a twist.",
   "6b. Seeds are breadcrumbs: four to eight ordinary-looking details (an object, a habit, a name, a stray remark, a sound) the narrator can mention in passing now, each paid off later in a thread step, a beat, or the turn. The detail must look unremarkable and give nothing away on its own; the payoff says what it turns out to mean. A kishotenketsu turn needs at least two seeds that prepare it, so it feels earned rather than random. Use details the card and chat already contain when you can.",
@@ -1496,6 +1507,7 @@ ${LORE(input.lore) ? `- ${LORE(input.lore)}` : ""}${input.notes.length ? NOTES :
 - People invented in the chat: add them only if they matter (they act, recur, or tie into a thread). Mark people met once the player has met them.
 - Revise future beats and plans when the player's choices change what makes sense. Keep the pacing rules below: if waiting steps are packed too tightly (several threads peaking on the same night, steady steps hours apart), spread them out by raising afterHours on waiting steps. Change how the story gets somewhere, not why, unless the player has made the old why impossible. Do not force the player back onto an old plan.
 - Entries with "quick": true were marked after a reply by a fast reader. Confirm them by keeping them, or correct them if the chat does not support them (a step back to waiting, a beat back to possible, a seed back to waiting or planted).
+- Endings: when you close a storyline, set "outcome": won (the player got what they were after), lost (it went against them), or faded (it was dropped or petered out). A lost storyline leaves a mark: write in "scar" how it still shows (someone won't forgive, a door is closed, money is gone, a reputation is hurt), and let it color what comes next; it can grow a worse follow-up later. What was lost is never quietly forgotten.
 - Problems: a problem the player raised, or one that came up in the chat, becomes a storyline with its own steps unless it truly ended. If the chat solved a problem too easily (in a reply or two, at no real cost, through money, luck, or someone fixing it for the player), keep what happened, but it is not the end: give it a catch, a cost, a delay, or someone it angers, and make that a storyline. Problems are what move the story; do not let them evaporate.
 - Secrets that came out: once the chat shows the player has learned a hidden truth (or the twist), or it came out where they could see, move it word for word to story.cameOut and out of hiddenTruth (empty twist if it was the twist). From then on it is an established fact: rewrite people's "hint" and "doing", thread hints, and beats so nobody keeps acting as if it were still secret, and plan no more clues or reveal moments for it; build on it instead. A suspicion or a guess is not learning it. Never move anything back out of cameOut.
 - Sheets: keep each "sheet" true to how the person has actually been in the chat, and add what has changed (what they learned, how they now feel about the player character, what they did). Return a sheet only when it changes; leave it empty to keep it as it is. Someone who has become important gets a sheet; never more than six. Fill in "depth" for anyone who has none.
@@ -1825,6 +1837,21 @@ function spentProblems(previous, revised) {
   if (storyLeft(revised))
     return [];
   return ["This part of the story has run out: every storyline is over, or only slow ones are left. Open the next part now: a new story question if the old one is answered, arc.stage set to the first stage of its shape, a main storyline (arc.main) whose first waiting step arrives at once, and two to four new storylines grown from what has happened and from what people want now. Keep everything that already happened."];
+}
+function specificProblems(previous, revised) {
+  const problems = [];
+  for (const t of revised.threads.filter((t) => t.status === "open")) {
+    const old = previous?.threads.find((o) => o.id === t.id);
+    if (!old && !t.people.length)
+      problems.push(`Storyline "${t.id}" needs someone who drives it: list at least one person from "people" in its people.`);
+    const fresh = t.steps.filter((s) => s.status === "waiting" && !s.sign && !old?.steps.some((o) => o.id === s.id));
+    if (fresh.length)
+      problems.push(`In "${t.id}", give each new step a "sign": something the player can see, hear, or be told (${fresh.map((s) => `"${s.id}"`).join(", ")}).`);
+  }
+  return problems;
+}
+function fixSpecific(revised) {
+  return { ...revised, threads: revised.threads.map((t) => ({ ...t, steps: t.steps.map((s) => s.status === "waiting" && !s.sign ? { ...s, sign: s.text } : s) })) };
 }
 
 // src/meaning.ts
@@ -2415,7 +2442,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.18.4";
+var VERSION = "0.19.0";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -2511,11 +2538,11 @@ function withOwnWords(notebook, value, ideas) {
 }
 function storyRules(previous, revised, round, pace, prefs, checkup = false) {
   if (round === 1) {
-    const problems = [...paceProblems(previous, revised, pace), ...leadProblems(previous, revised, prefs), ...checkup && previous ? spentProblems(previous, revised) : []];
+    const problems = [...paceProblems(previous, revised, pace), ...leadProblems(previous, revised, prefs), ...specificProblems(previous, revised), ...checkup && previous ? spentProblems(previous, revised) : []];
     if (problems.length)
       throw new NotebookError(problems.join(" "), "The update broke a story rule, so it was sent back once.");
   }
-  return fixLead(previous, round === 1 ? revised : fixPace(previous, revised, pace), prefs);
+  return fixSpecific(fixLead(previous, round === 1 ? revised : fixPace(previous, revised, pace), prefs));
 }
 function prune(versions) {
   if (versions.length <= MAX_VERSIONS)

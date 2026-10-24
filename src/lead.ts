@@ -97,3 +97,22 @@ export function spentProblems(previous: Notebook, revised: Notebook): string[] {
   if (storyLeft(revised)) return [];
   return ['This part of the story has run out: every storyline is over, or only slow ones are left. Open the next part now: a new story question if the old one is answered, arc.stage set to the first stage of its shape, a main storyline (arc.main) whose first waiting step arrives at once, and two to four new storylines grown from what has happened and from what people want now. Keep everything that already happened.'];
 }
+
+/**
+ * Steps and storylines that are specific enough to play: a new storyline names who drives it, and every new
+ * step says how the player could notice it. Vague plans ("tension rises") are sent back.
+ */
+export function specificProblems(previous: Notebook | null, revised: Notebook): string[] {
+  const problems: string[] = [];
+  for (const t of revised.threads.filter(t => t.status === 'open')) {
+    const old = previous?.threads.find(o => o.id === t.id);
+    if (!old && !t.people.length) problems.push(`Storyline "${t.id}" needs someone who drives it: list at least one person from "people" in its people.`);
+    const fresh = t.steps.filter(s => s.status === 'waiting' && !s.sign && !old?.steps.some(o => o.id === s.id));
+    if (fresh.length) problems.push(`In "${t.id}", give each new step a "sign": something the player can see, hear, or be told (${fresh.map(s => `"${s.id}"`).join(', ')}).`);
+  }
+  return problems;
+}
+/** The plainest fix: a step with no sign shows itself. */
+export function fixSpecific(revised: Notebook): Notebook {
+  return { ...revised, threads: revised.threads.map(t => ({ ...t, steps: t.steps.map(s => s.status === 'waiting' && !s.sign ? { ...s, sign: s.text } : s) })) };
+}

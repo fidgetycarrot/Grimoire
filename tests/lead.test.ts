@@ -114,3 +114,33 @@ describe('problems take time', () => {
     expect(note(opened(), 10, { guided: true })).toContain('Problems take time');
   });
 });
+
+describe('people who hold their ground, specific plans, and losses that leave a mark', () => {
+  test('every note says people don’t give in to pleading or charm', () => {
+    expect(note(opened(), 10)).toContain('People hold their ground: pleading, charm, tears, flirting, or a good speech earn no automatic yes');
+  });
+  test('a storyline that went against the player keeps showing', () => {
+    const nb = opened();
+    nb.threads[1] = { ...nb.threads[1], status: 'closed', closedReason: 'The storm hit.', outcome: 'lost', scar: 'the ferry is out of service and Mira blames the player' };
+    expect(note(nb, 10)).toContain('Still felt from earlier: the ferry is out of service and Mira blames the player.');
+    const won = opened(); won.threads[1] = { ...won.threads[1], status: 'closed', closedReason: 'They crossed.', outcome: 'won', scar: 'x' };
+    expect(note(won, 10)).not.toContain('Still felt from earlier');
+  });
+  test('a new storyline needs someone driving it, and new steps need a sign', () => {
+    const { specificProblems, fixSpecific } = require('../src/lead');
+    const before = validateNotebook(sampleNotebook()), after = structuredClone(before);
+    after.threads.push({ id: 'rumor', title: 'A rumor', speed: 'steady', why: 'Talk spreads.', hint: '', people: [], status: 'open', closedReason: '', ifFollowed: '', ifIgnored: '', steps: [{ id: 'talk', text: 'Tension rises.', sign: '', afterHours: 4, status: 'waiting' }] });
+    const problems = specificProblems(before, after).join(' ');
+    expect(problems).toContain('"rumor" needs someone who drives it');
+    expect(problems).toContain('give each new step a "sign"');
+    expect(specificProblems(before, before)).toEqual([]);
+    expect(fixSpecific(after).threads.at(-1).steps[0].sign).toBe('Tension rises.');
+  });
+  test('how a storyline ended is kept when a later update leaves it out', () => {
+    const { tidyNotebook } = require('../src/tidy');
+    const prev = validateNotebook(sampleNotebook());
+    prev.threads[1] = { ...prev.threads[1], status: 'closed', closedReason: 'The storm hit.', outcome: 'lost', scar: 'the ferry is out of service' };
+    const raw: any = structuredClone(prev); delete raw.threads[1].outcome; delete raw.threads[1].scar;
+    expect(validateNotebook(tidyNotebook(raw, prev)).threads[1]).toMatchObject({ outcome: 'lost', scar: 'the ferry is out of service' });
+  });
+});

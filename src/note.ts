@@ -65,6 +65,7 @@ const INTIMATE = 'Pace: an intimate scene is under way. Let it play out at its o
 const GUIDED = 'The player gave guidance for this reply. It comes first: follow it, and where anything below disagrees, the guidance wins. No new developments this time.';
 const DEEPENING = 'Pace: the scene is deepening. Let it grow through what people say and do; there is no need to escalate.';
 /** Narrators like to fix things for the player at once. Every note pushes back. */
+export const GROUND = 'People hold their ground: pleading, charm, tears, flirting, or a good speech earn no automatic yes, and closeness does not make anyone more generous, patient, or agreeable. Before anyone speaks, know what they are not saying.';
 export const PROBLEMS = 'Problems take time. Nothing gets solved in the scene it comes up in: a solution costs something, takes more than one step, and can fail. Nobody produces the money, the answer, the rescue, or the perfect plan out of nowhere, and no one fixes the player\'s trouble for them. Let problems weigh on people and grow until they are dealt with through effort.';
 const OPENING = 'The story is just starting: keep the main storyline in front and moving, and keep side matters small for now.';
 /** Replies a due main-storyline step may wait before the world brings it to the player. */
@@ -183,6 +184,9 @@ export function buildNote(input: NoteInput): string {
     const tie = seeds.ready.find(s => s.pays === beat.id && !used.has(s.id));
     lines.push(`A possible next moment, only if it follows naturally: ${beat.text}${beat.conditions ? ` (only if ${beat.conditions})` : ''}. Purpose: ${beat.purpose}${tie ? ` ${callback(tie)}` : ''}`);
   }
+  // Storylines that went against the player leave marks that keep showing.
+  const scars = quiet ? [] : notebook.threads.filter(t => t.status === 'closed' && t.outcome === 'lost' && t.scar).slice(-2);
+  if (scars.length) lines.push(`Still felt from earlier: ${scars.map(t => end(t.scar!)).join(' ')}`);
   // A detail planted long ago can come back on its own in a quiet stretch, so earlier mentions don't go to waste.
   const loose = !developments.length && (notebook.rhythm === 'calm' || notebook.rhythm === 'stalled') ? seeds.ready.find(s => !used.has(s.id) && s.pays !== 'turn') : undefined;
   if (loose) { const line = callback(loose); lines.push(`If it fits, now is a good time to ${line.charAt(0).toLowerCase()}${line.slice(1)}`); }
@@ -195,7 +199,7 @@ export function buildNote(input: NoteInput): string {
   if (newcomer && lines.length < 16) lines.push(`Someone who could appear if it fits: ${newcomer.name}${newcomer.role ? `, ${newcomer.role}` : ''}. Wants ${newcomer.wants || 'something of their own'}.`);
   // Fuller sheets for the people here who have one, like short character cards: kept apart from the length limit above.
   const sheets = present.filter(p => p.sheet || p.own).slice(0, 3).map(p => `${p.name}:${p.own ? ` ${end(p.own)}` : ''}${p.sheet ? ` ${end(p.sheet)}` : ''}`.slice(0, 2600));
-  const rules = 'The latest messages decide what actually happened; skip anything they have made impossible. Never write the player character\'s actions, words, thoughts, or feelings. Keep secrets hidden and let them show only through small details.\n' + PROBLEMS;
+  const rules = 'The latest messages decide what actually happened; skip anything they have made impossible. Never write the player character\'s actions, words, thoughts, or feelings. Keep secrets hidden and let them show only through small details.\n' + PROBLEMS + ' ' + GROUND;
   // Too long: drop whole lines from the end of the guidance, never the rules.
   while (lines.length > 4 && lines.join('\n').length + rules.length + 1 > 2800) lines.pop();
   const cast = sheets.length ? `\nWho they are, in full (play them true to this, and let it show in what they do, not in explanations):\n${sheets.join('\n')}` : '';

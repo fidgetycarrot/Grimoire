@@ -1344,3 +1344,15 @@ describe('problems that come up', () => {
     }
   });
 });
+
+describe('richer people', () => {
+  test('the first notebook is told how to build people and which names to avoid', async () => {
+    const { m } = await ready();
+    const prompt = m.calls[0].messages[0].content;
+    expect(prompt).toContain('a dominant trait and a counter-trait');
+    expect(prompt).toContain('three hobbies');
+    expect(prompt).toContain('one small, real thing they never tell anyone');
+    expect(prompt).toContain('Never use the names AI stories lean on (Elara');
+    expect(prompt).toContain('People hold their ground');
+  });
+});

@@ -362,7 +362,7 @@ export function setup(ctx: SpindleFrontendContext) {
       if (t.id === notebook.arc.main) title.append(el('span', 'gm-chip', 'main storyline'));
       if (due.includes(t.id)) { const c = el('span', 'gm-chip', 'due'); c.dataset.tone = 'due'; title.append(c); }
       const steps = el('ol', 'gm-steps'); for (const step of t.steps) { const li = el('li', 'gm-small', step.text); li.dataset.status = step.status; if (step.status !== 'waiting') li.append(el('span', 'gm-chip', step.status)); steps.append(li); }
-      e.append(title, el('p', 'gm-small', t.why), steps, ...(t.ifIgnored ? [el('p', 'gm-meta', `If left alone: ${t.ifIgnored}`)] : []), ...(t.closedReason ? [el('p', 'gm-meta', `Closed: ${t.closedReason}`)] : []));
+      e.append(title, el('p', 'gm-small', t.why), steps, ...(t.ifIgnored ? [el('p', 'gm-meta', `If left alone: ${t.ifIgnored}`)] : []), ...(t.closedReason ? [el('p', 'gm-meta', `Closed${t.outcome ? ` (${({ won: 'went your way', lost: 'went against you', faded: 'faded out' } as const)[t.outcome]})` : ''}: ${t.closedReason}`)] : []), ...(t.scar ? [el('p', 'gm-meta', `Still felt: ${t.scar}`)] : []));
       threads.append(e);
     }
     if (notebook.summary) section('Latest note from the model').append(el('p', 'gm-small', notebook.summary));

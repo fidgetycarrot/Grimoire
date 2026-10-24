@@ -9,7 +9,7 @@ import { checkupMessages, creationMessages, digestMessages, talkMessages, type M
 import { applyChanges, describeChanges, openExchange } from './talk';
 import { checkPush, launchPush, PUSH_KINDS, secretsLeft, type PushKind } from './push';
 import { earlySteps, fixPace, paceProblems, type PaceRules } from './pacing';
-import { fixLead, leadProblems, openArc, spentProblems, storyLeft } from './lead';
+import { fixLead, fixSpecific, leadProblems, openArc, specificProblems, spentProblems, storyLeft } from './lead';
 import { LORE_ROOM, NO_LORE, pickLore, toEntry, type Lore, type LoreEntry, type LoreRoom } from './lore';
 import { MeaningIndex, type Query } from './meaning';
 import { plain, plainBlock, tidyNotebook } from './tidy';
@@ -95,10 +95,10 @@ function withOwnWords(notebook: Notebook, value: unknown, ideas: string): Notebo
 function storyRules(previous: Notebook | null, revised: Notebook, round: number, pace: PaceRules, prefs: Preferences, checkup = false): Notebook {
   if (round === 1) {
     // A check-up that leaves nothing to happen is asked once to open the next part; if it still doesn't, the panel offers a new chapter.
-    const problems = [...paceProblems(previous, revised, pace), ...leadProblems(previous, revised, prefs), ...(checkup && previous ? spentProblems(previous, revised) : [])];
+    const problems = [...paceProblems(previous, revised, pace), ...leadProblems(previous, revised, prefs), ...specificProblems(previous, revised), ...(checkup && previous ? spentProblems(previous, revised) : [])];
     if (problems.length) throw new NotebookError(problems.join(' '), 'The update broke a story rule, so it was sent back once.');
   }
-  return fixLead(previous, round === 1 ? revised : fixPace(previous, revised, pace), prefs);
+  return fixSpecific(fixLead(previous, round === 1 ? revised : fixPace(previous, revised, pace), prefs));
 }
 /**
  * Keep the base version, the newest full update, and the most recent ones.

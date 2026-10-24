@@ -14,6 +14,8 @@ export interface Step { id: string; text: string; sign: string; afterHours: numb
 export interface Thread {
   id: string; title: string; speed: Speed; why: string; hint: string; people: string[];
   status: 'open' | 'paused' | 'closed'; closedReason: string; ifFollowed: string; ifIgnored: string;
+  /** How it ended for the player, once closed. */ outcome?: 'won' | 'lost' | 'faded';
+  /** A lost storyline leaves a mark: how it still shows, in narrator-safe words. */ scar?: string;
   steps: Step[]; startAt?: number; /** Code-owned: how many replies the chat had when the thread began. */ startReply?: number;
 }
 export interface Person {
@@ -168,6 +170,7 @@ export function validateNotebook(value: unknown): Notebook {
       why: text(t.why, `${path}.why`), hint: text(t.hint, `${path}.hint`), people: [...new Set(peopleIds)],
       status: choice(t.status, ['open', 'paused', 'closed'] as const, `${path}.status`, 'open'), closedReason: text(t.closedReason, `${path}.closedReason`, LIMITS.short),
       ifFollowed: text(t.ifFollowed, `${path}.ifFollowed`), ifIgnored: text(t.ifIgnored, `${path}.ifIgnored`), steps,
+      ...(t.outcome === 'won' || t.outcome === 'lost' || t.outcome === 'faded' ? { outcome: t.outcome } : {}), ...(t.scar ? { scar: text(t.scar, `${path}.scar`, LIMITS.short) } : {}),
       ...(typeof t.startAt === 'number' && Number.isFinite(t.startAt) ? { startAt: t.startAt } : {}),
       ...(count(t.startReply) !== undefined ? { startReply: count(t.startReply) } : {}),
     };
