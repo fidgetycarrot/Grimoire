@@ -572,8 +572,15 @@ export function setup(ctx: SpindleFrontendContext) {
     return refreshing;
   }
   teardown.push(tab.onActivate(() => void refresh()), ctx.events.on('CHAT_CHANGED', () => { editing = false; void refresh(true); }), ctx.events.on('CHAT_SWITCHED', () => { editing = false; void refresh(true).then(refreshStories); }));
+  // A phone that slept, or a dropped connection, can leave the panel showing old news (a chapter still "being
+  // written" long after it finished). Look again whenever the page comes back, and whenever the clock jumps.
+  const wake = () => { if (!destroyed && document.visibilityState !== 'hidden') void refresh(true); };
+  const win = typeof window === 'undefined' ? null : window;
+  const targets: Array<[EventTarget, string]> = [[document, 'visibilitychange'], ...(win ? [[win, 'pageshow'], [win, 'online'], [win, 'focus']] as Array<[EventTarget, string]> : [])];
+  for (const [target, name] of targets) { target.addEventListener(name, wake); teardown.push(() => target.removeEventListener(name, wake)); }
+  let lastTick = Date.now();
   // Work-in-progress clocks tick without redrawing the panel.
-  const ticker = setInterval(() => { for (const node of app.querySelectorAll<HTMLElement>('[data-gm-since]')) node.textContent = elapsed(Number(node.dataset.gmSince)); }, 1000);
+  const ticker = setInterval(() => { const gap = Date.now() - lastTick; lastTick = Date.now(); if (gap > 5000) wake(); for (const node of app.querySelectorAll<HTMLElement>('[data-gm-since]')) node.textContent = elapsed(Number(node.dataset.gmSince)); }, 1000);
   teardown.push(() => clearInterval(ticker));
   render(); ctx.ready(); void refresh(true).then(refreshStories);
   return () => { if (destroyed) return; destroyed = true; if (polling) clearInterval(polling); rpc.destroy(); for (const fn of teardown.reverse()) fn(); app.remove(); tab.destroy(); };

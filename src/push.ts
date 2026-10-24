@@ -29,7 +29,7 @@ export const PUSH_ASKS: Record<PushKind, string> = {
   secret: 'A secret starts to surface: something still in hiddenTruth (never anything in cameOut, which the player already knows), or what a planted breadcrumb really means, begins to come out.',
   consequence: 'Something catches up with the player: a consequence of something that already happened in the chat, or of a storyline left alone, arrives.',
   surprise: 'Choose whatever established thing would move this story best right now.',
-  chapter: 'Start a new chapter. Wrap up what is spent (close threads with a reason; keep anything still alive), then open the next part of the story from where things stand now: what people want now, what is unresolved, what the player set in motion. Set a new story question if the old one is answered or tired, set arc.stage to the first stage of its shape, and set arc.main to the main storyline of the chapter: its first waiting step is the opening moment that draws the player in, arriving with the next reply. If a jump in time would give the chapter a fresh start, set "skipHours" (up to 720); otherwise 0.',
+  chapter: 'Start a new chapter: a new part of the story, not one storyline reworked. Wrap up what is spent (close threads with a reason; keep anything still alive), then open the next part of the story from where things stand now: what people want now, what is unresolved, what the player set in motion. Set a new story question if the old one is answered or tired, set arc.stage to the first stage of its shape, and set arc.main to the main storyline of the chapter: its first waiting step is the opening moment that draws the player in, arriving with the next reply. Give the chapter what a new part needs: a main storyline and one to three side storylines, new breadcrumbs, and new possible moments. If a jump in time would give the chapter a fresh start, set "skipHours" (up to 720); otherwise 0.',
 };
 
 const ALLOWED: Record<PushKind, PushTie['kind'][]> = {
@@ -71,6 +71,14 @@ export function checkPush(previous: Notebook, revised: Notebook, value: unknown,
   const old = previous.threads.find(t => t.id === thread);
   if (!old && kind !== 'chapter' && !carrier!.people.some(id => previous.people.some(p => p.id === id))) bad(`New thread "${thread}" must involve at least one person already in the notebook.`);
   if (kind === 'chapter' && revised.arc.stage !== STAGES[revised.arc.shape][0]) bad(`A new chapter starts at arc.stage "${STAGES[revised.arc.shape][0]}".`);
+  // A new chapter is a new part of the story, not one storyline reworked: it needs room to grow.
+  if (kind === 'chapter' && !lenient) {
+    const open = revised.threads.filter(t => t.status === 'open' && t.steps.some(s => s.status === 'waiting')).length;
+    const seeds = revised.seeds.filter(s => s.status === 'waiting' && !previous.seeds.some(p => p.id === s.id)).length;
+    const beats = revised.beats.filter(b => b.status === 'possible').length;
+    const missing = [open < 2 && 'at least two open storylines with steps to come (the main storyline and a side storyline)', seeds < 2 && 'at least two new breadcrumbs', beats < 2 && 'at least two possible moments'].filter(Boolean);
+    if (missing.length) bad(`A new chapter opens a new part of the story, so it needs ${missing.join(', ')}. Grow them from what has happened and what people want now.`);
+  }
   return { thread, from: tie };
 }
 

@@ -60,7 +60,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.18.3";
+var VERSION = "0.18.4";
 var CHAPTER_WORKING = "Starting a new chapter";
 var CHAPTER_DONE = "New chapter ready";
 
@@ -1084,7 +1084,22 @@ function setup(ctx) {
     editing = false;
     refresh(true).then(refreshStories);
   }));
+  const wake = () => {
+    if (!destroyed && document.visibilityState !== "hidden")
+      refresh(true);
+  };
+  const win = typeof window === "undefined" ? null : window;
+  const targets = [[document, "visibilitychange"], ...win ? [[win, "pageshow"], [win, "online"], [win, "focus"]] : []];
+  for (const [target, name] of targets) {
+    target.addEventListener(name, wake);
+    teardown.push(() => target.removeEventListener(name, wake));
+  }
+  let lastTick = Date.now();
   const ticker = setInterval(() => {
+    const gap = Date.now() - lastTick;
+    lastTick = Date.now();
+    if (gap > 5000)
+      wake();
     for (const node of app.querySelectorAll("[data-gm-since]"))
       node.textContent = elapsed(Number(node.dataset.gmSince));
   }, 1000);

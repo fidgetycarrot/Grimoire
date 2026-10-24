@@ -805,8 +805,14 @@ describe('pushes tie to the story, loosely enough for a new chapter', () => {
     const nb = structuredClone(before());
     nb.threads.push({ id: 'new-rival', title: 'A new rival', speed: 'steady', why: 'A buyer wants the ring back from whoever has it.', hint: '', people: [], status: 'open', closedReason: '', ifFollowed: '', ifIgnored: '', steps: [{ id: 'buyer', text: 'A buyer arrives.', sign: 'A stranger in a red coat.', afterHours: 0, status: 'waiting' }] });
     nb.arc = { ...nb.arc, stage: 'setup', main: 'new-rival' };
+    nb.seeds.push({ id: 'red-coat', detail: 'A red coat on a hook.', payoff: 'The buyer was here before.', pays: 'new-rival', status: 'waiting' }, { id: 'torn-ticket', detail: 'A torn ferry ticket.', payoff: 'The buyer came by river.', pays: 'new-rival', status: 'waiting' });
     return nb;
   };
+  test('a thin chapter (one storyline reworked, nothing new) is sent back, and goes ahead on a second try', () => {
+    const thin = structuredClone(before()); thin.threads[1].status = 'closed'; thin.threads[1].closedReason = 'Passed.'; thin.arc = { ...thin.arc, stage: 'setup', main: 'stolen-ring' };
+    expect(() => checkPush(before(), thin, { thread: 'stolen-ring', from: { kind: 'revealed', ref: 0 } }, 'chapter')).toThrow('at least two open storylines');
+    expect(checkPush(before(), thin, { thread: 'stolen-ring', from: { kind: 'revealed', ref: 0 } }, 'chapter', true).thread).toBe('stolen-ring');
+  });
   test('a chapter can grow from a secret that came out, with new people', () => {
     expect(checkPush(before(), chapter(), { thread: 'new-rival', from: { kind: 'revealed', ref: 0 } }, 'chapter').from).toEqual({ kind: 'revealed', ref: '0' });
     // An ordinary push still needs someone known in a new storyline.
