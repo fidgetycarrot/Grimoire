@@ -20,7 +20,7 @@ function harness(chat: Partial<NonNullable<Snapshot['chat']>> | null = {}, setti
   const state: Snapshot = {
     version: '0.1.0', permissions: ['generation', 'interceptor', 'chats', 'characters'], notice: '',
     connections: [{ id: 'model', name: 'Writer', model: 'm' }],
-    settings: { connectionId: 'model', maxOutputTokens: 16000, reasoningMode: 'inherit', every: 8, quick: { enabled: false, connectionId: '', model: '' }, wait: 'medium', homeList: true, intimate: 'protect', ...settings },
+    settings: { connectionId: 'model', maxOutputTokens: 16000, reasoningMode: 'inherit', every: 8, quick: { enabled: false, connectionId: '', model: '' }, wait: 'medium', homeList: true, intimate: 'protect', memories: true, ...settings },
     decisions: { available: true, reason: '', connections: [{ id: 'dec', name: 'Jev', provider: 'typesafe', model: '~typesafe/jev-latest', isDefault: true }] },
     chat: chat === null ? null : { chatId: 'chat-1', name: 'Low Water', supported: true, reason: '', enabled: true, pace: 'auto', preferences: { tone: 'balanced', twist: true, shape: 'auto', lockShape: false }, hasNotebook: true,
       summary: 'Notebook updated after the tavern.', clock: { day: 2, hour: 21, label: '' }, clockText: 'Day 2, 21:00', sources: { day: 'notebook', hour: 'notebook', exact: false }, checks: [],
@@ -71,6 +71,15 @@ describe('the panel', () => {
     expect(working.button('Start a new chapter')).toBeFalsy();
     const done = harness({ job: { id: 'j', kind: 'talk', status: 'complete', label: 'New chapter ready', startedAt: Date.now() - 60_000 } }); await tick();
     expect(done.root.textContent).toContain('A new chapter is set. It begins with the next reply.');
+  });
+  test('the memory part shows how much Lumiverse remembers and what the last reply got', async () => {
+    const h = harness({ memory: { people: 12, ties: 7, summaries: 0, last: { at: Date.now(), found: 3, to: 'note' } } }); await tick();
+    const text = h.root.textContent!;
+    expect(text).toContain('Lumiverse memory');
+    expect(text).toContain('People and places remembered12');
+    expect(text).toContain('3 memories added to the note');
+    const empty = harness({ memory: { people: 0, ties: 0, summaries: 0, last: null } }); await tick();
+    expect(empty.root.textContent).toContain('Nothing is remembered for this chat yet');
   });
   test('quick check answers show as numbers with plain labels', async () => {
     const h = harness({ quickLog: [{ reply: 7, at: Date.now(), ok: true, answers: { due_1: 0.91, new_turn: 0.82, story_shift: 0.03, rhythm: { choice: 'peak', confidence: 0.7 } }, marked: 1, checkup: true, shifted: false, held: 0 }] }, { quick: { enabled: true, connectionId: '', model: '' } }); await tick();

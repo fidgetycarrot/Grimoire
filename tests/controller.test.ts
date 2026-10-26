@@ -1356,3 +1356,51 @@ describe('richer people', () => {
     expect(prompt).toContain('People hold their ground');
   });
 });
+
+describe('Lumiverse memory in the plan and the note', () => {
+  const cortexResult = {
+    memories: [{ source: 'chunk', sourceId: 'c1', content: 'Oswin was seen near the manor the night the ring went missing, and he lied about it.', finalScore: 0.9 }],
+    entityContext: [{ id: 'e1', name: 'Oswin', type: 'character', status: 'active', description: 'The harbor master.', lastSeenAt: 1, mentionCount: 3, topFacts: [], emotionalProfile: {}, relationships: [] }],
+    activeRelationships: [{ sourceName: 'Mira', targetName: 'Oswin', type: 'rival', label: 'distrusts', strength: 0.5, sentiment: -0.6 }],
+    arcContext: null, stats: {},
+  };
+  function withMemory(h = host({ granted: ['generation', 'interceptor', 'chats', 'chat_mutation', 'characters', 'personas', 'world_books', 'decisions', 'memories'] })) {
+    const queries: any[] = [];
+    (h.api as any).memories = {
+      cortex: { query: async (q: any) => { queries.push(q); return cortexResult; } },
+      entities: { list: async () => [{}, {}, {}] }, relations: { list: async () => [{}] }, consolidations: { list: async () => [] },
+    };
+    return { h, queries };
+  }
+  test('check-ups plan from what Lumiverse remembers', async () => {
+    const { h } = withMemory();
+    const { m, c } = await ready(h);
+    await c.checkup('chat-1', 'test'); await c.waitForJobs();
+    const call = m.calls.find(x => x.task === 'grimoire-checkup-v1')!;
+    expect(call.input.memory.moments[0]).toContain('Oswin was seen near the manor');
+    expect(call.input.memory.ties).toEqual(['Mira → Oswin: distrusts (hostile)']);
+    expect(call.messages[0].content).toContain('honor old grudges, debts, promises, and losses');
+  });
+  test('the note carries memories for presets without them, and steps aside for presets that have them', async () => {
+    const { h, queries } = withMemory();
+    const { c } = await ready(h);
+    const bare = await c.intercept([{ role: 'user', content: 'I ask Oswin about the manor.' }], { chatId: 'chat-1', generationType: 'normal' }) as any;
+    expect(bare.messages.at(-1).content).toContain('Lumiverse\'s memory of this story');
+    expect(bare.messages.at(-1).content).toContain('Oswin was seen near the manor');
+    expect(queries.at(-1).queryText).toContain('I ask Oswin about the manor.');
+    const withBlock = await c.intercept([{ role: 'system', content: '<memories>Oswin was seen near the manor the night the ring went missing, and he lied about it.</memories>' }, { role: 'user', content: 'Hi' }], { chatId: 'chat-1', generationType: 'normal' }) as any;
+    expect(withBlock.messages.at(-1).content).not.toContain('Lumiverse\'s memory of this story');
+    const view = (await c.view('chat-1'))!;
+    expect(view.memory).toMatchObject({ people: 3, ties: 1, summaries: 0, last: { to: 'preset', found: 1 } });
+    // Off in settings: nothing added, and the panel says so.
+    await c.saveSettings({ ...(h.storage.get('settings.json') as object), memories: false });
+    const off = await c.intercept([{ role: 'user', content: 'Hi' }], { chatId: 'chat-1', generationType: 'normal' }) as any;
+    expect(off.messages.at(-1).content).not.toContain('Lumiverse\'s memory');
+    expect((await c.view('chat-1'))!.memory!.last!.to).toBe('off');
+  });
+  test('without the permission, nothing changes', async () => {
+    const { m, c } = await ready();
+    expect(m.calls[0].input.memory).toEqual({ moments: [], people: [], ties: [], arc: '' });
+    expect((await c.view('chat-1'))!.memory).toBeNull();
+  });
+});

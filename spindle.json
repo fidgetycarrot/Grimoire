@@ -1,7 +1,7 @@
 {
   "name": "Grimoire",
   "identifier": "lumiverse_grimoire",
-  "version": "0.19.0",
+  "version": "0.20.0",
   "author": "fidgetycarrot",
   "github": "https://github.com/fidgetycarrot/Grimoire",
   "homepage": "https://github.com/fidgetycarrot/Grimoire#readme",
@@ -15,7 +15,8 @@
     "personas",
     "world_books",
     "decisions",
-    "embeddings"
+    "embeddings",
+    "memories"
   ],
   "entry_backend": "dist/backend.js",
   "entry_frontend": "dist/frontend.js",

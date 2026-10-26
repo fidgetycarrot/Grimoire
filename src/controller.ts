@@ -12,12 +12,14 @@ import { earlySteps, fixPace, paceProblems, type PaceRules } from './pacing';
 import { fixLead, fixSpecific, leadProblems, openArc, specificProblems, spentProblems, storyLeft } from './lead';
 import { LORE_ROOM, NO_LORE, pickLore, toEntry, type Lore, type LoreEntry, type LoreRoom } from './lore';
 import { MeaningIndex, type Query } from './meaning';
+import { alreadyInPrompt, NO_RECALL, RECALL_ROOM, recallNote, toRecall, type Recall } from './memory';
+import type { CortexResultDTO } from 'lumiverse-spindle-types';
 import { plain, plainBlock, tidyNotebook } from './tidy';
 import { applyQuick, quickError, quickQuestions, quickState } from './quick';
 import { glance, skipOffer } from './skip';
 import type { DecisionResult } from 'lumiverse-spindle-types';
 import { checkRecipe, guessRecipe, readField, readTracker, trackerText, validateRecipe, type FieldType, type Recipe } from './tracker';
-import { CHAPTER_DONE, CHAPTER_WORKING, DEFAULT_PREFERENCES, DEFAULT_SETTINGS, MAX_VERSIONS, QUICK_LOG, TALK_LIMITS, type QuickRecord, VERSION, type ChatState, type PlayerNote, type TalkLine, type ChatView, type Job, type Settings, type Snapshot, type StoryListing, type Version } from './types';
+import { CHAPTER_DONE, CHAPTER_WORKING, DEFAULT_PREFERENCES, DEFAULT_SETTINGS, MAX_VERSIONS, QUICK_LOG, TALK_LIMITS, type QuickRecord, VERSION, type ChatState, type PlayerNote, type TalkLine, type ChatView, type MemoryView, type Job, type Settings, type Snapshot, type StoryListing, type Version } from './types';
 
 const record = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
 const PACES: Pace[] = ['auto', 'quiet', 'fast'];
@@ -124,6 +126,7 @@ export function validSettings(value: unknown): Settings {
     wait: v.wait === 'short' || v.wait === 'long' ? v.wait : 'medium',
     homeList: v.homeList !== false,
     intimate: v.intimate === 'allow' ? 'allow' : 'protect',
+    memories: v.memories !== false,
   };
 }
 
@@ -281,7 +284,7 @@ export class NotebookController {
         checks: live ? state.checks : [], needsCheck: state.needsCheck || (live && !live.matched ? 'The chat changed before the notebook was written.' : ''),
         job: state.job, updatedAt: state.updatedAt, repliesSinceCheck: live ? this.repliesSince(live) : 0, skipHours: state.skipHours, notebook, behind: !!live && live.index !== state.versions.length - 1, earlierParts, quick: state.quick, dueIds: live ? dueThreads(live.version.notebook, live.moment).map(d => d.thread.id) : [],
         glance: live ? glance(live.version.notebook, live.moment) : null, reworking: !!live && this.reworking(state, live),
-        talk: state.talk, notes: state.notes, quickLog: state.quickLog, canUndo: this.undoable(state) !== null, spent: !!notebook && !storyLeft(notebook),
+        talk: state.talk, notes: state.notes, quickLog: state.quickLog, canUndo: this.undoable(state) !== null, spent: !!notebook && !storyLeft(notebook), memory: state.enabled ? await this.memoryView(chatId).catch(() => null) : null,
         skipOffer: live && state.enabled && state.job?.status !== 'running' && !state.skipHours && !state.intimateNow && !this.reworking(state, live) ? skipOffer(live.version.notebook, live.moment, live.clock, state.skipDismissedAt) : null,
       };
     });
@@ -350,6 +353,53 @@ export class NotebookController {
     }
     return out;
   }
+  // ----- Lumiverse's memory (Memory Cortex), read only ----------------------------
+  private memoriesReady(): boolean {
+    return this.api.permissions.has('memories') && !!(this.api as unknown as { memories?: { cortex?: unknown } }).memories?.cortex;
+  }
+  /** One cortex search, or null if it fails or takes too long. */
+  private async cortex(chatId: string, queryText: string, topK: number, exclude?: string, ms = 8000): Promise<CortexResultDTO | null> {
+    const text = queryText.replace(/\s+/g, ' ').trim().slice(-2000);
+    if (!text || !this.memoriesReady()) return null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        this.api.memories.cortex.query({ chatId, queryText: text, topK, includeConsolidations: true, includeRelationships: true, ...(exclude ? { excludeMessageIds: [exclude] } : {}), ...(this.userId ? { userId: this.userId } : {}) }),
+        new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), ms); }),
+      ]);
+    } catch { return null; } finally { if (timer) clearTimeout(timer); }
+  }
+  /** What Lumiverse remembers that bears on these questions, merged and kept within room. */
+  private async recall(chatId: string, queries: string[], room: number, exclude?: string, ms?: number): Promise<Recall> {
+    if (!this.memoriesReady()) return NO_RECALL;
+    const results = await Promise.all(queries.filter(q => q.trim()).slice(0, 4).map(q => this.cortex(chatId, q, 8, exclude, ms)));
+    return toRecall(results, room);
+  }
+  /** For check-ups and talk: memories near the scene, and near each open storyline. */
+  private async recallFor(chatId: string, chat: Array<{ content: string }>, notebook: Notebook): Promise<Recall> {
+    const open = notebook.threads.filter(t => t.status === 'open');
+    const main = open.find(t => t.id === notebook.arc.main);
+    return this.recall(chatId, [chat.slice(-4).map(t => t.content).join('\n'), ...[main, ...open.filter(t => t !== main)].filter(Boolean).slice(0, 3).map(t => `${t!.title}. ${t!.why}`)], RECALL_ROOM.plan, undefined, 20_000);
+  }
+  /** Counts for the panel, so you can see how well the memory is keeping up. Looked up at most once a minute. */
+  private memoryCounts = new Map<string, { at: number; people: number; ties: number; summaries: number }>();
+  private lastRecall = new Map<string, NonNullable<MemoryView['last']>>();
+  private async memoryView(chatId: string): Promise<MemoryView | null> {
+    if (!this.memoriesReady()) return null;
+    let counts = this.memoryCounts.get(chatId);
+    if (!counts || Date.now() - counts.at > 60_000) {
+      const m = this.api.memories, opts = this.userId ? { userId: this.userId } : undefined;
+      const [people, ties, summaries] = await Promise.all([
+        m.entities.list(chatId, opts).then(x => x.length).catch(() => 0),
+        m.relations.list(chatId, this.userId).then(x => x.length).catch(() => 0),
+        m.consolidations.list(chatId, opts).then(x => x.length).catch(() => 0),
+      ]);
+      counts = { at: Date.now(), people, ties, summaries };
+      this.memoryCounts.set(chatId, counts);
+    }
+    return { people: counts.people, ties: counts.ties, summaries: counts.summaries, last: this.lastRecall.get(chatId) ?? null };
+  }
+
   /** Search by meaning with the player's embedding connection, when Lumiverse offers it and the permission is granted. */
   private meaningIndex: MeaningIndex | null = null;
   private meaning(): MeaningIndex | null {
@@ -392,12 +442,14 @@ export class NotebookController {
     const chatText = recent.map(p => p.content).join('\n');
     const focus = [ideas, `${character.scenario}\n${character.first_mes}`, chatText, `${character.description}\n${character.personality}`, persona?.description ?? '', storySoFar];
     const queries: Query[] = [{ text: ideas, weight: 1 }, { text: focus[1], weight: 1 }, { text: chatText.slice(-6000), weight: 0.9 }, { text: focus[3], weight: 0.8 }, { text: focus[4], weight: 0.6 }, { text: storySoFar, weight: 0.7 }];
-    const lore = await this.lore(chatId, characterId, focus, LORE_ROOM.create, queries);
+    const [lore, memory] = await Promise.all([this.lore(chatId, characterId, focus, LORE_ROOM.create, queries),
+      // What Lumiverse already remembers of this chat (empty for a new one).
+      this.recall(chatId, [chatText.slice(-3000), storySoFar.slice(-3000), ideas].filter(Boolean), RECALL_ROOM.plan, undefined, 20_000)]);
     const turns = conversation(messages);
     let variables: Record<string, string> = {};
     try { variables = Object.fromEntries(Object.entries(await this.api.variables.chat.list(chatId)).slice(0, 40).map(([k, v]) => [k, String(v).slice(0, 500)])); } catch { /* none */ }
     return { character: { name: character.name, description: character.description.slice(0, 12_000), personality: character.personality.slice(0, 4000), scenario: character.scenario.slice(0, 4000), firstMessage: character.first_mes.slice(0, 6000) },
-      persona, lore, storySoFar, chat: recent, replies: storyReplies(turns).slice(-3).map(t => t.content.slice(0, 20_000)), variables };
+      persona, lore, storySoFar, chat: recent, replies: storyReplies(turns).slice(-3).map(t => t.content.slice(0, 20_000)), variables, memory };
   }
   private startJob(state: ChatState, kind: Job['kind'], label: string): { job: Job; signal: AbortSignal } {
     if (this.running.has(state.chatId)) throw new Error('The notebook is already being updated. Wait for it to finish.');
@@ -539,6 +591,7 @@ export class NotebookController {
       clockOwner: { day: live.sources.day, hour: live.sources.hour }, due: dueThreads(base.notebook, live.moment).map(d => ({ thread: d.thread.id, step: d.step.id })),
       skipHours: state.skipHours, reason, preferences: state.preferences, resync: state.resync !== null, held: state.held, notes: state.notes.map(n => n.text), part: partProgress(base.notebook, live.moment), replan: state.replan, replies: learning ? this.trackerSamples(live.turns, chatId).slice(0, 2).map(r => r.slice(0, 20_000)) : [],
       lore: await this.loreFor(chatId, chat, base.notebook),
+      memory: await this.recallFor(chatId, chat, base.notebook),
     };
     this.track((async () => {
       try {
@@ -630,9 +683,9 @@ export class NotebookController {
         chat: live.turns.slice(-12).map(t => ({ role: t.role, content: told(t, 4000) })),
         earlier: earlier.map(l => ({ from: l.from, text: l.text })), exchange: open.map(l => ({ from: l.from, text: l.text })),
         notes: state.notes.map(n => n.text), keep: pinning, push, mustAct: open.filter(l => l.from === 'grimoire' && l.asked).length >= 2,
-        lore: NO_LORE as Lore,
+        lore: NO_LORE as Lore, memory: NO_RECALL as Recall,
       };
-      input.lore = await this.loreFor(chatId, input.chat, base.notebook);
+      [input.lore, input.memory] = await Promise.all([this.loreFor(chatId, input.chat, base.notebook), this.recallFor(chatId, input.chat, base.notebook)]);
       this.track((async () => {
         try {
           let round = 0;
@@ -853,9 +906,29 @@ export class NotebookController {
     const guided = context.generationType !== 'normal' && typeof context.regenFeedback === 'string' && context.regenFeedback.trim().length > 0;
     try { note = await this.noteFor(context.chatId, exclude, guided); } catch { return messages; }
     if (!note) return messages;
+    note += await this.memoryNote(context.chatId, messages, exclude);
     // Keep a trailing assistant prefill last, so the note never breaks it.
     const at = messages.at(-1)?.role === 'assistant' ? messages.length - 1 : messages.length;
     return { messages: [...messages.slice(0, at), { role: 'system', content: note }, ...messages.slice(at)], breakdown: [{ messageIndex: at, name: 'Grimoire' }] };
+  }
+
+  /**
+   * Lumiverse's memories for the narrator, so any preset has them. Searched with the newest exchange;
+   * left out when the prompt already carries them (the preset has the memory block) or the setting is off.
+   */
+  private async memoryNote(chatId: string, messages: LlmMessageDTO[], exclude?: string): Promise<string> {
+    if (!this.memoriesReady()) return '';
+    const record = (to: NonNullable<MemoryView['last']>['to'], found = 0) => { this.lastRecall.set(chatId, { at: Date.now(), found, to }); this.changed(); };
+    if (!(await this.settings()).memories) { record('off'); return ''; }
+    const text = (m: LlmMessageDTO) => typeof m.content === 'string' ? m.content : m.content.map(p => (p as { text?: string }).text ?? '').join(' ');
+    const recent = messages.filter(m => m.role !== 'system').slice(-2).map(text).join('\n');
+    try {
+      const recall = await this.recall(chatId, [recent], RECALL_ROOM.note, exclude, 6000);
+      if (!recall.moments.length && !recall.arc) { record('none'); return ''; }
+      if (alreadyInPrompt(recall, messages.map(text).join('\n'))) { record('preset', recall.moments.length); return ''; }
+      record('note', recall.moments.length);
+      return `\n${recallNote(recall)}`;
+    } catch { record('error'); return ''; }
   }
 
   /**

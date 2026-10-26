@@ -340,8 +340,30 @@ export function setup(ctx: SpindleFrontendContext) {
     const d = details('Behind the scenes · no spoilers');
     d.body.append(glancePart(view));
     if (snapshot?.settings.quick.enabled || view.quickLog?.length) d.body.append(quickPart(view));
-    d.body.append(trackerPart(view), el('p', 'gm-hint', 'Only shapes, counts, and numbers: no names, no plans.'));
+    d.body.append(trackerPart(view));
+    if (view.memory) d.body.append(memoryPart(view.memory));
+    d.body.append(el('p', 'gm-hint', 'Only shapes, counts, and numbers: no names, no plans.'));
     return d.root;
+  }
+  /** How well Lumiverse's Memory Cortex is keeping up with this chat, in counts. */
+  function memoryPart(m: NonNullable<ChatView['memory']>) {
+    const s = part('Lumiverse memory');
+    const list = el('ul', 'gm-fields');
+    const row = (label: string, value: string) => { const li = el('li'); li.append(el('span', '', label), el('span', 'gm-dot', value)); list.append(li); };
+    row('People and places remembered', String(m.people));
+    row('Relationships remembered', String(m.ties));
+    row('Story summaries', String(m.summaries));
+    const last = m.last;
+    const words = !last ? 'Not used yet. It runs with the next reply.'
+      : last.to === 'note' ? `${last.found} ${last.found === 1 ? 'memory' : 'memories'} added to the note, ${ago(last.at)}`
+      : last.to === 'preset' ? `Your preset already includes them, so the note left them out (${ago(last.at)})`
+      : last.to === 'none' ? `Nothing remembered fit the scene (${ago(last.at)})`
+      : last.to === 'off' ? 'Off in Settings. Grimoire still reads it when it plans.'
+      : `Lumiverse’s memory didn’t answer in time (${ago(last.at)})`;
+    row('Last reply', words);
+    s.append(list);
+    if (!m.people && !m.ties) s.append(el('p', 'gm-hint', 'Nothing is remembered for this chat yet. Check that Memory Cortex is on in Lumiverse’s settings.'));
+    return s;
   }
   function renderBook(notebook: Notebook, due: string[]) {
     const book = el('div', 'gm-book'), section = (title: string) => { const s = el('section'); s.append(el('h4', '', title)); book.append(s); return s; };
@@ -416,7 +438,7 @@ export function setup(ctx: SpindleFrontendContext) {
 
   // ----- Settings -----
   function renderSettings() {
-    const settings: Settings = { ...(snapshot?.settings ?? { connectionId: '', maxOutputTokens: 16000, reasoningMode: 'inherit', every: 8, quick: { enabled: false, connectionId: '', model: '' }, wait: 'medium', homeList: true, intimate: 'protect' }) };
+    const settings: Settings = { ...(snapshot?.settings ?? { connectionId: '', maxOutputTokens: 16000, reasoningMode: 'inherit', every: 8, quick: { enabled: false, connectionId: '', model: '' }, wait: 'medium', homeList: true, intimate: 'protect', memories: true }) };
     const card = el('section', 'gm-card gm-stack');
     const connection = select([['', 'Choose a connection'], ...(snapshot?.connections ?? []).map(c => [c.id, `${c.name}${c.model ? ` · ${c.model}` : ''}`] as [string, string])], settings.connectionId);
     const every = el('input'); every.type = 'number'; every.min = '2'; every.max = '50'; every.value = String(settings.every);
@@ -446,10 +468,13 @@ export function setup(ctx: SpindleFrontendContext) {
     }
     const intimate = select([['protect', 'Keep the story out until the scene ends'], ['allow', 'Let urgent things interrupt']], settings.intimate ?? 'protect');
     card.append(labeled('During intimate scenes', intimate, 'The quick check notices these scenes. While one plays out, nothing planned interrupts it, and its replies don’t count toward moving storylines along, so nothing piles up for afterward. Needs the quick check.'));
+    const memRow = el('label', 'gm-row gm-small'), mem = el('input'); mem.type = 'checkbox'; mem.checked = settings.memories !== false; mem.style.width = 'auto';
+    memRow.append(mem, document.createTextNode('Add Lumiverse’s memories to the note'));
+    card.append(memRow, el('p', 'gm-hint', 'Gives the narrator what Lumiverse’s Memory Cortex remembers about the scene, so any preset has it. Skipped on its own when your preset already includes memories. Grimoire also reads the memory when it plans, either way.'));
     const homeRow = el('label', 'gm-row gm-small'), home = el('input'); home.type = 'checkbox'; home.checked = settings.homeList !== false; home.style.width = 'auto';
     homeRow.append(home, document.createTextNode('Show my stories on the home page'));
     card.append(homeRow);
-    const save = button('Save settings', async () => { await act('settings', { settings: { connectionId: connection.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, wait: wait.value, homeList: home.checked, intimate: intimate.value, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } }); notify('Settings saved.'); }, 'primary');
+    const save = button('Save settings', async () => { await act('settings', { settings: { connectionId: connection.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, wait: wait.value, homeList: home.checked, intimate: intimate.value, memories: mem.checked, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } }); notify('Settings saved.'); }, 'primary');
     body.append(card, quickCard, save);
   }
 
