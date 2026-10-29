@@ -94,6 +94,11 @@ function withOwnWords(notebook: Notebook, value: unknown, ideas: string): Notebo
  * chosen shape at the start of each part. A first answer that breaks one is
  * sent back; a second gets the plainest fix from code.
  */
+/** Check-ups the quick check asks for, other than urgent ones, wait until this many replies have passed since the last. */
+const CALM = 3;
+/** Strongest first. */
+const SOFT_RANK = ['A problem was solved too easily', 'A new problem came up', 'Something new happened in the story'];
+
 function storyRules(previous: Notebook | null, revised: Notebook, round: number, pace: PaceRules, prefs: Preferences, checkup = false): Notebook {
   if (round === 1) {
     // A check-up that leaves nothing to happen is asked once to open the next part; if it still doesn't, the panel offers a new chapter.
@@ -163,7 +168,7 @@ export class NotebookController {
       return {
         version: 1, chatId, enabled: saved.enabled === true, pace: PACES.includes(saved.pace as Pace) ? saved.pace as Pace : 'auto', preferences: validPreferences(saved.preferences),
         versions, recipe: validateRecipe(saved.recipe).recipe, checks: Array.isArray(saved.checks) ? saved.checks as ChatState['checks'] : [],
-        skipHours: Number(saved.skipHours) > 0 ? Number(saved.skipHours) : 0, skipTurn: Number(saved.skipTurn) > 0 ? Number(saved.skipTurn) : 0, needsCheck: typeof saved.needsCheck === 'string' ? saved.needsCheck : '', trackerTried: saved.trackerTried === true, skipDismissedAt: Number(saved.skipDismissedAt) > 0 ? Number(saved.skipDismissedAt) : 0,
+        skipHours: Number(saved.skipHours) > 0 ? Number(saved.skipHours) : 0, skipTurn: Number(saved.skipTurn) > 0 ? Number(saved.skipTurn) : 0, needsCheck: typeof saved.needsCheck === 'string' ? saved.needsCheck : '', queued: typeof saved.queued === 'string' ? saved.queued.slice(0, 200) : '', trackerTried: saved.trackerTried === true, skipDismissedAt: Number(saved.skipDismissedAt) > 0 ? Number(saved.skipDismissedAt) : 0,
         held: Array.isArray(saved.held) ? saved.held.filter((x): x is string => typeof x === 'string').slice(0, 12) : [], resync: Number.isInteger(saved.resync) ? Number(saved.resync) : null,
         talk: talkLines(saved.talk), notes: playerNotes(saved.notes), quickLog: quickLog(saved.quickLog),
         intimate: Array.isArray(saved.intimate) ? saved.intimate.filter((x): x is string => typeof x === 'string').slice(-300) : [], intimateNow: saved.intimateNow === true,
@@ -183,7 +188,7 @@ export class NotebookController {
     await this.api.userStorage.setJson(this.path(state.chatId), state, { userId: this.userId });
   }
   private blank(chatId: string): ChatState {
-    return { version: 1, chatId, enabled: false, pace: 'auto', preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: '' }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: '', trackerTried: false, quick: null, skipDismissedAt: 0, held: [], resync: null, talk: [], notes: [], quickLog: [], paceSignals: [], replan: false, replannedAt: 0, intimate: [], intimateNow: false, job: null, updatedAt: 0 };
+    return { version: 1, chatId, enabled: false, pace: 'auto', preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: '' }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: '', queued: '', trackerTried: false, quick: null, skipDismissedAt: 0, held: [], resync: null, talk: [], notes: [], quickLog: [], paceSignals: [], replan: false, replannedAt: 0, intimate: [], intimateNow: false, job: null, updatedAt: 0 };
   }
   private async chatInfo(chatId: string): Promise<{ name: string; supported: boolean; reason: string; characterId: string }> {
     const chat = await this.api.chats.get(chatId, this.userId);
@@ -629,7 +634,7 @@ export class NotebookController {
           // Keep the base version and anything before it; drop versions from a history that no longer matches.
           const kept = current.versions.filter((v, i) => i === 0 || covers(v.covered, read));
           current.versions = prune([...kept, version].filter((v, i, all) => all.indexOf(v) === i));
-          current.needsCheck = ''; current.held = []; current.resync = null;
+          current.needsCheck = ''; current.queued = ''; current.held = []; current.resync = null;
           // A re-plan done; otherwise steps that happened before they were offered count as running ahead.
           if (input.replan) { current.replan = false; current.replannedAt = live.moment.reply ?? 0; current.paceSignals = []; }
           else if (result.early) this.paceSignal(current, live.moment, result.early);
@@ -955,11 +960,17 @@ export class NotebookController {
     if (quick) this.runQuick(chatId, quick.live, quick.settings);
   }
   /** Must run inside the chat's queue. Saves the state, then starts a check-up if one is due. */
-  private async decide(state: ChatState, live: Live, settings: Settings, extra: string) {
+  /**
+   * `extra` is a reason that can't wait (the story changed direction, a secret came out). `soft` is something the
+   * quick check noticed that can: a cheap narrator brings in something new nearly every reply, so these run at most
+   * once every CALM replies. The strongest one waits in `queued` until then.
+   */
+  private async decide(state: ChatState, live: Live, settings: Settings, extra: string, soft = '') {
     const chatId = state.chatId;
     // A tracker that shows up once the narrator starts replying is looked for in code first, for free.
     if (this.learnTracker(state, live.turns)) live = (await this.live(state, await this.api.chat.getMessages(chatId)))!;
     const full = this.fullVersion(live), since = this.repliesSince(live);
+    if (soft && (!state.queued || SOFT_RANK.indexOf(soft) < SOFT_RANK.indexOf(state.queued))) state.queued = soft;
     // Going back (deleting, editing, or swiping a reply) picks the version from before it, which already fits the chat.
     // A check-up is only needed right away when no saved version fits at all.
     const unmatched = !live.matched;
@@ -973,7 +984,8 @@ export class NotebookController {
     // An urgent development was offered: see whether it happened before offering it again, once per stretch.
     // The quick check answers this itself, so it is only needed without one.
     const urgent = !(settings.quick.enabled && this.decisionsReady()) && since >= 2 && full.reason !== 'Checking on an urgent development' && dueThreads(live.version.notebook, live.moment).some(d => d.thread.speed === 'urgent');
-    const reason = state.needsCheck ? (state.needsCheck.startsWith('The chat changed') ? 'Caught up after the chat changed' : state.needsCheck) : unmatched ? 'The chat changed before the notebook was written' : extra ? extra : state.replan ? 'The story ran ahead of its plan' : moved ? 'The scene moved' : jumped ? 'Time moved on'
+    const queued = since >= CALM ? state.queued : '';
+    const reason = state.needsCheck ? (state.needsCheck.startsWith('The chat changed') ? 'Caught up after the chat changed' : state.needsCheck) : unmatched ? 'The chat changed before the notebook was written' : extra ? extra : queued ? queued : state.replan ? 'The story ran ahead of its plan' : moved ? 'The scene moved' : jumped ? 'Time moved on'
       : findTracker ? 'Looking for your preset’s tracker' : urgent ? 'Checking on an urgent development' : since >= settings.every ? `${since} replies since the last update` : '';
     if (findTracker) state.trackerTried = true;
     await this.save(state);
@@ -1025,7 +1037,7 @@ export class NotebookController {
         let now = await this.live(state, messages);
         if (!now) return;
         state.quick = { at: Date.now(), ok: !!result, error };
-        let extra = '', outcome: ReturnType<typeof applyQuick> | null = null;
+        let extra = '', soft = '', outcome: ReturnType<typeof applyQuick> | null = null;
         // No answer during an intimate scene: assume it goes on, so the scene stays protected and its replies stay uncounted.
         if (!result && state.intimateNow) { const judged = live.prints.at(-1); if (judged && !state.intimate.includes(judged)) { state.intimate = [...state.intimate, judged].slice(-300); now = (await this.live(state, messages))!; } }
         // The reply it judged must still be in the chat. A swipe or edit meanwhile means the answers are about a reply that is gone.
@@ -1036,7 +1048,9 @@ export class NotebookController {
             state.versions = prune(state.versions);
             now = (await this.live(state, messages))!;
           }
-          if (outcome.needsCheckup) extra = outcome.easyFix ? 'A problem was solved too easily' : outcome.problem ? 'A new problem came up' : 'Something new happened in the story';
+          // A secret coming out can't wait. Anything else the quick check noticed waits its turn (see decide).
+          if (outcome.revealed) extra = 'A secret came out';
+          else if (outcome.needsCheckup) soft = outcome.easyFix ? 'A problem was solved too easily' : outcome.problem ? 'A new problem came up' : 'Something new happened in the story';
           // An intimate scene: its replies don't count toward storyline waits, and hurrying is the scene's own business.
           const judged = live.prints.at(-1);
           state.intimateNow = outcome.intimate;
@@ -1049,7 +1063,7 @@ export class NotebookController {
         state.quickLog = [...state.quickLog, { ...quickRecord(live.moment.reply ?? 0, result, outcome), ...(error ? { error } : {}) }].slice(-QUICK_LOG);
         // A check-up can't start while one runs; the next reply looks again.
         if (this.running.has(chatId)) { await this.save(state); return; }
-        await this.decide(state, now, settings, extra);
+        await this.decide(state, now, settings, extra, soft);
       });
     })();
     this.track(task.catch(() => {}).finally(() => { this.quickRunning.delete(chatId); this.changed(); }));

@@ -462,8 +462,15 @@ describe('the quick check', () => {
   });
   test('a development that clearly no longer fits is held out of the note until a check-up decides', async () => {
     const { h, m, c } = await quickReady(answers({ fits_1: noul(0.05) }));
+    h.add('user', 'I leave the ferry behind.'); h.add('assistant', `The road bends inland.${tracker('Day 1, 18:10', 'The ferry')}`);
+    await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+    // Held out at once; the check-up that decides waits for a calm moment.
+    expect(await c.noteFor('chat-1')).not.toContain('Shutters bang');
+    expect(m.calls.some(x => x.task === 'grimoire-checkup-v1')).toBe(false);
+    h.add('user', 'I walk on.'); h.add('assistant', `The road climbs.${tracker('Day 1, 18:20', 'The ferry')}`);
+    await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
     const release = m.pause();
-    h.add('user', 'I leave the ferry behind.'); h.add('assistant', `The road bends inland.${tracker('Day 1, 18:10', 'The road')}`);
+    h.add('user', 'I walk on.'); h.add('assistant', `A farm comes into view.${tracker('Day 1, 18:30', 'The ferry')}`);
     await c.afterReply('chat-1', 'normal');
     for (let i = 0; i < 20 && !m.calls.some(x => x.task === 'grimoire-checkup-v1'); i++) await new Promise(r => setTimeout(r, 1));
     expect(await c.noteFor('chat-1')).not.toContain('Shutters bang');
@@ -473,11 +480,20 @@ describe('the quick check', () => {
     release(); await c.waitForJobs();
     expect(await c.noteFor('chat-1')).toContain('Shutters bang');
   });
-  test('something new in the story starts a full check-up right away', async () => {
+  test('something new in the story starts a full check-up once a few replies have passed, and only one', async () => {
     const { h, m, c } = await quickReady(answers({ new_turn: noul(0.88) }));
-    h.add('user', 'I follow the stranger.'); h.add('assistant', `A stranger named Pell waves you over.${tracker('Day 1, 18:10', 'The ferry')}`);
+    const reasons = () => m.calls.filter(x => x.task === 'grimoire-checkup-v1').map(x => x.input.reason);
+    for (const [i, line] of ['A stranger named Pell waves you over.', 'Pell names a price.', 'Pell leads you to a boat.', 'The boat pushes off.'].entries()) {
+      h.add('user', 'I follow.'); h.add('assistant', `${line}${tracker(`Day 1, 18:${10 + i * 5}`, 'The ferry')}`);
+      await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+      expect(reasons()).toEqual(i < 2 ? [] : ['Something new happened in the story']);
+    }
+  });
+  test('a secret coming out still starts a check-up right away', async () => {
+    const { h, m, c } = await quickReady(answers({ truth_1: noul(0.9), new_turn: noul(0.9) }));
+    h.add('user', 'Tell me.'); h.add('assistant', `Mira tells you everything.${tracker('Day 1, 18:10', 'The ferry')}`);
     await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
-    expect(m.calls.filter(x => x.task === 'grimoire-checkup-v1').map(x => x.input.reason)).toEqual(['Something new happened in the story']);
+    expect(m.calls.filter(x => x.task === 'grimoire-checkup-v1').map(x => x.input.reason)).toEqual(['A secret came out']);
   });
   test('an uncertain answer changes nothing', async () => {
     const { h, c } = await quickReady(answers({ due_1: noul(0.5), rhythm: { type: 'choice', choice: 'peak', probabilities: { peak: 0.4 }, confidence: 0.4 } }));
@@ -1336,8 +1352,11 @@ describe('problems that come up', () => {
       await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 50, quick: { enabled: true, connectionId: '', model: '' } }, {});
       const c = new NotebookController(h.api, undefined, () => {}, m.ask);
       await c.create('chat-1', {}); await c.waitForJobs();
-      h.add('user', 'I owe a gang money.'); h.add('assistant', `Mira pays it off for you.${tracker('Day 1, 18:10', 'The ferry')}`);
-      await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+      // A few replies in, so the check-up isn't waiting for a calm moment. The strongest reason is the one kept.
+      for (const [i, line] of ['Mira frowns.', 'Mira counts coins.', 'Mira pays it off for you.'].entries()) {
+        h.add('user', 'I owe a gang money.'); h.add('assistant', `${line}${tracker(`Day 1, 18:${10 + i * 5}`, 'The ferry')}`);
+        await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+      }
       const checkup = m.calls.find(x => x.task === 'grimoire-checkup-v1')!;
       expect(checkup.input.reason).toBe(reason);
       expect(checkup.messages[0].content).toContain('give it a catch, a cost, a delay, or someone it angers');

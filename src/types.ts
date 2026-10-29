@@ -21,6 +21,8 @@ export interface ChatState {
   skipTurn: number;
   /** Why the next check-up should run soon, if anything. */
   needsCheck: string;
+  /** Something the quick check noticed that can wait: it runs once a few replies have passed since the last check-up. */
+  queued: string;
   /** A check-up has already looked for a tracker that appeared after the notebook was written. */
   trackerTried: boolean;
   /** The last quick check: when it ran and whether it worked. */

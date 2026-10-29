@@ -2176,7 +2176,7 @@ function applyQuick(current, plan, result, now) {
   const held = Object.entries(plan.marks).flatMap(([key, mark]) => mark.kind === "fits" && answers[key]?.type === "noul" && answers[key].noul <= QUICK.no ? [mark.thread] : []);
   const cameOut = Object.entries(plan.marks).some(([key, mark]) => mark.kind === "truth" && yes(answers[key]));
   const problem = yes(answers.new_problem), easyFix = yes(answers.easy_fix);
-  return { notebook, changed, marked, needsCheckup: yes(answers.new_turn) || held.length > 0 || cameOut || problem || easyFix, problem, easyFix, rushing: yes(answers.rushing), intimate: yes(answers.intimate), shifted: yes(answers.story_shift), held };
+  return { notebook, changed, marked, needsCheckup: yes(answers.new_turn) || held.length > 0 || cameOut || problem || easyFix, problem, easyFix, revealed: cameOut, rushing: yes(answers.rushing), intimate: yes(answers.intimate), shifted: yes(answers.story_shift), held };
 }
 function quickError(error) {
   const message = error instanceof Error ? error.message : String(error ?? "");
@@ -2613,6 +2613,8 @@ function withOwnWords(notebook, value, ideas) {
   }
   return own.size ? { ...notebook, people: notebook.people.map((p) => own.has(p.id) ? { ...p, own: own.get(p.id) } : p) } : notebook;
 }
+var CALM = 3;
+var SOFT_RANK = ["A problem was solved too easily", "A new problem came up", "Something new happened in the story"];
 function storyRules(previous, revised, round, pace, prefs, checkup = false) {
   if (round === 1) {
     const problems = [...paceProblems(previous, revised, pace), ...leadProblems(previous, revised, prefs), ...specificProblems(previous, revised), ...checkup && previous ? spentProblems(previous, revised) : []];
@@ -2706,6 +2708,7 @@ class NotebookController {
         skipHours: Number(saved.skipHours) > 0 ? Number(saved.skipHours) : 0,
         skipTurn: Number(saved.skipTurn) > 0 ? Number(saved.skipTurn) : 0,
         needsCheck: typeof saved.needsCheck === "string" ? saved.needsCheck : "",
+        queued: typeof saved.queued === "string" ? saved.queued.slice(0, 200) : "",
         trackerTried: saved.trackerTried === true,
         skipDismissedAt: Number(saved.skipDismissedAt) > 0 ? Number(saved.skipDismissedAt) : 0,
         held: Array.isArray(saved.held) ? saved.held.filter((x) => typeof x === "string").slice(0, 12) : [],
@@ -2732,7 +2735,7 @@ class NotebookController {
     await this.api.userStorage.setJson(this.path(state.chatId), state, { userId: this.userId });
   }
   blank(chatId) {
-    return { version: 1, chatId, enabled: false, pace: "auto", preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: "" }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: "", trackerTried: false, quick: null, skipDismissedAt: 0, held: [], resync: null, talk: [], notes: [], quickLog: [], paceSignals: [], replan: false, replannedAt: 0, intimate: [], intimateNow: false, job: null, updatedAt: 0 };
+    return { version: 1, chatId, enabled: false, pace: "auto", preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: "" }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: "", queued: "", trackerTried: false, quick: null, skipDismissedAt: 0, held: [], resync: null, talk: [], notes: [], quickLog: [], paceSignals: [], replan: false, replannedAt: 0, intimate: [], intimateNow: false, job: null, updatedAt: 0 };
   }
   async chatInfo(chatId) {
     const chat = await this.api.chats.get(chatId, this.userId);
@@ -3306,6 +3309,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
           const kept = current.versions.filter((v, i) => i === 0 || covers(v.covered, read));
           current.versions = prune([...kept, version].filter((v, i, all) => all.indexOf(v) === i));
           current.needsCheck = "";
+          current.queued = "";
           current.held = [];
           current.resync = null;
           if (input.replan) {
@@ -3717,11 +3721,13 @@ ${recallNote(recall)}`;
     if (quick)
       this.runQuick(chatId, quick.live, quick.settings);
   }
-  async decide(state, live, settings, extra) {
+  async decide(state, live, settings, extra, soft = "") {
     const chatId = state.chatId;
     if (this.learnTracker(state, live.turns))
       live = await this.live(state, await this.api.chat.getMessages(chatId));
     const full = this.fullVersion(live), since = this.repliesSince(live);
+    if (soft && (!state.queued || SOFT_RANK.indexOf(soft) < SOFT_RANK.indexOf(state.queued)))
+      state.queued = soft;
     const unmatched = !live.matched;
     const moved = !!live.values.location && !!full.location && live.values.location.toLowerCase() !== full.location.toLowerCase() && since >= 2;
     const jumped = live.now - absoluteHours(full.notebook.clock) >= 6 && since >= 1;
@@ -3731,7 +3737,8 @@ ${recallNote(recall)}`;
     }
     const findTracker = !state.recipe.fields.length && !state.trackerTried && since >= 1 && this.trackerSamples(live.turns, chatId).length > 0;
     const urgent = !(settings.quick.enabled && this.decisionsReady()) && since >= 2 && full.reason !== "Checking on an urgent development" && dueThreads(live.version.notebook, live.moment).some((d) => d.thread.speed === "urgent");
-    const reason = state.needsCheck ? state.needsCheck.startsWith("The chat changed") ? "Caught up after the chat changed" : state.needsCheck : unmatched ? "The chat changed before the notebook was written" : extra ? extra : state.replan ? "The story ran ahead of its plan" : moved ? "The scene moved" : jumped ? "Time moved on" : findTracker ? "Looking for your preset\u2019s tracker" : urgent ? "Checking on an urgent development" : since >= settings.every ? `${since} replies since the last update` : "";
+    const queued = since >= CALM ? state.queued : "";
+    const reason = state.needsCheck ? state.needsCheck.startsWith("The chat changed") ? "Caught up after the chat changed" : state.needsCheck : unmatched ? "The chat changed before the notebook was written" : extra ? extra : queued ? queued : state.replan ? "The story ran ahead of its plan" : moved ? "The scene moved" : jumped ? "Time moved on" : findTracker ? "Looking for your preset\u2019s tracker" : urgent ? "Checking on an urgent development" : since >= settings.every ? `${since} replies since the last update` : "";
     if (findTracker)
       state.trackerTried = true;
     await this.save(state);
@@ -3787,7 +3794,7 @@ ${recallNote(recall)}`;
         if (!now)
           return;
         state.quick = { at: Date.now(), ok: !!result, error };
-        let extra = "", outcome = null;
+        let extra = "", soft = "", outcome = null;
         if (!result && state.intimateNow) {
           const judged = live.prints.at(-1);
           if (judged && !state.intimate.includes(judged)) {
@@ -3802,8 +3809,10 @@ ${recallNote(recall)}`;
             state.versions = prune(state.versions);
             now = await this.live(state, messages);
           }
-          if (outcome.needsCheckup)
-            extra = outcome.easyFix ? "A problem was solved too easily" : outcome.problem ? "A new problem came up" : "Something new happened in the story";
+          if (outcome.revealed)
+            extra = "A secret came out";
+          else if (outcome.needsCheckup)
+            soft = outcome.easyFix ? "A problem was solved too easily" : outcome.problem ? "A new problem came up" : "Something new happened in the story";
           const judged = live.prints.at(-1);
           state.intimateNow = outcome.intimate;
           if (outcome.intimate && judged && !state.intimate.includes(judged)) {
@@ -3824,7 +3833,7 @@ ${recallNote(recall)}`;
           await this.save(state);
           return;
         }
-        await this.decide(state, now, settings, extra);
+        await this.decide(state, now, settings, extra, soft);
       });
     })();
     this.track(task.catch(() => {}).finally(() => {
