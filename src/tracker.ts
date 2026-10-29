@@ -1,5 +1,5 @@
 import { readDay, readTime } from './clock';
-import { spaces } from './history';
+import { spaces, withoutThinking } from './history';
 
 /**
  * Reading a preset's tracker without knowing the preset.
@@ -85,7 +85,7 @@ function jsonPath(value: unknown, path: string): unknown {
 }
 /** Read one field from one reply. Returns undefined when it is not there. */
 export function readField(field: RecipeField, raw: string, variables: Record<string, string>): string | undefined {
-  const from = field.source, reply = spaces(raw);
+  const from = field.source, reply = withoutThinking(spaces(raw));
   if (from.kind === 'variable') { const v = variables[from.name]; return typeof v === 'string' && v.trim() ? plain(v) : undefined; }
   for (const part of areas(reply, from.region)) {
     if (from.kind === 'line') {
@@ -146,7 +146,7 @@ export function readTracker(recipe: Recipe, checks: FieldCheck[], replies: strin
 }
 /** The tracker's raw block from the newest reply, for check-ups to read as plain text. */
 export function trackerText(recipe: Recipe, raw: string): string {
-  const reply = spaces(raw);
+  const reply = withoutThinking(spaces(raw));
   const pieces = new Set<string>();
   for (const field of recipe.fields) {
     const from = field.source;

@@ -295,6 +295,15 @@ describe('messages as words', () => {
     expect(text).not.toMatch(/color|style|hidden|<|>/);
     expect(readable('x'.repeat(50), 10)).toHaveLength(10);
   });
+  test('thinking left in the reply is not story', () => {
+    expect(readable('<thinking_mode>\n**Sync** Maybe the deacon attacks.</thinking_mode>\nThe helmet comes off.', 500)).toBe('The helmet comes off.');
+    expect(readable('<think>plan</think>Story.', 500)).toBe('Story.');
+    expect(readable('the plan</thinking>\nStory.', 500)).toBe('Story.');
+    expect(readable('She frowns. <thoughts>Not again.</thoughts>', 500)).toContain('Not again.');
+    const { readField } = require('../src/tracker');
+    const field = { name: 'location', type: 'text', source: { kind: 'attribute', tag: 'scenecard', attribute: 'place', region: { kind: 'whole' } } };
+    expect(readField(field, '<thinking>draft: <scenecard place="Old Deck"></scenecard></thinking><scenecard place="Bay Six"></scenecard>', {})).toBe('Bay Six');
+  });
 });
 
 describe('quick check answers', () => {

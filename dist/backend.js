@@ -200,8 +200,16 @@ var EARLIER = { part: 30000, maxPart: 60000, maxParts: 12, perTurn: 3000 };
 var KEEP_ATTRIBUTE = /^(?!style$|class$|id$|color$|face$|size$|href$|src$|width$|height$|align$|data-|aria-|role$|on)[a-z][\w-]*$/i;
 var ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", "#39": "'" };
 var spaces = (text) => text.replace(/[\u2800\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]/g, " ").replace(/[\u200b\u2060\ufeff]/g, "");
+var THINKING = /<((?:[\w-]*_)?think(?:ing)?(?:_[\w-]+)?|reasoning|ksc)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi;
+var CLOSE_ONLY = /^[\s\S]*?<\/(?:(?:[\w-]*_)?think(?:ing)?(?:_[\w-]+)?|reasoning)\s*>/i;
+function withoutThinking(text) {
+  let s = text.replace(THINKING, " ");
+  if (CLOSE_ONLY.test(s) && !/<(?:[\w-]*_)?think|<reasoning/i.test(s.match(CLOSE_ONLY)[0].replace(/<\/[^>]*>$/, "")))
+    s = s.replace(CLOSE_ONLY, " ");
+  return s;
+}
 function readable(text, max) {
-  let s = spaces(text).replace(/<(style|script)\b[\s\S]*?<\/\1\s*>/gi, " ").replace(/<!--[\s\S]*?-->/g, " ");
+  let s = withoutThinking(spaces(text)).replace(/<(style|script)\b[\s\S]*?<\/\1\s*>/gi, " ").replace(/<!--[\s\S]*?-->/g, " ");
   s = s.replace(/<([a-z][\w:-]*)((?:\s+[\w:-]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?)*)\s*\/?>/gi, (_, tag, attrs) => {
     const facts = [...attrs.matchAll(/([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g)].filter((m) => KEEP_ATTRIBUTE.test(m[1]) && (m[2] ?? m[3] ?? m[4] ?? "").trim()).map((m) => `${m[1]}: ${(m[2] ?? m[3] ?? m[4]).trim()}`);
     return facts.length ? ` [${tag} ${facts.join("; ")}] ` : " ";
@@ -2357,7 +2365,7 @@ function jsonPath(value, path) {
   return current;
 }
 function readField(field, raw, variables) {
-  const from = field.source, reply = spaces(raw);
+  const from = field.source, reply = withoutThinking(spaces(raw));
   if (from.kind === "variable") {
     const v = variables[from.name];
     return typeof v === "string" && v.trim() ? plain2(v) : undefined;
@@ -2432,7 +2440,7 @@ function readTracker(recipe, checks, replies, variables) {
   return values;
 }
 function trackerText(recipe, raw) {
-  const reply = spaces(raw);
+  const reply = withoutThinking(spaces(raw));
   const pieces = new Set;
   for (const field of recipe.fields) {
     const from = field.source;

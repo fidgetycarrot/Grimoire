@@ -71,8 +71,20 @@ const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"'
  * spaces, so anything that reads replies sees ordinary spaces instead.
  */
 export const spaces = (text: string) => text.replace(/[\u2800\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]/g, ' ').replace(/[\u200b\u2060\ufeff]/g, '');
+/**
+ * A model's thinking, when the provider leaves it in the reply instead of a separate field (custom connections
+ * often do, and presets ask for <thinking>, <thinking_mode>, and the like). It is plans and drafts, not story.
+ */
+const THINKING = /<((?:[\w-]*_)?think(?:ing)?(?:_[\w-]+)?|reasoning|ksc)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi;
+const CLOSE_ONLY = /^[\s\S]*?<\/(?:(?:[\w-]*_)?think(?:ing)?(?:_[\w-]+)?|reasoning)\s*>/i;
+export function withoutThinking(text: string): string {
+  let s = text.replace(THINKING, ' ');
+  // Some providers cut the opening tag and leave only the closing one: everything before it was thinking.
+  if (CLOSE_ONLY.test(s) && !/<(?:[\w-]*_)?think|<reasoning/i.test(s.match(CLOSE_ONLY)![0].replace(/<\/[^>]*>$/, ''))) s = s.replace(CLOSE_ONLY, ' ');
+  return s;
+}
 export function readable(text: string, max: number): string {
-  let s = spaces(text).replace(/<(style|script)\b[\s\S]*?<\/\1\s*>/gi, ' ').replace(/<!--[\s\S]*?-->/g, ' ');
+  let s = withoutThinking(spaces(text)).replace(/<(style|script)\b[\s\S]*?<\/\1\s*>/gi, ' ').replace(/<!--[\s\S]*?-->/g, ' ');
   s = s.replace(/<([a-z][\w:-]*)((?:\s+[\w:-]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?)*)\s*\/?>/gi, (_, tag: string, attrs: string) => {
     const facts = [...attrs.matchAll(/([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g)]
       .filter(m => KEEP_ATTRIBUTE.test(m[1]) && (m[2] ?? m[3] ?? m[4] ?? '').trim()).map(m => `${m[1]}: ${(m[2] ?? m[3] ?? m[4]).trim()}`);
