@@ -94,6 +94,19 @@ function withOwnWords(notebook: Notebook, value: unknown, ideas: string): Notebo
  * chosen shape at the start of each part. A first answer that breaks one is
  * sent back; a second gets the plainest fix from code.
  */
+/**
+ * Whether two tracker readings name the same place. Trackers reword freely ("Outer hold, heavy gunship" after
+ * "Heavy gunship, outer hold"), and naming a part of the same place ("Crew quarters" in "Crew quarters, heavy
+ * gunship") isn't a new scene either.
+ */
+export function samePlace(a: string, b: string): boolean {
+  const words = (s: string) => new Set(s.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(w => w && !['the', 'a', 'an', 'of', 'in', 'on', 'at'].includes(w)));
+  const x = words(a), y = words(b);
+  if (!x.size || !y.size) return a.trim().toLowerCase() === b.trim().toLowerCase();
+  const [small, big] = x.size <= y.size ? [x, y] : [y, x];
+  return [...small].every(w => big.has(w));
+}
+
 /** Check-ups the quick check asks for, other than urgent ones, wait until this many replies have passed since the last. */
 const CALM = 3;
 /** Strongest first. */
@@ -974,7 +987,7 @@ export class NotebookController {
     // Going back (deleting, editing, or swiping a reply) picks the version from before it, which already fits the chat.
     // A check-up is only needed right away when no saved version fits at all.
     const unmatched = !live.matched;
-    const moved = !!live.values.location && !!full.location && live.values.location.toLowerCase() !== full.location.toLowerCase() && since >= 2;
+    const moved = !!live.values.location && !!full.location && !samePlace(live.values.location, full.location) && since >= 2;
     const jumped = live.now - absoluteHours(full.notebook.clock) >= 6 && since >= 1;
     // After a failed check-up, wait for the story to move on before paying for another try. Check now always works.
     if (state.job?.kind === 'checkup' && state.job.status === 'failed' && state.job.failedAtTurn !== undefined && live.turns.length < state.job.failedAtTurn + 2 * Math.min(settings.every, 4)) { await this.save(state); return; }

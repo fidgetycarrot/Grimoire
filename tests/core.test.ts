@@ -835,3 +835,14 @@ describe('pushes tie to the story, loosely enough for a new chapter', () => {
     expect(checkPush(before(), chapter(), { thread: 'new-rival', from: { kind: 'truth', ref: 7 } }, 'chapter', true).thread).toBe('new-rival');
   });
 });
+
+describe('the scene moving', () => {
+  test('reworded or narrower names of the same place are not a move', () => {
+    const { samePlace } = require('../src/controller');
+    expect(samePlace('Outer hold, heavy gunship', 'Heavy gunship, outer hold')).toBe(true);
+    expect(samePlace('Crew quarters', 'Crew quarters, heavy gunship')).toBe(true);
+    expect(samePlace('The ferry', 'ferry')).toBe(true);
+    expect(samePlace('Crew quarters, heavy gunship', 'Outer hold, heavy gunship')).toBe(false);
+    expect(samePlace('The ferry', 'The road')).toBe(false);
+  });
+});

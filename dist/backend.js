@@ -2621,6 +2621,14 @@ function withOwnWords(notebook, value, ideas) {
   }
   return own.size ? { ...notebook, people: notebook.people.map((p) => own.has(p.id) ? { ...p, own: own.get(p.id) } : p) } : notebook;
 }
+function samePlace(a, b) {
+  const words = (s) => new Set(s.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w && !["the", "a", "an", "of", "in", "on", "at"].includes(w)));
+  const x = words(a), y = words(b);
+  if (!x.size || !y.size)
+    return a.trim().toLowerCase() === b.trim().toLowerCase();
+  const [small, big] = x.size <= y.size ? [x, y] : [y, x];
+  return [...small].every((w) => big.has(w));
+}
 var CALM = 3;
 var SOFT_RANK = ["A problem was solved too easily", "A new problem came up", "Something new happened in the story"];
 function storyRules(previous, revised, round, pace, prefs, checkup = false) {
@@ -3737,7 +3745,7 @@ ${recallNote(recall)}`;
     if (soft && (!state.queued || SOFT_RANK.indexOf(soft) < SOFT_RANK.indexOf(state.queued)))
       state.queued = soft;
     const unmatched = !live.matched;
-    const moved = !!live.values.location && !!full.location && live.values.location.toLowerCase() !== full.location.toLowerCase() && since >= 2;
+    const moved = !!live.values.location && !!full.location && !samePlace(live.values.location, full.location) && since >= 2;
     const jumped = live.now - absoluteHours(full.notebook.clock) >= 6 && since >= 1;
     if (state.job?.kind === "checkup" && state.job.status === "failed" && state.job.failedAtTurn !== undefined && live.turns.length < state.job.failedAtTurn + 2 * Math.min(settings.every, 4)) {
       await this.save(state);
