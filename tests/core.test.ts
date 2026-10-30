@@ -846,3 +846,24 @@ describe('the scene moving', () => {
     expect(samePlace('The ferry', 'The road')).toBe(false);
   });
 });
+
+describe('panels after the story', () => {
+  const { readable, withoutPanels } = require('../src/history');
+  const prose = 'The vibration of your voice travels through the chestplate. '.repeat(8) + '\n\n<font color="#fff">"Hi."</font> She <b>smiles</b>.';
+  test('tagged blocks after the prose are left out, replayed player lines and all', () => {
+    const reply = `${prose}\n\n<sola_hud digest="x">\n<date>\nDay: 1\n</date>\n<bond>\nPair: A\n</bond>\n</sola_hud>\n\n<fengine>\nIW=3\n</fengine>\n---\n<chatterbox mind="Riot">\n<sola_text>hey</sola_text>\n<user_text>I offer him the pelt</user_text>\n</chatterbox>\n`;
+    const text = readable(reply, 8000);
+    expect(text).toContain('She smiles .');
+    expect(text).not.toContain('pelt');
+    expect(text).not.toContain('Day: 1');
+  });
+  test('a story inside a tag, a short reply, or prose after a panel is read whole', () => {
+    for (const reply of [`<story>${prose}</story>\n<hud>\nx\n</hud>`, 'She nods.\n<hud>\nx\n</hud>', `${prose}\n<hud>\nx\n</hud>\nThen she leaves the room.`])
+      expect(withoutPanels(reply)).toBe(reply);
+  });
+  test('the tracker still reads its panel', () => {
+    const { readField } = require('../src/tracker');
+    const field = { name: 'location', type: 'text', source: { kind: 'line', label: 'Location', region: { kind: 'tag', tag: 'scene_cast' } } };
+    expect(readField(field, `${prose}\n\n<scene_cast>\nLocation: Crew quarters\n</scene_cast>`, {})).toBe('Crew quarters');
+  });
+});

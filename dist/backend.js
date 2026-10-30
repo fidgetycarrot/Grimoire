@@ -208,8 +208,45 @@ function withoutThinking(text) {
     s = s.replace(CLOSE_ONLY, " ");
   return s;
 }
+var INLINE = new Set(["font", "b", "i", "u", "s", "em", "strong", "span", "small", "big", "sup", "sub", "a", "br", "q", "code", "mark", "del", "ins", "abbr", "cite", "kbd", "img", "hr"]);
+var PROSE_BEFORE_PANELS = 300;
+function withoutPanels(text) {
+  const blocks = [];
+  const open = /(^|\n)[ \t]*<([a-z][\w:-]*)\b[^>]*>/gi;
+  let m;
+  while (m = open.exec(text)) {
+    const name = m[2].toLowerCase(), start = m.index + m[1].length;
+    if (INLINE.has(name) || blocks.some((b) => start < b.end))
+      continue;
+    const tags = new RegExp(`<(/?)${name.replace(/[-:]/g, "\\$&")}\\b[^>]*>`, "gi");
+    tags.lastIndex = open.lastIndex;
+    let depth = 1, t, end = -1;
+    while (t = tags.exec(text)) {
+      depth += t[1] ? -1 : t[0].endsWith("/>") ? 0 : 1;
+      if (!depth) {
+        end = t.index + t[0].length;
+        break;
+      }
+    }
+    if (end < 0)
+      continue;
+    blocks.push({ start, end });
+    open.lastIndex = end;
+  }
+  const filler = (s) => !s.replace(/[\s\-\u2013\u2014_*=~#]+/g, "");
+  let tail = text.length;
+  for (const b of [...blocks].reverse()) {
+    if (!filler(text.slice(b.end, tail)))
+      break;
+    tail = b.start;
+  }
+  if (tail === text.length)
+    return text;
+  const prose = text.slice(0, tail);
+  return prose.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim().length >= PROSE_BEFORE_PANELS ? prose : text;
+}
 function readable(text, max) {
-  let s = withoutThinking(spaces(text)).replace(/<(style|script)\b[\s\S]*?<\/\1\s*>/gi, " ").replace(/<!--[\s\S]*?-->/g, " ");
+  let s = withoutPanels(withoutThinking(spaces(text))).replace(/<(style|script)\b[\s\S]*?<\/\1\s*>/gi, " ").replace(/<!--[\s\S]*?-->/g, " ");
   s = s.replace(/<([a-z][\w:-]*)((?:\s+[\w:-]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?)*)\s*\/?>/gi, (_, tag, attrs) => {
     const facts = [...attrs.matchAll(/([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g)].filter((m) => KEEP_ATTRIBUTE.test(m[1]) && (m[2] ?? m[3] ?? m[4] ?? "").trim()).map((m) => `${m[1]}: ${(m[2] ?? m[3] ?? m[4]).trim()}`);
     return facts.length ? ` [${tag} ${facts.join("; ")}] ` : " ";
