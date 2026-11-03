@@ -466,8 +466,8 @@ export function setup(ctx: SpindleFrontendContext) {
       if (!decisions.connections.length) quickCard.append(el('p', 'gm-notice', 'Add a decision connection in Lumiverse’s connection settings first (OpenRouter or TypeSafe).'));
       quickCard.append(labeled('Decision connection', decision), labeled('Model', model, 'Any decision model works. To use a different one than the connection’s, type its exact ID. Pick one with a version in its name rather than one ending in “latest”, so it doesn’t change without you knowing.'));
     }
-    const intimate = select([['protect', 'Keep the story out until the scene ends'], ['allow', 'Let urgent things interrupt']], settings.intimate ?? 'protect');
-    card.append(labeled('During intimate scenes', intimate, 'The quick check notices these scenes. While one plays out, nothing planned interrupts it, and its replies don’t count toward moving storylines along, so nothing piles up for afterward. Needs the quick check.'));
+    const intimate = select([['protect', 'Keep the story out until the scene ends'], ['allow', 'Let the story carry on as usual']], settings.intimate ?? 'protect');
+    card.append(labeled('During intimate scenes', intimate, 'The quick check notices these scenes. Kept out: while one plays out, nothing planned interrupts it, and its replies don’t count toward moving storylines along, so nothing piles up for afterward. Carry on: the story keeps moving through them like any other scene, which suits a card where most scenes are intimate. Needs the quick check.'));
     const memRow = el('label', 'gm-row gm-small'), mem = el('input'); mem.type = 'checkbox'; mem.checked = settings.memories !== false; mem.style.width = 'auto';
     memRow.append(mem, document.createTextNode('Add Lumiverse’s memories to the note'));
     card.append(memRow, el('p', 'gm-hint', 'Gives the narrator what Lumiverse’s Memory Cortex remembers about the scene, so any preset has it. Skipped on its own when your preset already includes memories. Grimoire also reads the memory when it plans, either way.'));

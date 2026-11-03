@@ -3870,7 +3870,7 @@ ${recallNote(recall)}`;
           return;
         state.quick = { at: Date.now(), ok: !!result, error };
         let extra = "", soft = "", outcome = null;
-        if (!result && state.intimateNow) {
+        if (!result && state.intimateNow && settings.intimate === "protect") {
           const judged = live.prints.at(-1);
           if (judged && !state.intimate.includes(judged)) {
             state.intimate = [...state.intimate, judged].slice(-300);
@@ -3890,7 +3890,7 @@ ${recallNote(recall)}`;
             soft = outcome.easyFix ? "A problem was solved too easily" : outcome.problem ? "A new problem came up" : "Something new happened in the story";
           const judged = live.prints.at(-1);
           state.intimateNow = outcome.intimate;
-          if (outcome.intimate && judged && !state.intimate.includes(judged)) {
+          if (outcome.intimate && settings.intimate === "protect" && judged && !state.intimate.includes(judged)) {
             state.intimate = [...state.intimate, judged].slice(-300);
             now = await this.live(state, messages);
           }

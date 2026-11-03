@@ -1056,11 +1056,13 @@ describe('intimate scenes', () => {
     h.add('user', 'After.');
     expect(await c.noteFor('chat-1')).not.toContain('intimate scene');
   });
-  test('can let urgent things in instead', async () => {
+  test('can let the story carry on instead, with their replies counting', async () => {
     const { h, c } = await setup(() => 0.9, { intimate: 'allow' });
-    await reply(h, c, 1);
+    for (let i = 0; i < 3; i++) await reply(h, c, i);
     h.add('user', 'Still going.');
     expect(await c.noteFor('chat-1')).not.toContain('intimate scene');
+    const view = (await c.view('chat-1'))!;
+    expect(view.quickLog.slice(-3).map((q: any) => q.reply)).toEqual([2, 3, 4]);
   });
 });
 

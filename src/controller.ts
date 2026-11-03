@@ -1052,7 +1052,7 @@ export class NotebookController {
         state.quick = { at: Date.now(), ok: !!result, error };
         let extra = '', soft = '', outcome: ReturnType<typeof applyQuick> | null = null;
         // No answer during an intimate scene: assume it goes on, so the scene stays protected and its replies stay uncounted.
-        if (!result && state.intimateNow) { const judged = live.prints.at(-1); if (judged && !state.intimate.includes(judged)) { state.intimate = [...state.intimate, judged].slice(-300); now = (await this.live(state, messages))!; } }
+        if (!result && state.intimateNow && settings.intimate === 'protect') { const judged = live.prints.at(-1); if (judged && !state.intimate.includes(judged)) { state.intimate = [...state.intimate, judged].slice(-300); now = (await this.live(state, messages))!; } }
         // The reply it judged must still be in the chat. A swipe or edit meanwhile means the answers are about a reply that is gone.
         if (result && covers(live.prints, now.prints)) {
           outcome = applyQuick(now.version.notebook, plan, result, now.moment);
@@ -1065,9 +1065,10 @@ export class NotebookController {
           if (outcome.revealed) extra = 'A secret came out';
           else if (outcome.needsCheckup) soft = outcome.easyFix ? 'A problem was solved too easily' : outcome.problem ? 'A new problem came up' : 'Something new happened in the story';
           // An intimate scene: its replies don't count toward storyline waits, and hurrying is the scene's own business.
+          // When the player lets the story carry on through these scenes, they count like any other reply.
           const judged = live.prints.at(-1);
           state.intimateNow = outcome.intimate;
-          if (outcome.intimate && judged && !state.intimate.includes(judged)) { state.intimate = [...state.intimate, judged].slice(-300); now = (await this.live(state, messages))!; }
+          if (outcome.intimate && settings.intimate === 'protect' && judged && !state.intimate.includes(judged)) { state.intimate = [...state.intimate, judged].slice(-300); now = (await this.live(state, messages))!; }
           if (outcome.rushing && !outcome.intimate) this.paceSignal(state, now.moment, 1);
           if (outcome.held.length) state.held = [...new Set([...state.held, ...outcome.held])];
           // The story changed direction: hold old plans back and rework the notebook now.
