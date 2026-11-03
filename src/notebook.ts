@@ -56,13 +56,26 @@ export interface Seed {
   /** Code-owned reply counts. */ plantedAt?: number; paidAt?: number; echoAt?: number;
   quick?: true;
 }
+/**
+ * A lie that matters: an excuse, a cover story, a false name. Lies need upkeep, so they come back.
+ * One the player character told is no secret to the narrator; one someone else told is.
+ */
+export interface Cover {
+  id: string; /** "player", or the id of the person who told it. */ by: string;
+  /** Ids of the people who were told it. */ told: string[];
+  said: string; /** What it hides. */ hides: string;
+  /** strained: someone has started to doubt it. exposed: it came apart, and can't be put back. */ status: 'holding' | 'strained' | 'exposed';
+}
 export interface Notebook {
   version: 1; story: Story; arc: Arc; people: Person[]; threads: Thread[]; beats: Beat[]; seeds: Seed[];
+  covers: Cover[];
   events: string[]; clock: StoryClock; rhythm: Rhythm; summary: string;
 }
 export type ShapeChoice = Shape | 'auto';
-export interface Preferences { tone: 'light' | 'balanced' | 'dark'; twist: boolean; /** The shape the story starts with; auto lets the model choose. */ shape: ShapeChoice; /** Keep that shape for every part of the story. */ lockShape: boolean }
-export const LIMITS = Object.freeze({ sheets: 6, sheet: 2000, own: 3000, people: 24, threads: 12, steps: 6, beats: 16, seeds: 12, events: 40, truths: 12, text: 600, short: 160 });
+/** How big the story's world gets: close keeps it to a few places and people; wide keeps adding both; auto lets the card decide. */
+export type StorySize = 'auto' | 'close' | 'wide';
+export interface Preferences { tone: 'light' | 'balanced' | 'dark'; twist: boolean; /** The shape the story starts with; auto lets the model choose. */ shape: ShapeChoice; /** Keep that shape for every part of the story. */ lockShape: boolean; size: StorySize }
+export const LIMITS = Object.freeze({ sheets: 6, sheet: 2000, own: 3000, people: 24, threads: 12, steps: 6, beats: 16, seeds: 12, events: 40, truths: 12, covers: 10, text: 600, short: 160 });
 
 const ID = /^[a-z0-9][a-z0-9-]{0,40}$/;
 const count = (v: unknown) => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 10_000_000 ? v : undefined;
@@ -191,8 +204,15 @@ export function validateNotebook(value: unknown): Notebook {
       status: choice(s.status, ['waiting', 'planted', 'paid', 'echo', 'dropped'] as const, `${path}.status`, 'waiting'),
       ...(count(s.plantedAt) !== undefined ? { plantedAt: count(s.plantedAt) } : {}), ...(count(s.paidAt) !== undefined ? { paidAt: count(s.paidAt) } : {}), ...(count(s.echoAt) !== undefined ? { echoAt: count(s.echoAt) } : {}), ...(s.quick === true ? { quick: true as const } : {}) };
   }), 'seeds');
+  const covers = unique((input.covers === undefined ? [] : list(input.covers, 'covers', LIMITS.covers)).map((item, i): Cover => {
+    const c = record(item), path = `covers[${i}]`;
+    const by = c.by === 'player' ? 'player' : typeof c.by === 'string' && personIds.has(c.by) ? c.by : fail(`${path}.by must be "player" or the id of someone in people.`);
+    return { id: id(c.id, `${path}.id`), by, told: [...new Set(list(c.told, `${path}.told`, 8).filter((x): x is string => typeof x === 'string' && personIds.has(x)))],
+      said: text(c.said, `${path}.said`, LIMITS.short, false), hides: text(c.hides, `${path}.hides`, LIMITS.short), status: choice(c.status, ['holding', 'strained', 'exposed'] as const, `${path}.status`, 'holding') };
+  }), 'covers');
   return {
     version: 1,
+    covers,
     arc: { shape, stage: stage as string, turn: text(arcInput.turn, 'arc.turn'), main: typeof arcInput.main === 'string' && threadIds.has(arcInput.main) ? arcInput.main : '',
       ...(count(arcInput.startReply) !== undefined ? { startReply: count(arcInput.startReply) } : {}), ...(arcInput.opening === 'story' || arcInput.opening === 'chapter' ? { opening: arcInput.opening } : {}) },
     seeds,
@@ -228,6 +248,11 @@ export function mergeRevision(previous: Notebook, revised: Notebook, now: number
       if (!after) failMerge(`Keep step "${step.id}" of "${thread.title}".`);
       if ((step.status === 'shown' || step.status === 'offscreen') && after!.status === 'waiting' && !step.quick) failMerge(`Step "${step.id}" of "${thread.title}" already happened and can't go back to waiting.`);
     }
+  }
+  for (const cover of previous.covers) {
+    const next = revised.covers.find(c => c.id === cover.id);
+    if (!next) failMerge(`Keep the lie "${cover.id}" (mark it exposed if it came apart).`);
+    if (cover.status === 'exposed' && next!.status !== 'exposed') failMerge(`The lie "${cover.id}" already came apart. Keep it exposed.`);
   }
   for (const beat of previous.beats) if (beat.status === 'happened' && !beat.quick && revised.beats.find(b => b.id === beat.id)?.status !== 'happened') failMerge(`Beat "${beat.id}" already happened. Keep it marked as happened.`);
   for (const seed of previous.seeds) {

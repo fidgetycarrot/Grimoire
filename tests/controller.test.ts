@@ -201,7 +201,7 @@ describe('check-ups', () => {
     const checkups = m.calls.filter(x => x.task === 'grimoire-checkup-v1');
     expect(checkups).toHaveLength(1);
     expect(checkups[0].input.reason).toBe('3 replies since the last update');
-    expect(checkups[0].input.preferences).toEqual({ tone: 'balanced', twist: false, shape: 'auto', lockShape: false });
+    expect(checkups[0].input.preferences).toEqual({ tone: 'balanced', twist: false, shape: 'auto', lockShape: false, size: 'auto' });
     expect(checkups[0].messages[0].content).toContain('open the next arc');
     expect(checkups[0].input.clockOwner).toEqual({ day: 'tracker', hour: 'tracker' });
     expect(checkups[0].input.trackerText).toContain('Location: The ferry');
@@ -1072,7 +1072,7 @@ describe('talk speed and stopping', () => {
     await c.talk('chat-1', 'Less weather drama.', false); await c.waitForJobs();
     const view = (await c.view('chat-1'))!;
     expect(view.notebook!.threads.map(t => t.speed)).toEqual(['steady', 'steady']);
-    expect(view.notebook!.people).toHaveLength(3);
+    expect(view.notebook!.people).toHaveLength(5);
     expect(view.talk.at(-1)!.changes).toContain('Slowed 1 storyline');
     const sent = await (async () => (await ready(host(), model({ create: created, talk: () => ({ reply: 'ok', changes: null }) }))))();
     await sent.c.talk('chat-1', 'Hi.', false); await sent.c.waitForJobs();

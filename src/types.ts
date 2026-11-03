@@ -23,6 +23,8 @@ export interface ChatState {
   needsCheck: string;
   /** Something the quick check noticed that can wait: it runs once a few replies have passed since the last check-up. */
   queued: string;
+  /** The reply each person was last in a scene, by person id, so people who have been away a while can come back. */
+  seen: Record<string, number>;
   /** A check-up has already looked for a tracker that appeared after the notebook was written. */
   trackerTried: boolean;
   /** The last quick check: when it ran and whether it worked. */
@@ -84,7 +86,7 @@ export const TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, no
 export interface QuickSettings { enabled: boolean; connectionId: string; model: string }
 export interface Settings { connectionId: string; maxOutputTokens: number; reasoningMode: ReasoningMode; every: number; quick: QuickSettings; /** The most replies a planned development waits, as a size. */ wait: WaitSetting; /** List chats with a notebook on the home page. */ homeList: boolean; /** During intimate scenes: keep the story out until they end, or let urgent things in. */ intimate: 'protect' | 'allow'; /** Add Lumiverse's memories to the note when the preset doesn't already. */ memories: boolean }
 export const DEFAULT_SETTINGS: Settings = { connectionId: '', maxOutputTokens: 16000, reasoningMode: 'inherit', every: 8, quick: { enabled: false, connectionId: '', model: '' }, wait: 'medium', homeList: true, intimate: 'protect', memories: true };
-export const DEFAULT_PREFERENCES: Preferences = { tone: 'balanced', twist: true, shape: 'auto', lockShape: false };
+export const DEFAULT_PREFERENCES: Preferences = { tone: 'balanced', twist: true, shape: 'auto', lockShape: false, size: 'auto' };
 
 export interface ChatView {
   chatId: string; name: string; supported: boolean; reason: string;

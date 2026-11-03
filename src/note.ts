@@ -94,7 +94,7 @@ export function seedPlan(notebook: Notebook, now: number | Moment): { plant: See
   return { plant, ready, echo };
 }
 
-export interface NoteInput { notebook: Notebook; pace: Pace; clock: StoryClock; now: number | Moment; /** Threads that no longer fit for now. */ held?: string[]; /** The story just changed direction; old plans are being reworked. */ reworking?: boolean; recent: string; trackerPresent?: string; skipHours?: number; /** True when the time comes from the last check-up, not from a tracker reading of the latest reply. */ clockMayLag?: boolean; /** The player swiped with guidance: the note steps back so it never argues with them. */ guided?: boolean; /** Standing wishes the player pinned. */ notes?: string[]; /** An intimate scene is under way: the story stays out until it ends. */ intimate?: boolean }
+export interface NoteInput { notebook: Notebook; pace: Pace; clock: StoryClock; now: number | Moment; /** Threads that no longer fit for now. */ held?: string[]; /** The story just changed direction; old plans are being reworked. */ reworking?: boolean; recent: string; trackerPresent?: string; skipHours?: number; /** True when the time comes from the last check-up, not from a tracker reading of the latest reply. */ clockMayLag?: boolean; /** The player swiped with guidance: the note steps back so it never argues with them. */ guided?: boolean; /** Standing wishes the player pinned. */ notes?: string[]; /** An intimate scene is under way: the story stays out until it ends. */ intimate?: boolean; /** People the player has met who haven't been around for a while, longest away first. */ away?: Person[] }
 /**
  * The short private note added before a reply. Built by code from the
  * notebook; no model call. It carries reasons and narrator-safe hints, never
@@ -197,6 +197,16 @@ export function buildNote(input: NoteInput): string {
   const unmet = notebook.people.filter(p => p.status === 'active' && !p.met && !present.includes(p));
   const newcomer = !quiet && !quietTime && (notebook.rhythm === 'calm' || notebook.rhythm === 'stalled' || pace === 'fast') ? unmet.find(p => main?.people.includes(p.id)) ?? (opening ? undefined : unmet[0]) : undefined;
   if (newcomer && lines.length < 16) lines.push(`Someone who could appear if it fits: ${newcomer.name}${newcomer.role ? `, ${newcomer.role}` : ''}. Wants ${newcomer.wants || 'something of their own'}.`);
+  // Someone met a while ago comes back, so the cast recurs instead of being met once and forgotten.
+  const back = !newcomer && !quiet && !quietTime && (notebook.rhythm === 'calm' || notebook.rhythm === 'stalled' || pace === 'fast') ? input.away?.[0] : undefined;
+  if (back && lines.length < 16) lines.push(`Someone the player hasn't seen in a while could cross their path again, if it fits naturally (a run-in, a message, a visit), for reasons of their own: ${back.name}${back.role ? `, ${back.role}` : ''}. Wants ${back.wants || 'something of their own'}.`);
+  // Lies the player character told someone in this scene: they remember what they were told.
+  const told = guided ? [] : (notebook.covers ?? []).filter(c => c.by === 'player' && c.status !== 'exposed' && c.told.some(id => present.some(p => p.id === id))).slice(0, 2);
+  for (const c of told) {
+    const heard = notebook.people.filter(p => c.told.includes(p.id) && present.includes(p)).map(p => p.name).join(' and ');
+    const bare = (t: string) => t.trim().replace(/[.!?]+$/, '');
+    lines.push(`The player character told ${heard}: "${bare(c.said)}"${c.hides ? `, to cover ${bare(c.hides)}` : ''}. They remember it${c.status === 'strained' ? ' and are starting to doubt it' : ''}; it can come up, and details should stay consistent with it.`);
+  }
   // Fuller sheets for the people here who have one, like short character cards: kept apart from the length limit above.
   const sheets = present.filter(p => p.sheet || p.own).slice(0, 3).map(p => `${p.name}:${p.own ? ` ${end(p.own)}` : ''}${p.sheet ? ` ${end(p.sheet)}` : ''}`.slice(0, 2600));
   const rules = 'The latest messages decide what actually happened; skip anything they have made impossible. Never write the player character\'s actions, words, thoughts, or feelings. Keep secrets hidden and let them show only through small details.\n' + PROBLEMS + ' ' + GROUND;

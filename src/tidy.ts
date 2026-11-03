@@ -153,6 +153,20 @@ export function tidyNotebook(value: unknown, previous?: Notebook): unknown {
   const keptSeeds = new Set(previous?.seeds.map(s => s.id));
   seeds = cap(seeds, LIMITS.seeds, s => (keptSeeds.has(s.id) ? 4 : 0) + (s.status === 'planted' ? 2 : s.status === 'waiting' ? 1 : 0));
 
+  // Lies that matter: who told them (the player or someone in people) and who was told. Exposed ones stay exposed.
+  const teller = (v: unknown) => { const w = slug(v); return ['player', 'user', 'you', 'pc', 'player-character', 'protagonist'].includes(w) ? 'player' : who.get(w) ?? ''; };
+  let covers = ids(array(input.covers).map(raw => {
+    const c = record(raw), said = plain(c.said, LIMITS.short) || plain(c.lie, LIMITS.short) || plain(c.text, LIMITS.short);
+    return { id: slug(c.id) || slug(said).slice(0, 30), by: teller(c.by), told: [...new Set(array(c.told).map(x => who.get(slug(x))).filter((x): x is string => !!x))].slice(0, 8), said, hides: plain(c.hides, LIMITS.short) || plain(c.truth, LIMITS.short),
+      status: pick(c.status, ['holding', 'strained', 'exposed'] as const, { active: 'holding', intact: 'holding', believed: 'holding', open: 'holding', doubted: 'strained', suspected: 'strained', cracking: 'strained', shaky: 'strained', revealed: 'exposed', discovered: 'exposed', 'found-out': 'exposed', blown: 'exposed', caught: 'exposed', broken: 'exposed', closed: 'exposed' }, 'holding') };
+  }).filter(c => c.said && c.by), 'lie');
+  if (previous) for (const old of previous.covers ?? []) {
+    const next = covers.find(c => c.id === old.id);
+    if (!next) covers.push(structuredClone(old));
+    else if (old.status === 'exposed') next.status = 'exposed';
+  }
+  covers = cap(covers, LIMITS.covers, c => (previous?.covers?.some(o => o.id === c.id) ? 4 : 0) + (c.status === 'exposed' ? 0 : 2));
+
   // The arc: a shape and a stage that belongs to it.
   const a = record(input.arc), shapeWord = typeof a.shape === 'string' ? a.shape.toLowerCase().replace(/[^a-z]/g, '') : '';
   const shape: Shape = shapeWord.startsWith('kish') ? 'kishotenketsu' : shapeWord === 'conflict' ? 'conflict' : previous?.arc.shape ?? 'conflict';
@@ -182,7 +196,7 @@ export function tidyNotebook(value: unknown, previous?: Notebook): unknown {
     version: 1,
     story: { question, stakes: plain(story.stakes), direction: plain(story.direction),
       hiddenTruth, twist: cameOut.some(r => r.text.toLowerCase() === plain(story.twist).toLowerCase()) ? '' : plain(story.twist), cameOut },
-    arc, people, threads, beats, seeds, events, clock,
+    arc, people, threads, beats, seeds, covers, events, clock,
     rhythm: pick(input.rhythm, ['calm', 'rising', 'peak', 'aftermath', 'stalled'] as const, RHYTHM, 'calm'),
     summary: plain(input.summary, LIMITS.short),
   };

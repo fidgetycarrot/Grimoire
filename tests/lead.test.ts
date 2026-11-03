@@ -4,7 +4,7 @@ import { buildNote } from '../src/note';
 import { dueThreads, inOpening, stamp, threadMoment, validateNotebook, waitsFor, type Notebook, type Preferences } from '../src/notebook';
 import { sampleNotebook } from './fixtures';
 
-const prefs = (p: Partial<Preferences> = {}): Preferences => ({ tone: 'balanced', twist: true, shape: 'auto', lockShape: false, ...p });
+const prefs = (p: Partial<Preferences> = {}): Preferences => ({ tone: 'balanced', twist: true, shape: 'auto', lockShape: false, size: 'auto', ...p });
 const waits = waitsFor('medium', 'auto');
 /** The ring as the main storyline, opened at reply 10. */
 function opened(): Notebook {

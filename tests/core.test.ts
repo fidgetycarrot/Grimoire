@@ -262,7 +262,7 @@ describe('tidying a revision', () => {
     expect(merged.threads[0].steps.map(s => [s.id, s.status])[0]).toEqual(['owner-notices', 'shown']);
     expect(merged.threads[0].steps[0].at).toBe(50);
     expect(merged.beats.find(b => b.id === 'ring-recognized')!.status).toBe('happened');
-    expect(merged.people).toHaveLength(3);
+    expect(merged.people).toHaveLength(5);
   });
 });
 
@@ -524,7 +524,7 @@ describe('at a glance', () => {
     nb.threads[1].status = 'paused';
     const g = glance(nb, { hours: 42, reply: 13, waits: waitsFor('medium', 'auto') });
     expect(g).toEqual({ shape: 'conflict', stage: 'setup', threads: { open: 1, urgent: 0, steady: 1, slow: 0, closed: 0 }, seeds: { waiting: 1, planted: 0, paid: 0, echo: 0 },
-      moments: { possible: 2, big: 1, happened: 0 }, people: { total: 3, met: 2 }, nextInReplies: 12, dueNow: 0, part: { elapsed: 3, length: 60 } });
+      moments: { possible: 2, big: 1, happened: 0 }, people: { total: 5, met: 2 }, nextInReplies: 12, dueNow: 0, part: { elapsed: 3, length: 60 } });
     expect(JSON.stringify(g)).not.toMatch(/ring|Oswin|Mira|wax/i);
   });
 });

@@ -92,6 +92,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const result = await rpc.request<T>(action, input); await refresh(true); return result;
   }
 
+  const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally'], ['wide', 'A big world: new places and people often'], ['close', 'Keep it close: a few places and people']];
   const SHAPE_CHOICES: Array<[string, string]> = [['auto', 'Let Grimoire choose'], ['conflict', 'Conflict: a problem that builds to a climax'], ['kishotenketsu', 'Kishōtenketsu: people and discovery, with a turn instead of a fight']];
   // ----- This chat -----
   function renderStart(view: ChatView) {
@@ -107,6 +108,8 @@ export function setup(ctx: SpindleFrontendContext) {
     const syncLock = () => { lock.disabled = shape.value === 'auto'; if (lock.disabled) lock.checked = false; };
     shape.addEventListener('change', syncLock); syncLock();
     grid.append(labeled('How the story is built', shape, 'Grimoire can switch shapes between parts of the story as it goes, unless you keep one.'), lockRow);
+    const size = select(SIZE_CHOICES, view.preferences.size ?? 'auto');
+    grid.append(labeled('How big the world gets', size, 'Grimoire brings in new places and people over time, and brings back people you’ve met, so the story doesn’t stay small. Keep it close for stories that should stay in one place.'));
     const ideas = el('textarea', 'gm-talk-input'); ideas.rows = 4; ideas.maxLength = 3000; ideas.placeholder = 'Like “a slow-burn romance, trouble with old friends, a trip that goes sideways”, or someone you’d like to meet';
     const keepIdeas = el('input'); keepIdeas.type = 'checkbox'; keepIdeas.style.width = 'auto';
     const keepRow = el('label', 'gm-row gm-small'); keepRow.append(keepIdeas, document.createTextNode('Keep these as lasting notes'));
@@ -114,7 +117,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const noConnection = !snapshot?.settings.connectionId;
     const parts = view.earlierParts ?? 0;
     const write = button('Write the notebook', async () => {
-      await act('create', { chatId: view.chatId, preferences: { tone: tone.value, twist: twist.checked, shape: shape.value, lockShape: lock.checked }, ideas: ideas.value.trim(), keepIdeas: keepIdeas.checked });
+      await act('create', { chatId: view.chatId, preferences: { tone: tone.value, twist: twist.checked, shape: shape.value, lockShape: lock.checked, size: size.value }, ideas: ideas.value.trim(), keepIdeas: keepIdeas.checked });
       notify(parts ? `Reading the chat, then writing the notebook. This uses ${parts + 1} model requests and can take a few minutes.` : 'Writing the notebook. This uses one model request and can take a minute.');
     }, 'primary');
     write.classList.add('gm-wide'); write.disabled = noConnection || view.job?.status === 'running';
@@ -261,9 +264,11 @@ export function setup(ctx: SpindleFrontendContext) {
   }
   /** Things you seldom need: a check-up on demand, a manual time skip, deleting the notebook. */
   function renderMore(view: ChatView) {
-    const d = details('More: check-ups, time skips, story shape, delete');
+    const d = details('More: check-ups, time skips, story shape and size, delete');
     const kept = select([['off', 'No, let Grimoire choose'], ...SHAPE_CHOICES.slice(1)], view.preferences.lockShape ? view.preferences.shape : 'off');
     const keep = button('Save', async () => { await act('shape', { chatId: view.chatId, shape: kept.value === 'off' ? 'auto' : kept.value, lockShape: kept.value !== 'off' }); notify(kept.value === 'off' ? 'Grimoire will choose the shape of each part.' : 'Saved. Every part of the story will use this shape.'); });
+    const size = select(SIZE_CHOICES, view.preferences.size ?? 'auto');
+    size.addEventListener('change', async () => { await act('size', { chatId: view.chatId, size: size.value }); notify('Saved. Check-ups use it from now on.'); });
     const amount = el('input'); amount.type = 'number'; amount.min = '1'; amount.max = '999'; amount.value = '1';
     const unit = select([['hours', 'hours'], ['days', 'days'], ['weeks', 'weeks']], 'days');
     const busy = view.job?.status === 'running';
@@ -277,7 +282,8 @@ export function setup(ctx: SpindleFrontendContext) {
     }, 'danger');
     d.body.append(check, el('p', 'gm-hint', 'Reads the latest chat and updates the plan. Check-ups also run on their own when a scene changes, time jumps, or enough replies pass.'),
       el('div', 'gm-sub'), skipRow, skip, el('div', 'gm-sub'),
-      labeled('Keep one story shape for this chat', kept, 'If this part of the story already has the other shape, the change starts with the next part.'), keep, el('div', 'gm-sub'), remove);
+      labeled('Keep one story shape for this chat', kept, 'If this part of the story already has the other shape, the change starts with the next part.'), keep, el('div', 'gm-sub'),
+      labeled('How big the world gets', size), el('div', 'gm-sub'), remove);
     return d.root;
   }
   const QUICK_WORDS: Array<[RegExp, string]> = [[/^due_/, 'Planned development shown'], [/^moment_/, 'Possible moment happened'], [/^detail_mentioned$/, 'Breadcrumb mentioned'], [/^echo_heard$/, 'Echo heard'], [/^callback_/, 'Breadcrumb paid off'], [/^fits_/, 'Storyline still fits'], [/^truth_/, 'Secret came out'], [/^story_shift$/, 'Change of direction'], [/^rushing$/, 'Rushing'], [/^intimate$/, 'Intimate scene'], [/^new_turn$/, 'Something new'], [/^new_problem$/, 'New problem'], [/^easy_fix$/, 'Solved too easily']];
@@ -391,6 +397,17 @@ export function setup(ctx: SpindleFrontendContext) {
     const beats = section('Possible moments'), ul = el('ul');
     for (const b of notebook.beats) { const li = el('li', 'gm-small', b.text); if (b.status !== 'possible') { const c = el('span', 'gm-chip', b.status); if (b.status === 'happened') c.dataset.tone = 'done'; li.append(c); } ul.append(li); }
     beats.append(ul);
+    if (notebook.covers?.length) {
+      const s = section('Lies and cover stories'), list = el('ul');
+      const name = (id: string) => id === 'player' ? 'You' : notebook.people.find(p => p.id === id)?.name ?? id;
+      for (const c of notebook.covers) {
+        const li = el('li', 'gm-small', `${name(c.by)} told ${c.told.map(name).join(', ') || 'someone'}: ${c.said}`);
+        if (c.status !== 'holding') { const chip = el('span', 'gm-chip', c.status === 'strained' ? 'doubted' : 'came apart'); if (c.status === 'exposed') chip.dataset.tone = 'done'; li.append(chip); }
+        if (c.hides) li.append(el('div', 'gm-meta', `Covers: ${c.hides}`));
+        list.append(li);
+      }
+      s.append(list);
+    }
     if (notebook.seeds.length) {
       const s = section('Breadcrumbs'), list = el('ul');
       for (const seed of notebook.seeds) { const li = el('li', 'gm-small', seed.detail); if (seed.status !== 'waiting') { const c = el('span', 'gm-chip', seed.status); if (seed.status === 'paid') c.dataset.tone = 'done'; li.append(c); } li.append(el('div', 'gm-meta', `Later: ${seed.payoff}`)); list.append(li); }

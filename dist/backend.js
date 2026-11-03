@@ -405,7 +405,7 @@ async function askJson(ask, messages, check, signal) {
 
 // src/notebook.ts
 var STAGES = { conflict: ["setup", "rising", "climax", "resolution"], kishotenketsu: ["ki", "sho", "ten", "ketsu"] };
-var LIMITS = Object.freeze({ sheets: 6, sheet: 2000, own: 3000, people: 24, threads: 12, steps: 6, beats: 16, seeds: 12, events: 40, truths: 12, text: 600, short: 160 });
+var LIMITS = Object.freeze({ sheets: 6, sheet: 2000, own: 3000, people: 24, threads: 12, steps: 6, beats: 16, seeds: 12, events: 40, truths: 12, covers: 10, text: 600, short: 160 });
 var ID = /^[a-z0-9][a-z0-9-]{0,40}$/;
 var count = (v) => typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 1e7 ? v : undefined;
 var moment = (now) => typeof now === "number" ? { hours: now } : now;
@@ -581,8 +581,21 @@ function validateNotebook(value) {
       ...s.quick === true ? { quick: true } : {}
     };
   }), "seeds");
+  const covers = unique((input.covers === undefined ? [] : list(input.covers, "covers", LIMITS.covers)).map((item, i) => {
+    const c = record2(item), path = `covers[${i}]`;
+    const by = c.by === "player" ? "player" : typeof c.by === "string" && personIds.has(c.by) ? c.by : fail(`${path}.by must be "player" or the id of someone in people.`);
+    return {
+      id: id(c.id, `${path}.id`),
+      by,
+      told: [...new Set(list(c.told, `${path}.told`, 8).filter((x) => typeof x === "string" && personIds.has(x)))],
+      said: text(c.said, `${path}.said`, LIMITS.short, false),
+      hides: text(c.hides, `${path}.hides`, LIMITS.short),
+      status: choice(c.status, ["holding", "strained", "exposed"], `${path}.status`, "holding")
+    };
+  }), "covers");
   return {
     version: 1,
+    covers,
     arc: {
       shape,
       stage,
@@ -629,6 +642,13 @@ function mergeRevision(previous, revised, now) {
       if ((step.status === "shown" || step.status === "offscreen") && after.status === "waiting" && !step.quick)
         failMerge(`Step "${step.id}" of "${thread.title}" already happened and can't go back to waiting.`);
     }
+  }
+  for (const cover of previous.covers) {
+    const next = revised.covers.find((c) => c.id === cover.id);
+    if (!next)
+      failMerge(`Keep the lie "${cover.id}" (mark it exposed if it came apart).`);
+    if (cover.status === "exposed" && next.status !== "exposed")
+      failMerge(`The lie "${cover.id}" already came apart. Keep it exposed.`);
   }
   for (const beat of previous.beats)
     if (beat.status === "happened" && !beat.quick && revised.beats.find((b) => b.id === beat.id)?.status !== "happened")
@@ -991,6 +1011,15 @@ function buildNote(input) {
   const newcomer = !quiet && !quietTime && (notebook.rhythm === "calm" || notebook.rhythm === "stalled" || pace === "fast") ? unmet.find((p) => main?.people.includes(p.id)) ?? (opening ? undefined : unmet[0]) : undefined;
   if (newcomer && lines.length < 16)
     lines.push(`Someone who could appear if it fits: ${newcomer.name}${newcomer.role ? `, ${newcomer.role}` : ""}. Wants ${newcomer.wants || "something of their own"}.`);
+  const back = !newcomer && !quiet && !quietTime && (notebook.rhythm === "calm" || notebook.rhythm === "stalled" || pace === "fast") ? input.away?.[0] : undefined;
+  if (back && lines.length < 16)
+    lines.push(`Someone the player hasn't seen in a while could cross their path again, if it fits naturally (a run-in, a message, a visit), for reasons of their own: ${back.name}${back.role ? `, ${back.role}` : ""}. Wants ${back.wants || "something of their own"}.`);
+  const told = guided ? [] : (notebook.covers ?? []).filter((c) => c.by === "player" && c.status !== "exposed" && c.told.some((id) => present.some((p) => p.id === id))).slice(0, 2);
+  for (const c of told) {
+    const heard = notebook.people.filter((p) => c.told.includes(p.id) && present.includes(p)).map((p) => p.name).join(" and ");
+    const bare = (t) => t.trim().replace(/[.!?]+$/, "");
+    lines.push(`The player character told ${heard}: "${bare(c.said)}"${c.hides ? `, to cover ${bare(c.hides)}` : ""}. They remember it${c.status === "strained" ? " and are starting to doubt it" : ""}; it can come up, and details should stay consistent with it.`);
+  }
   const sheets = present.filter((p) => p.sheet || p.own).slice(0, 3).map((p) => `${p.name}:${p.own ? ` ${end(p.own)}` : ""}${p.sheet ? ` ${end(p.sheet)}` : ""}`.slice(0, 2600));
   const rules = `The latest messages decide what actually happened; skip anything they have made impossible. Never write the player character's actions, words, thoughts, or feelings. Keep secrets hidden and let them show only through small details.
 ` + PROBLEMS + " " + GROUND;
@@ -1007,6 +1036,44 @@ ${rules}`;
 }
 function paceLine(pace, notebook) {
   return pace === "auto" ? RHYTHM[notebook.rhythm] : PACE[pace];
+}
+
+// src/cast.ts
+var STARTING_CAST = { auto: 5, wide: 7 };
+var WAITING = 2;
+var active = (n) => n.people.filter((p) => p.status === "active");
+function castProblems(previous, revised, prefs) {
+  if (prefs.size === "close")
+    return [];
+  const unmet = active(revised).filter((p) => !p.met).length;
+  const room = revised.people.length < 24;
+  if (!previous) {
+    const want = STARTING_CAST[prefs.size];
+    const problems = [];
+    if (active(revised).length < want && room)
+      problems.push(`The cast is too small for a story with room to grow: plan at least ${want} people beyond the player character (the people in their life and the card's, and people from places the story can reach), each built as in 3b to 3d.`);
+    if (unmet < WAITING && room)
+      problems.push(`Add at least ${WAITING} people the player hasn't met yet, from places beyond where the story starts, each tied to a storyline or a place the story can go.`);
+    return problems;
+  }
+  if (unmet < WAITING && room && unmet < active(previous).filter((p) => !p.met).length + 1) {
+    return [`Everyone the story has planned has been met or nearly so. Add ${unmet ? "one or two" : "two or three"} new people the player hasn't met yet, from places the story can go next (where people in this story work, study, shop, drink, worship, train, or live), each with a want of their own, built as in 3b to 3d, and tied to an open storyline or a new one.`];
+  }
+  return [];
+}
+function noteSeen(seen, notebook, present, reply) {
+  const next = { ...seen };
+  for (const p of present)
+    next[p.id] = reply;
+  for (const p of notebook.people)
+    if (p.met && next[p.id] === undefined)
+      next[p.id] = reply;
+  return next;
+}
+var awayAfter = (m) => Math.max(10, m.waits?.steady ?? 15);
+function awayPeople(notebook, seen, present, m) {
+  const reply = m.reply ?? 0, after = awayAfter(m);
+  return notebook.people.filter((p) => p.status === "active" && p.met && !present.includes(p) && seen[p.id] !== undefined && reply - seen[p.id] >= after).map((person) => ({ person, replies: reply - seen[person.id] })).sort((a, b) => b.replies - a.replies);
 }
 
 // src/tidy.ts
@@ -1195,6 +1262,30 @@ function tidyNotebook(value, previous) {
     }
   const keptSeeds = new Set(previous?.seeds.map((s) => s.id));
   seeds = cap(seeds, LIMITS.seeds, (s) => (keptSeeds.has(s.id) ? 4 : 0) + (s.status === "planted" ? 2 : s.status === "waiting" ? 1 : 0));
+  const teller = (v) => {
+    const w = slug(v);
+    return ["player", "user", "you", "pc", "player-character", "protagonist"].includes(w) ? "player" : who.get(w) ?? "";
+  };
+  let covers = ids(array(input.covers).map((raw) => {
+    const c = record3(raw), said = plain(c.said, LIMITS.short) || plain(c.lie, LIMITS.short) || plain(c.text, LIMITS.short);
+    return {
+      id: slug(c.id) || slug(said).slice(0, 30),
+      by: teller(c.by),
+      told: [...new Set(array(c.told).map((x) => who.get(slug(x))).filter((x) => !!x))].slice(0, 8),
+      said,
+      hides: plain(c.hides, LIMITS.short) || plain(c.truth, LIMITS.short),
+      status: pick(c.status, ["holding", "strained", "exposed"], { active: "holding", intact: "holding", believed: "holding", open: "holding", doubted: "strained", suspected: "strained", cracking: "strained", shaky: "strained", revealed: "exposed", discovered: "exposed", "found-out": "exposed", blown: "exposed", caught: "exposed", broken: "exposed", closed: "exposed" }, "holding")
+    };
+  }).filter((c) => c.said && c.by), "lie");
+  if (previous)
+    for (const old of previous.covers ?? []) {
+      const next = covers.find((c) => c.id === old.id);
+      if (!next)
+        covers.push(structuredClone(old));
+      else if (old.status === "exposed")
+        next.status = "exposed";
+    }
+  covers = cap(covers, LIMITS.covers, (c) => (previous?.covers?.some((o) => o.id === c.id) ? 4 : 0) + (c.status === "exposed" ? 0 : 2));
   const a = record3(input.arc), shapeWord = typeof a.shape === "string" ? a.shape.toLowerCase().replace(/[^a-z]/g, "") : "";
   const shape = shapeWord.startsWith("kish") ? "kishotenketsu" : shapeWord === "conflict" ? "conflict" : previous?.arc.shape ?? "conflict";
   const stageWord = typeof a.stage === "string" ? a.stage.toLowerCase().normalize("NFKD").replace(/[^a-z]/g, "") : "";
@@ -1234,6 +1325,7 @@ function tidyNotebook(value, previous) {
     threads,
     beats,
     seeds,
+    covers,
     events,
     clock,
     rhythm: pick(input.rhythm, ["calm", "rising", "peak", "aftermath", "stalled"], RHYTHM2, "calm"),
@@ -1561,6 +1653,7 @@ var SHAPE = `{
  "seeds": [{"id": "green-wax", "detail": "an ordinary-looking detail the narrator can mention in passing", "payoff": "what it turns out to mean later", "pays": "the thread id, beat id, or turn it pays into", "status": "waiting|planted|paid|echo|dropped"}],
  "people": [{"id": "cole", "name": "Cole", "aliases": [], "role": "short role", "wants": "what they want", "doing": "what they are doing about it right now, on or off screen", "hint": "a narrator-safe note on how to play them, with no secrets", "voice": "how they talk: word choice, sentence length and rhythm, habits and tics, what they never say, and one short sample line that shows the sound (an example, not a catchphrase); no secrets", "depth": "what keeps them from being a stock type: a contradiction (a want that pulls against a fear or a habit), one specific detail that is not the obvious one for their role, and a tie to the world; no secrets", "sheet": "only for the few who matter most: a fuller character sheet, like a short character card (personality, history, habits, relationships, how they treat the player character, what they are like when pushed); no appearance, no secrets; empty for everyone else", "met": false, "status": "active"}],
  "threads": [{"id": "stolen-ring", "title": "The stolen ring", "speed": "urgent|steady|slow", "why": "why it matters, including hidden causes", "hint": "why it matters, in narrator-safe words with no secrets", "people": ["cole"], "status": "open", "closedReason": "", "outcome": "once closed: won|lost|faded (how it ended for the player)", "scar": "once lost: how it still shows, in narrator-safe words", "ifFollowed": "what following it leads to", "ifIgnored": "what happens if it is left alone", "steps": [{"id": "owner-notices", "text": "what happens", "sign": "how the player could notice it", "afterHours": 24, "status": "waiting"}]}],
+ "covers": [{"id": "upset-stomach", "by": "player, or the id of the person who told it", "told": ["ids of the people who were told it"], "said": "the lie as it was told", "hides": "what it covers up", "status": "holding|strained|exposed"}],
  "beats": [{"id": "ring-recognized", "text": "a moment the story could reach", "purpose": "what it sets up or pays off", "conditions": "what must be true first", "thread": "stolen-ring", "intensity": "low|high", "status": "possible"}],
  "events": ["important things that already happened in the chat"],
  "clock": {"day": 1, "hour": null, "label": "how the story describes the time"},
@@ -1576,9 +1669,10 @@ var CRAFT = [
   "3. Give each important person a want and a current plan. They act on it offscreen too.",
   "3b. Give each person a voice of their own, so no two sound alike: how long their sentences run, what words they reach for or avoid, their rhythm and habits (a teenager, a tired detective, and a nervous clerk should be told apart with the names hidden). Take it from the card and the chat when they show it. Avoid the default voice every character slides into (quippy, wry, a little sarcastic) unless that really is the person.",
   `3c. Nobody is a stock character. No one is just their role (the gruff bartender, the wise mentor, the mysterious stranger, the loyal sidekick): give each person in "depth" a contradiction, one specific detail that is not the obvious one for their role, and a tie to the world, its places, groups, and history. For the two to four people who matter most, and anyone the player described, write a "sheet": what a good character card would say about them, so the narrator can play them with depth in every scene. A "sheet" and "depth" are shown to the narrator, so keep secrets out of them. Leave appearance out of sheets; another tool keeps how people look. "own" holds the player's own words about a person; never change it, and never contradict it.`,
-  '3d. Build each important person before naming them, and let the job be a job, not a personality: a dominant trait and a counter-trait that pulls against it; how they are with others (they withdraw, engage, watch, or perform); one thing that reliably irritates them; three hobbies (one they do alone, one they used to do, one they would like to try), specific rather than interesting; a backstory in two or three sentences with one thing they are proud of and one regret; and one small, real thing they never tell anyone, which is texture, not plot. Put these in their sheet when they have one, the most telling ones in "depth" otherwise. Name them last, from the setting and their background. Never use the names AI stories lean on (Elara, Lyra, Seraphina, Lily, Aria, Kael, Marcus, Silas, Elias, Thorne, Vex, Zara, Kira, Finn, Jax); pick names that fit the place.',
+  '3d. Build each important person before naming them, and let the job be a job, not a personality: a dominant trait and a counter-trait that pulls against it; how they are with others (they withdraw, engage, watch, or perform); one thing that reliably irritates them; three hobbies (one they do alone, one they used to do, one they would like to try), specific rather than interesting; a backstory in two or three sentences with one thing they are proud of and one regret; and one small, real thing they never tell anyone, which is texture, not plot. Put these in their sheet when they have one, the most telling ones in "depth" otherwise. Name them last, from the setting and their background: think of five names that fit and use the fifth, since the first that comes to mind is the one every story uses. Never use the names AI stories lean on (Elara, Lyra, Seraphina, Lily, Aria, Kael, Marcus, Silas, Elias, Thorne, Vex, Zara, Kira, Finn, Jax); pick names that fit the place.',
   "3e. People hold their ground. Pleading, charm, tears, flirting, or a good speech earn no automatic yes; closeness does not make anyone more generous, patient, or agreeable, and affection never turns anyone into a pushover. Everyone keeps their pride, vices, and own priorities. Most people are hiding or shading something at any moment; honesty is earned. Write people's wants and plans so they can say no.",
-  "4. Plan a small supporting cast (about two to four people beyond the card's character, or three to five when the card is a narrator) so the world is not just the main character. They have their own lives and are met when they fit.",
+  '3f. Lies need upkeep. When the player character or anyone else tells a lie that matters (an excuse, a cover story, a false name, a hidden affair), record it in "covers": who told it ("player", or their id), who was told, what was said, and what it hides. Plan how it comes back, spaced out like everything else: someone asks a follow-up, a detail stops adding up, the lie needs another lie to hold. Mark it "strained" once someone starts to doubt it; it may come apart ("exposed") at a well-paced moment, never all at once, and an exposed lie stays exposed and has consequences. A lie someone else told is a secret: keep it out of hints. Small talk and white lies that nobody will remember do not count.',
+  "4. Plan a supporting cast beyond the card's character so the world is not just the main character; how large depends on the story size below. They have their own lives and are met when they fit.",
   "5. Threads are open problems or opportunities, one problem each: an unrelated subplot is its own thread. Each has a speed (urgent: minutes to hours; steady: a day to several days; slow: a week or more) and two to five steps toward its consequence. Most steps are signs the player could notice; only the last is the consequence itself. afterHours is story time after the previous step (or the thread's start) before the step becomes due.",
   "5b. The story is open-ended: plan its first arc (the story question and two to four threads); later check-ups open new arcs as these resolve. Pacing is the shape of the arc, not just the next scene. Stagger the threads so they come to a head at different times, with room between them. The main storyline starts now and builds across the part; side storylines begin with small signs and build. Mix speeds: only one storyline may be urgent at a time (urgent means something bad happens within hours if nobody acts: a fire, a deadline, someone hunting you; feelings and relationships are almost never urgent), and at least one slow one. A later emergency can be prepared with a breadcrumb or two, never started early. Keep story time realistic: Grimoire also moves a thread on after a number of replies, so never squeeze story time to keep things moving. If the card fixes an event at a certain time (a show tonight, a deadline), use it, but let only the threads that truly depend on it peak there.",
   '5c. Every step is specific: who acts (someone in the notebook), what concretely happens, why it matters, and how it reaches the player (its "sign": something they can see, hear, or be told). "Tension rises" or "things get worse" is not a step.',
@@ -1591,6 +1685,7 @@ var CRAFT = [
   "9. Ordinary details may stay ordinary. A few well-tied threads beat many loose ones: about two to four open threads."
 ].join(`
 `);
+var WORLD = (size) => size === "close" ? "Story size: the player wants this story kept close, to a few places and a small cast. Deepen the people and places already here instead of adding new ones; bring in someone new only when the story truly needs them." : `Story size: ${size === "wide" ? "the player wants a big world. " : ""}The world is bigger than the opening scene, and the story should not stay in one place with the same few people. Start with a cast of about ${size === "wide" ? "seven to ten" : "five to eight"} people beyond the player character: the people in the player character's life and the card's (family, neighbors, coworkers, classmates, friends of friends, rivals, regulars at the places they go), most of them not met yet. Use whatever kinds of people this world has. Name places beyond the starting one that the story can reach (where people here work, study, shop, drink, worship, train, or live), and let storylines pull the player out into them over time, through invitations, errands, jobs, trouble, and people who want something. Keep growing it: there should always be a few people the player has not met yet, from places the story can go next, built with the same care as the main cast (3b to 3d); most are ordinary people with lives of their own, and a few become important. Make it a recurring cast: people the player has met come back, through their own wants (a run-in, a message, an invitation, a favor owed), so the world feels like a town rather than a list of one-offs.`;
 function digestMessages(input) {
   return [
     { role: "system", content: `${SAFETY}
@@ -1607,7 +1702,8 @@ function creationMessages(material, preferences, ideas = "", keep = false) {
 You write a private story notebook for an ongoing roleplay chat. It gives the narrator a story of its own: where it is going, why, and how fast. The player must not see it.
 Return {"notebook": ${SHAPE}, "tracker": {"fields": [], "note": ""}${keep ? ', "notes": ["\u2026"]' : ""}${ideas ? ', "playerPeople": []' : ""}}.
 ${CRAFT}
-${LORE(material.lore)}${MEMORY(material.memory)}Tone: ${preferences.tone}. ${twist}${shape}${ideas ? `
+${LORE(material.lore)}${MEMORY(material.memory)}Tone: ${preferences.tone}. ${twist}${shape}
+${WORLD(preferences.size)}${ideas ? `
 The player, who co-writes this story, shared ideas for it in "ideas". Build the notebook around them where they fit the card: give them threads, people, beats, or breadcrumbs, paced like everything else, so they arrive in time rather than all at once. They are wishes for where the story can go, not events that already happened. If they describe a person (someone they would like to meet, or someone already in their character's life), make that person, give them a "sheet" that builds on what the player wrote without repeating it, and list them in "playerPeople": [{"person": "their id", "from": "the player's description of them, copied word for word from ideas"}]; their words are kept as they wrote them.${keep ? ` Also return "notes": one to four short standing instructions in plain words that keep these wishes in force, as close to the player's own words as you can, with no spoilers.` : ""}` : ""}
 If the chat already has messages, start from what has happened: record it under events, mark people met, and set the clock to now. A long chat comes with "storySoFar", a record of everything before the messages in "chat"; treat it as part of the chat. Keep events compact: at most about 30 short lines, merging older ones. Threads and people the chat already started come first; plan new ones around them.
 
@@ -1634,6 +1730,8 @@ ${LORE(input.lore) ? `- ${LORE(input.lore)}` : ""}${MEMORY(input.memory) ? `- ${
 - Entries with "quick": true were marked after a reply by a fast reader. Confirm them by keeping them, or correct them if the chat does not support them (a step back to waiting, a beat back to possible, a seed back to waiting or planted).
 - Endings: when you close a storyline, set "outcome": won (the player got what they were after), lost (it went against them), or faded (it was dropped or petered out). A lost storyline leaves a mark: write in "scar" how it still shows (someone won't forgive, a door is closed, money is gone, a reputation is hurt), and let it color what comes next; it can grow a worse follow-up later. What was lost is never quietly forgotten.
 - Problems: a problem the player raised, or one that came up in the chat, becomes a storyline with its own steps unless it truly ended. If the chat solved a problem too easily (in a reply or two, at no real cost, through money, luck, or someone fixing it for the player), keep what happened, but it is not the end: give it a catch, a cost, a delay, or someone it angers, and make that a storyline. Problems are what move the story; do not let them evaporate.
+- ${WORLD(input.preferences.size)}${input.preferences.size !== "close" && input.away.length ? ' "away" lists people the player has met who have not been seen for a while: give one or two of them a reason to come back soon, through what they want.' : ""}
+- Lies: record new lies that matter in "covers" (see 3f), and keep every one there. Mark one "strained" when someone in the chat starts to doubt it and "exposed" once it comes apart in the chat; an exposed lie never goes back. When a lie has held for a while, plan a step or beat where it needs upkeep.
 - Secrets that came out: once the chat shows the player has learned a hidden truth (or the twist), or it came out where they could see, move it word for word to story.cameOut and out of hiddenTruth (empty twist if it was the twist). From then on it is an established fact: rewrite people's "hint" and "doing", thread hints, and beats so nobody keeps acting as if it were still secret, and plan no more clues or reveal moments for it; build on it instead. A suspicion or a guess is not learning it. Never move anything back out of cameOut.
 - Sheets: keep each "sheet" true to how the person has actually been in the chat, and add what has changed (what they learned, how they now feel about the player character, what they did). Return a sheet only when it changes; leave it empty to keep it as it is. Someone who has become important gets a sheet; never more than six. Fill in "depth" for anyone who has none.
 - Voices: fill in "voice" for anyone who has none, and keep each one steady once set. Base it on who the person is (age, background, job, temperament, the card) and the moments where they sounded most like themselves, not on how the narrator has been writing everyone lately: narrators drift into one shared voice, and the notebook is how to pull them back out. If several people have started to sound alike, give each a clearly different voice.
@@ -1658,7 +1756,7 @@ function talkMessages(input) {
     { role: "system", content: `${SAFETY}
 You are Grimoire, the private planner behind an ongoing roleplay chat. The player co-writes this story with you: they play the scene in front of them, and you keep the whole story in mind. Right now they are talking to you directly, outside the story, to give notes or feedback.
 Return {"ask": false, "reply": "...", "changes": {...} or null, "note": "", "push": null, "pushKind": "", "skipHours": 0}.
-"changes" lists only what changes, so keep it small: {"people": [...], "threads": [...], "beats": [...], "seeds": [...], "story": {...}, "arc": {...}}, each part optional. A person, thread, beat, or seed you include replaces the one with the same id, so write it in full, in the same shape as in the notebook; a new id adds one. "story" and "arc" fields you include replace those fields. Leave out everything that stays the same. The notebook's shape is: ${SHAPE}
+"changes" lists only what changes, so keep it small: {"people": [...], "threads": [...], "beats": [...], "seeds": [...], "covers": [...], "story": {...}, "arc": {...}}, each part optional. A person, thread, beat, or seed you include replaces the one with the same id, so write it in full, in the same shape as in the notebook; a new id adds one. "story" and "arc" fields you include replace those fields. Leave out everything that stays the same. The notebook's shape is: ${SHAPE}
 ${input.push ? `The player pressed a button: ${PUSH_ASKS[input.push]} Do it now: return "changes" and "push" (and "skipHours" for a new chapter). Do not ask anything; "reply" can be empty.
 ${PUSH_RULES}
 ` : ""}How to answer:
@@ -1781,11 +1879,11 @@ function applyChanges(base, changes) {
   const c = changes;
   const out = structuredClone(base);
   let touched = false;
-  for (const key of ["people", "threads", "beats", "seeds"]) {
+  for (const key of ["people", "threads", "beats", "seeds", "covers"]) {
     const items = c[key];
     if (!Array.isArray(items) || !items.length)
       continue;
-    const list = [...out[key]];
+    const list = [...out[key] ?? []];
     for (const item of items) {
       if (!item || typeof item !== "object" || typeof item.id !== "string")
         continue;
@@ -2591,7 +2689,7 @@ var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
 var DEFAULT_SETTINGS = { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true, intimate: "protect", memories: true };
-var DEFAULT_PREFERENCES = { tone: "balanced", twist: true, shape: "auto", lockShape: false };
+var DEFAULT_PREFERENCES = { tone: "balanced", twist: true, shape: "auto", lockShape: false, size: "auto" };
 var CHAPTER_WORKING = "Starting a new chapter";
 var CHAPTER_DONE = "New chapter ready";
 
@@ -2668,7 +2766,13 @@ function playerNotes(value) {
 function validPreferences(value) {
   const v = record7(value);
   const shape = v.shape === "conflict" || v.shape === "kishotenketsu" ? v.shape : "auto";
-  return { tone: ["light", "balanced", "dark"].includes(v.tone) ? v.tone : "balanced", twist: v.twist !== false, shape, lockShape: shape !== "auto" && v.lockShape === true };
+  return {
+    tone: ["light", "balanced", "dark"].includes(v.tone) ? v.tone : "balanced",
+    twist: v.twist !== false,
+    shape,
+    lockShape: shape !== "auto" && v.lockShape === true,
+    size: v.size === "close" || v.size === "wide" ? v.size : "auto"
+  };
 }
 function withOwnWords(notebook, value, ideas) {
   const squash = (s) => s.replace(/\s+/g, " ").trim();
@@ -2692,7 +2796,7 @@ var CALM = 3;
 var SOFT_RANK = ["A problem was solved too easily", "A new problem came up", "Something new happened in the story"];
 function storyRules(previous, revised, round, pace, prefs, checkup = false) {
   if (round === 1) {
-    const problems = [...paceProblems(previous, revised, pace), ...leadProblems(previous, revised, prefs), ...specificProblems(previous, revised), ...checkup && previous ? spentProblems(previous, revised) : []];
+    const problems = [...paceProblems(previous, revised, pace), ...leadProblems(previous, revised, prefs), ...specificProblems(previous, revised), ...checkup && previous ? spentProblems(previous, revised) : [], ...checkup || !previous ? castProblems(previous, revised, prefs) : []];
     if (problems.length)
       throw new NotebookError(problems.join(" "), "The update broke a story rule, so it was sent back once.");
   }
@@ -2784,6 +2888,7 @@ class NotebookController {
         skipTurn: Number(saved.skipTurn) > 0 ? Number(saved.skipTurn) : 0,
         needsCheck: typeof saved.needsCheck === "string" ? saved.needsCheck : "",
         queued: typeof saved.queued === "string" ? saved.queued.slice(0, 200) : "",
+        seen: Object.fromEntries(Object.entries(record7(saved.seen)).filter(([k, v]) => typeof k === "string" && Number.isInteger(v)).slice(0, 200)),
         trackerTried: saved.trackerTried === true,
         skipDismissedAt: Number(saved.skipDismissedAt) > 0 ? Number(saved.skipDismissedAt) : 0,
         held: Array.isArray(saved.held) ? saved.held.filter((x) => typeof x === "string").slice(0, 12) : [],
@@ -2810,7 +2915,7 @@ class NotebookController {
     await this.api.userStorage.setJson(this.path(state.chatId), state, { userId: this.userId });
   }
   blank(chatId) {
-    return { version: 1, chatId, enabled: false, pace: "auto", preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: "" }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: "", queued: "", trackerTried: false, quick: null, skipDismissedAt: 0, held: [], resync: null, talk: [], notes: [], quickLog: [], paceSignals: [], replan: false, replannedAt: 0, intimate: [], intimateNow: false, job: null, updatedAt: 0 };
+    return { version: 1, chatId, enabled: false, pace: "auto", preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: "" }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: "", queued: "", seen: {}, trackerTried: false, quick: null, skipDismissedAt: 0, held: [], resync: null, talk: [], notes: [], quickLog: [], paceSignals: [], replan: false, replannedAt: 0, intimate: [], intimateNow: false, job: null, updatedAt: 0 };
   }
   async chatInfo(chatId) {
     const chat = await this.api.chats.get(chatId, this.userId);
@@ -2889,6 +2994,10 @@ class NotebookController {
       return false;
     state.recipe = { fields: [...kept, ...extra], note: state.recipe.note || found.note };
     return true;
+  }
+  presentNow(live) {
+    return presentPeople(live.version.notebook, live.turns.slice(-2).map((t) => t.content).join(`
+`), live.values.present);
   }
   repliesSince(live) {
     const from = this.fullVersion(live).covered.length, skipped = new Set(live.state.intimate);
@@ -3345,7 +3454,8 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
       replan: state.replan,
       replies: learning ? this.trackerSamples(live.turns, chatId).slice(0, 2).map((r) => r.slice(0, 20000)) : [],
       lore: await this.loreFor(chatId, chat, base.notebook),
-      memory: await this.recallFor(chatId, chat, base.notebook)
+      memory: await this.recallFor(chatId, chat, base.notebook),
+      away: awayPeople(base.notebook, state.seen, this.presentNow(live), live.moment).slice(0, 6).map((a) => `${a.person.name} (last seen ${a.replies} replies ago)`)
     };
     this.track((async () => {
       try {
@@ -3610,6 +3720,17 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
       return state.preferences;
     });
   }
+  async setSize(chatId, size) {
+    return this.serial(chatId, async () => {
+      const state = await this.load(chatId);
+      if (!state)
+        throw new Error("Write a notebook for this chat first.");
+      state.preferences = validPreferences({ ...state.preferences, size });
+      await this.save(state);
+      this.changed();
+      return state.preferences;
+    });
+  }
   async setPace(chatId, pace) {
     if (!PACES.includes(pace))
       throw new Error("Choose auto, quiet, or fast.");
@@ -3696,7 +3817,8 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
       const clockMayLag = (live.sources.day !== "tracker" || live.sources.hour !== "tracker") && this.repliesSince(live) > 0;
       const settings = await this.settings();
       const intimate = state.intimateNow && settings.intimate === "protect" && live.turns.at(-1)?.role === "user";
-      return buildNote({ intimate, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map((n) => n.text) });
+      const away = awayPeople(live.version.notebook, state.seen, this.presentNow(live), live.moment).map((a) => a.person);
+      return buildNote({ intimate, away, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map((n) => n.text) });
     });
   }
   async macro(name, chatId) {
@@ -3801,6 +3923,7 @@ ${recallNote(recall)}`;
     if (this.learnTracker(state, live.turns))
       live = await this.live(state, await this.api.chat.getMessages(chatId));
     const full = this.fullVersion(live), since = this.repliesSince(live);
+    state.seen = noteSeen(state.seen, live.version.notebook, this.presentNow(live), live.moment.reply ?? 0);
     if (soft && (!state.queued || SOFT_RANK.indexOf(soft) < SOFT_RANK.indexOf(state.queued)))
       state.queued = soft;
     const unmatched = !live.matched;
@@ -3952,6 +4075,8 @@ async function handle(controller, action, input) {
     }
     case "shape":
       return controller.setShape(string(data.chatId, "Chat"), data.shape, data.lockShape);
+    case "size":
+      return controller.setSize(string(data.chatId, "Chat"), data.size);
     case "enable":
       return controller.setEnabled(string(data.chatId, "Chat"), data.enabled === true);
     case "pace":

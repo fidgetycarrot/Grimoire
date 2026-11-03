@@ -13,6 +13,7 @@ export async function handle(controller: NotebookController, action: string, inp
     case 'create': return controller.create(string(data.chatId, 'Chat'), data.preferences, data.ideas, data.keepIdeas);
     case 'checkup': { const job = await controller.checkup(string(data.chatId, 'Chat'), 'You asked for a check-up'); if (!job) throw new Error('The notebook is already being updated.'); return job; }
     case 'shape': return controller.setShape(string(data.chatId, 'Chat'), data.shape, data.lockShape);
+    case 'size': return controller.setSize(string(data.chatId, 'Chat'), data.size);
     case 'enable': return controller.setEnabled(string(data.chatId, 'Chat'), data.enabled === true);
     case 'pace': return controller.setPace(string(data.chatId, 'Chat'), data.pace);
     case 'skip': return controller.skipTime(string(data.chatId, 'Chat'), data.amount, data.unit);

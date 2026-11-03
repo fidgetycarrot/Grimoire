@@ -83,10 +83,10 @@ export function applyChanges(base: Notebook, changes: unknown): Record<string, u
   const c = changes as Record<string, unknown>;
   const out: Record<string, unknown> = structuredClone(base) as unknown as Record<string, unknown>;
   let touched = false;
-  for (const key of ['people', 'threads', 'beats', 'seeds'] as const) {
+  for (const key of ['people', 'threads', 'beats', 'seeds', 'covers'] as const) {
     const items = c[key];
     if (!Array.isArray(items) || !items.length) continue;
-    const list = [...(out[key] as Array<{ id: string }>)];
+    const list = [...((out[key] ?? []) as Array<{ id: string }>)];
     for (const item of items) {
       if (!item || typeof item !== 'object' || typeof (item as { id?: unknown }).id !== 'string') continue;
       const at = list.findIndex(x => x.id === (item as { id: string }).id);

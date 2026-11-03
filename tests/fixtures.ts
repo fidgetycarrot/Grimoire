@@ -5,6 +5,7 @@ import type { Notebook } from '../src/notebook';
 export function sampleNotebook(): Notebook {
   return {
     version: 1,
+    covers: [],
     arc: { shape: 'conflict', stage: 'setup', turn: '', main: 'storm' },
     seeds: [
       { id: 'green-wax', detail: 'Oswin seals his letters with green wax.', payoff: 'The ring box in the next town is sealed with the same green wax, tying the sale to Oswin.', pays: 'stolen-ring', status: 'waiting' },
@@ -14,6 +15,8 @@ export function sampleNotebook(): Notebook {
       { id: 'mira', name: 'Mira', aliases: ['the ferrywoman'], role: 'ferry keeper', wants: 'to keep the ferry running', doing: 'patching the chain', hint: 'dry humor, watches everyone', voice: 'Short, flat sentences; ferry terms; never asks a question she can answer herself. "Coin first. Then talk."', depth: '', sheet: '', own: '', met: true, status: 'active' },
       { id: 'cole', name: 'Cole', aliases: [], role: 'traveling barbarian', wants: 'work that pays in silver', doing: 'looking for the ring\'s owner to sell information', hint: 'loud, honest about money', voice: '', depth: '', sheet: '', own: '', met: false, status: 'active' },
       { id: 'harbor-master', name: 'Oswin', aliases: ['the harbor master'], role: 'harbor master', wants: 'the ring sold before anyone notices', doing: 'arranging a buyer in the next town', hint: 'polite, avoids questions about money', voice: '', depth: '', sheet: '', own: '', met: true, status: 'active' },
+      { id: 'wren', name: 'Wren', aliases: [], role: 'rope maker up the hill', wants: 'a buyer for her winter stock', doing: 'drying hemp in the yard', hint: 'chatty, remembers every face', voice: '', depth: '', sheet: '', own: '', met: false, status: 'active' },
+      { id: 'brother-hale', name: 'Brother Hale', aliases: [], role: 'keeper of the river shrine', wants: 'the shrine roof mended before the rains', doing: 'collecting coins from travelers', hint: 'gentle, stubborn about small things', voice: '', depth: '', sheet: '', own: '', met: false, status: 'active' },
     ],
     threads: [
       { id: 'stolen-ring', title: 'The stolen ring', speed: 'steady', why: 'Oswin stole it; its owner will search.', hint: 'the owner is starting to look for it', people: ['harbor-master', 'cole'], status: 'open', closedReason: '', ifFollowed: 'leads to Oswin', ifIgnored: 'the owner\'s search reaches the player',

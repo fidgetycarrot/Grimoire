@@ -22,7 +22,7 @@ function harness(chat: Partial<NonNullable<Snapshot['chat']>> | null = {}, setti
     connections: [{ id: 'model', name: 'Writer', model: 'm' }],
     settings: { connectionId: 'model', maxOutputTokens: 16000, reasoningMode: 'inherit', every: 8, quick: { enabled: false, connectionId: '', model: '' }, wait: 'medium', homeList: true, intimate: 'protect', memories: true, ...settings },
     decisions: { available: true, reason: '', connections: [{ id: 'dec', name: 'Jev', provider: 'typesafe', model: '~typesafe/jev-latest', isDefault: true }] },
-    chat: chat === null ? null : { chatId: 'chat-1', name: 'Low Water', supported: true, reason: '', enabled: true, pace: 'auto', preferences: { tone: 'balanced', twist: true, shape: 'auto', lockShape: false }, hasNotebook: true,
+    chat: chat === null ? null : { chatId: 'chat-1', name: 'Low Water', supported: true, reason: '', enabled: true, pace: 'auto', preferences: { tone: 'balanced', twist: true, shape: 'auto', lockShape: false, size: 'auto' }, hasNotebook: true,
       summary: 'Notebook updated after the tavern.', clock: { day: 2, hour: 21, label: '' }, clockText: 'Day 2, 21:00', sources: { day: 'notebook', hour: 'notebook', exact: false }, checks: [],
       needsCheck: '', job: null, updatedAt: Date.now(), repliesSinceCheck: 2, skipHours: 0, notebook: stamp(validateNotebook(sampleNotebook()), 40), behind: false, earlierParts: 0, quick: null, dueIds: [], skipOffer: null, glance: null, reworking: false, talk: [], notes: [], quickLog: [], canUndo: false, spent: false, ...chat },
   };
@@ -140,7 +140,7 @@ describe('the panel', () => {
   test('a chat without a notebook offers to write one, and needs a connection first', async () => {
     const h = harness({ hasNotebook: false, notebook: null }); await tick();
     h.button('Write the notebook')!.click(); await tick();
-    expect(h.requests.find(r => r.action === 'create')!.input).toEqual({ chatId: 'chat-1', preferences: { tone: 'balanced', twist: true, shape: 'auto', lockShape: false }, ideas: '', keepIdeas: false });
+    expect(h.requests.find(r => r.action === 'create')!.input).toEqual({ chatId: 'chat-1', preferences: { tone: 'balanced', twist: true, shape: 'auto', lockShape: false, size: 'auto' }, ideas: '', keepIdeas: false });
     const none = harness({ hasNotebook: false, notebook: null }, { connectionId: '' }); await tick();
     expect(none.button('Write the notebook')!.disabled).toBe(true);
     expect(none.root.textContent).toContain('Choose a model connection in Settings first.');
@@ -300,5 +300,19 @@ describe('requests', () => {
     await expect(rpc.request('snapshot')).rejects.toThrow('did not answer');
     rpc.destroy();
     await expect(rpc.request('snapshot')).rejects.toThrow('closed');
+  });
+});
+
+describe('how big the world gets', () => {
+  test('is chosen when starting, and can be changed later', async () => {
+    const start = harness({ hasNotebook: false, notebook: null }); await tick();
+    const pick = Array.from(start.root.querySelectorAll('select')).find(s => Array.from(s.options).some(o => o.value === 'close')) as unknown as HTMLSelectElement;
+    pick.value = 'wide';
+    start.button('Write the notebook')!.click(); await tick();
+    expect(start.requests.find(r => r.action === 'create')!.input.preferences.size).toBe('wide');
+    const h = harness(); await tick();
+    const later = Array.from(h.root.querySelectorAll('select')).find(s => Array.from(s.options).some(o => o.value === 'close')) as unknown as HTMLSelectElement;
+    later.value = 'close'; later.dispatchEvent(new h.window.Event('change', { bubbles: true }) as any); await tick();
+    expect(h.requests.find(r => r.action === 'size')!.input).toEqual({ chatId: 'chat-1', size: 'close' });
   });
 });
