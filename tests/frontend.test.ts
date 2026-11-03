@@ -207,8 +207,9 @@ describe('pacing settings', () => {
     Array.from(h.root.querySelectorAll('button')).find(b => b.textContent === 'Settings')!.click(); await tick();
     expect(h.root.textContent).toContain('Longest a story thread waits');
     const wait = Array.from(h.root.querySelectorAll('select')).find(s => Array.from(s.options).some(o => o.value === 'long')) as unknown as HTMLSelectElement;
-    wait.value = 'long';
-    h.button('Save settings')!.click(); await tick();
+    wait.value = 'long'; wait.dispatchEvent(new h.window.Event('change', { bubbles: true }) as any); await tick(); await tick();
+    expect(h.button('Save settings')).toBeFalsy();
+    expect(h.root.textContent).toContain('Saved.');
     expect(h.requests.find(r => r.action === 'settings')!.input.settings.wait).toBe('long');
   });
 });
@@ -221,8 +222,8 @@ describe('the quick check settings', () => {
     expect(h.root.textContent).toContain('Your default: Jev · ~typesafe/jev-latest');
     const toggle = Array.from(h.root.querySelectorAll('input[type=checkbox]')).at(-1) as unknown as HTMLInputElement; toggle.checked = true;
     const model = h.root.querySelector('input[type=text]') as unknown as HTMLInputElement; model.value = 'openai/some-decider';
-    h.button('Save settings')!.click(); await tick();
-    expect(h.requests.find(r => r.action === 'settings')!.input.settings.quick).toEqual({ enabled: true, connectionId: '', model: 'openai/some-decider' });
+    model.dispatchEvent(new h.window.Event('change', { bubbles: true }) as any); await tick();
+    expect(h.requests.filter(r => r.action === 'settings').at(-1)!.input.settings.quick).toEqual({ enabled: true, connectionId: '', model: 'openai/some-decider' });
   });
   test('explain plainly when this Lumiverse has no decision models', async () => {
     const h = harness();
@@ -258,7 +259,7 @@ describe('background updates', () => {
     const every = h.root.querySelector('input[type=number]') as unknown as HTMLInputElement; every.value = '12';
     h.state.chat!.repliesSinceCheck = 6; h.changed(); await tick();
     expect((h.root.querySelector('input[type=number]') as unknown as HTMLInputElement).value).toBe('12');
-    h.button('Save settings')!.click(); await tick();
+    (h.root.querySelector('input[type=number]') as unknown as HTMLInputElement).dispatchEvent(new h.window.Event('change', { bubbles: true }) as any); await tick();
     expect(h.requests.find(r => r.action === 'settings')!.input.settings.every).toBe(12);
   });
   test('typing in the chat page is not interrupted either, and the update lands afterwards', async () => {

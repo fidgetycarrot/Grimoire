@@ -900,11 +900,23 @@ function setup(ctx) {
     home.style.width = "auto";
     homeRow.append(home, document.createTextNode("Show my stories on the home page"));
     card.append(homeRow);
-    const save = button("Save settings", async () => {
-      await act("settings", { settings: { connectionId: connection.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, wait: wait.value, homeList: home.checked, intimate: intimate.value, memories: mem.checked, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } });
-      notify("Settings saved.");
-    }, "primary");
-    body.append(card, quickCard, save);
+    const status = el("p", "gm-hint", "Changes save on their own.");
+    const save = async () => {
+      try {
+        await rpc.request("settings", { settings: { connectionId: connection.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, wait: wait.value, homeList: home.checked, intimate: intimate.value, memories: mem.checked, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } });
+      } catch (error) {
+        notify(error instanceof Error ? error.message : String(error), "error");
+        return;
+      }
+      status.textContent = "Saved.";
+      refresh();
+    };
+    for (const part of [card, quickCard])
+      part.addEventListener("change", () => {
+        save();
+      });
+    card.insertBefore(status, card.children[1] ?? null);
+    body.append(card, quickCard);
   }
   function render() {
     if (destroyed)
