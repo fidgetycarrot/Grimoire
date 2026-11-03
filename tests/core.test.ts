@@ -871,8 +871,11 @@ describe('panels after the story', () => {
 describe('spaces written as $$', () => {
   test('a reply that writes $$ for every space is read with spaces; an ordinary $$ stays', () => {
     const { spaces, readable } = require('../src/history');
-    expect(readable('Warmth$$spreads$$across$$your$$skin.$$<cyan>"Hi$$there."</cyan>', 500)).toBe('Warmth spreads across your skin. "Hi there."');
+    expect(readable('Warmth$$spreads$$slowly$$across$$your$$skin$$as$$she$$leans$$in$$close.$$<cyan>"Hi$$there."</cyan>', 500)).toBe('Warmth spreads slowly across your skin as she leans in close. "Hi there."');
     expect(spaces('The bill came to $$5, and he paid it.')).toBe('The bill came to $$5, and he paid it.');
+    // Mixed: some real spaces, still mostly $$.
+    const mixed = '[$$Time$$9:45$$PM$$|$$Location$$-$$Upstairs$$Hallway$$]\n' + 'She waits by the door and listens. '.repeat(30) + 'Her$$voice$$drops$$to$$a$$whisper$$and$$she$$leans$$in$$close.';
+    expect(spaces(mixed)).toContain('[ Time 9:45 PM | Location - Upstairs Hallway ]');
   });
 });
 

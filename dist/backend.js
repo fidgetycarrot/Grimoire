@@ -201,7 +201,7 @@ var KEEP_ATTRIBUTE = /^(?!style$|class$|id$|color$|face$|size$|href$|src$|width$
 var ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", "#39": "'" };
 var spaces = (text) => {
   const s = text.replace(/[\u2800\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]/g, " ").replace(/[\u200b\u2060\ufeff]/g, "");
-  return (s.match(/\$\$/g)?.length ?? 0) > (s.match(/ /g)?.length ?? 0) ? s.replace(/\$\$/g, " ") : s;
+  return (s.match(/[^\s$]\$\$[^\s$]/g)?.length ?? 0) >= 10 ? s.replace(/\$\$/g, " ") : s;
 };
 var THINKING = /<((?:[\w-]*_)?think(?:ing)?(?:_[\w-]+)?|reasoning|ksc)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi;
 var CLOSE_ONLY = /^[\s\S]*?<\/(?:(?:[\w-]*_)?think(?:ing)?(?:_[\w-]+)?|reasoning)\s*>/i;
@@ -2684,7 +2684,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.22.1";
+var VERSION = "0.22.2";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };

@@ -73,8 +73,9 @@ const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"'
 export const spaces = (text: string) => {
   const s = text.replace(/[\u2800\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]/g, ' ').replace(/[\u200b\u2060\ufeff]/g, '');
   // Some Gemini presets have the model write "$$" for every space (a filter workaround) and turn it back with a
-  // regex only for display. A reply with more of those than real spaces is read with spaces.
-  return (s.match(/\$\$/g)?.length ?? 0) > (s.match(/ /g)?.length ?? 0) ? s.replace(/\$\$/g, ' ') : s;
+  // regex only for display. Models mix the two, so a reply that joins words with "$$" again and again is read
+  // with spaces; a stray "$$5" in an ordinary reply is left alone.
+  return (s.match(/[^\s$]\$\$[^\s$]/g)?.length ?? 0) >= 10 ? s.replace(/\$\$/g, ' ') : s;
 };
 /**
  * A model's thinking, when the provider leaves it in the reply instead of a separate field (custom connections
