@@ -70,7 +70,12 @@ const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"'
  * no-break or zero-width spaces). They look like spaces but don't match as
  * spaces, so anything that reads replies sees ordinary spaces instead.
  */
-export const spaces = (text: string) => text.replace(/[\u2800\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]/g, ' ').replace(/[\u200b\u2060\ufeff]/g, '');
+export const spaces = (text: string) => {
+  const s = text.replace(/[\u2800\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]/g, ' ').replace(/[\u200b\u2060\ufeff]/g, '');
+  // Some Gemini presets have the model write "$$" for every space (a filter workaround) and turn it back with a
+  // regex only for display. A reply with more of those than real spaces is read with spaces.
+  return (s.match(/\$\$/g)?.length ?? 0) > (s.match(/ /g)?.length ?? 0) ? s.replace(/\$\$/g, ' ') : s;
+};
 /**
  * A model's thinking, when the provider leaves it in the reply instead of a separate field (custom connections
  * often do, and presets ask for <thinking>, <thinking_mode>, and the like). It is plans and drafts, not story.
@@ -90,7 +95,8 @@ export function withoutThinking(text: string): string {
  * panel straight from the reply, so time and place still work. A reply whose story itself sits in a tag has
  * too little prose before the blocks, and is read whole.
  */
-const INLINE = new Set(['font', 'b', 'i', 'u', 's', 'em', 'strong', 'span', 'small', 'big', 'sup', 'sub', 'a', 'br', 'q', 'code', 'mark', 'del', 'ins', 'abbr', 'cite', 'kbd', 'img', 'hr']);
+/** Inline styling, and containers that usually hold story (a phone screen with a text message, a quote). */
+const INLINE = new Set(['font', 'b', 'i', 'u', 's', 'em', 'strong', 'span', 'small', 'big', 'sup', 'sub', 'a', 'br', 'q', 'code', 'mark', 'del', 'ins', 'abbr', 'cite', 'kbd', 'img', 'hr', 'div', 'p', 'center', 'blockquote']);
 const PROSE_BEFORE_PANELS = 300;
 export function withoutPanels(text: string): string {
   const blocks: Array<{ start: number; end: number }> = [];
@@ -109,7 +115,7 @@ export function withoutPanels(text: string): string {
     open.lastIndex = end;
   }
   // The longest run of blocks at the end, with nothing but blank lines or rules between them.
-  const filler = (s: string) => !s.replace(/[\s\-–—_*=~#]+/g, '');
+  const filler = (s: string) => !s.replace(/<!--[\s\S]*?-->/g, '').replace(/[\s\-–—_*=~#]+/g, '');
   let tail = text.length;
   for (const b of [...blocks].reverse()) { if (!filler(text.slice(b.end, tail))) break; tail = b.start; }
   if (tail === text.length) return text;

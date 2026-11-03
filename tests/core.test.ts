@@ -867,3 +867,32 @@ describe('panels after the story', () => {
     expect(readField(field, `${prose}\n\n<scene_cast>\nLocation: Crew quarters\n</scene_cast>`, {})).toBe('Crew quarters');
   });
 });
+
+describe('spaces written as $$', () => {
+  test('a reply that writes $$ for every space is read with spaces; an ordinary $$ stays', () => {
+    const { spaces, readable } = require('../src/history');
+    expect(readable('Warmth$$spreads$$across$$your$$skin.$$<cyan>"Hi$$there."</cyan>', 500)).toBe('Warmth spreads across your skin. "Hi there."');
+    expect(spaces('The bill came to $$5, and he paid it.')).toBe('The bill came to $$5, and he paid it.');
+  });
+});
+
+describe('a header split by bars', () => {
+  test('time, day and place are found and read from it', () => {
+    const { guessRecipe, checkRecipe, readTracker } = require('../src/tracker');
+    const reply = (time: string, place: string) => `[$$🕰️$$Time$$${time.replace(/ /g, '$$$$')}$$|$$🗓️$$Day$$1$$-$$Saturday,$$September$$12,$$2026$$|$$📍$$Location$$-$$${place.replace(/ /g, '$$$$')}$$|$$🌙$$Clear$$]\n\nShe$$laughs$$softly$$and$$sets$$her$$glass$$down$$on$$the$$table.`;
+    const replies = [reply('9:42 PM', 'Master Bedroom'), reply('4:46 PM', 'Living Room')];
+    const recipe = guessRecipe(replies);
+    expect(recipe.fields.map((f: any) => f.name)).toEqual(['date', 'time', 'location']);
+    const values = readTracker(recipe, checkRecipe(recipe, replies, {}), replies, {});
+    expect(values).toMatchObject({ time: '9:42 PM', location: 'Master Bedroom' });
+    expect(values.date).toContain('1');
+  });
+  test('a story container after the prose, like a phone screen, is kept', () => {
+    const { withoutPanels } = require('../src/history');
+    const prose = 'Her phone lights up on the table between them, and she turns it over. '.repeat(6);
+    const reply = `${prose}\n<div style="x">Lauren: come upstairs</div>\n<!-- GFX_START -->\n<internal_states>\nagenda\n</internal_states>\n<!-- GFX_END -->`;
+    const out = withoutPanels(reply);
+    expect(out).toContain('come upstairs');
+    expect(out).not.toContain('agenda');
+  });
+});

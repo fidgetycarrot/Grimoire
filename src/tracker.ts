@@ -83,6 +83,17 @@ function jsonPath(value: unknown, path: string): unknown {
   }
   return current;
 }
+/** A labeled part of a "|"-separated header line, like "📍 Location - Master Bedroom". */
+function pipeField(text: string, label: string): string | undefined {
+  for (const line of text.split('\n')) {
+    if ((line.match(/\|/g)?.length ?? 0) < 2) continue;
+    for (const piece of line.replace(/^[\s\[(]+|[\s\])]+$/g, '').split('|')) {
+      const m = new RegExp(`^[^\\p{L}\\p{N}]*${escape(label)}\\b\\s*(?::|：|=|-|–|—)?\\s*(.+)$`, 'iu').exec(piece.trim());
+      if (m && plain(m[1])) return plain(m[1]);
+    }
+  }
+  return undefined;
+}
 /** Read one field from one reply. Returns undefined when it is not there. */
 export function readField(field: RecipeField, raw: string, variables: Record<string, string>): string | undefined {
   const from = field.source, reply = withoutThinking(spaces(raw));
@@ -91,6 +102,9 @@ export function readField(field: RecipeField, raw: string, variables: Record<str
     if (from.kind === 'line') {
       const line = new RegExp(`^[\\s>*_\\-•|#]*(?:\\*\\*|__)?${escape(from.label)}(?:\\*\\*|__)?\\s*(?::|：|=|-|–|—)\\s*(.+)$`, 'im').exec(part);
       if (line && plain(line[1])) return plain(line[1]);
+      // A one-line header of parts split by "|": [🕰️ Time 9:42 PM | 🗓️ Day 1 - Saturday | 📍 Location - Bedroom]
+      const part2 = pipeField(part, from.label);
+      if (part2) return part2;
     } else if (from.kind === 'attribute') {
       // <scene_header location="…" time="…" /> : the last such tag in the area wins.
       const pattern = new RegExp(`<${escape(from.tag)}\\b[^>]*?\\s${escape(from.attribute)}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, 'gi');
@@ -201,6 +215,7 @@ export function guessRecipe(replies: string[]): Recipe {
         candidates.push({ kind: 'line', label, region: tag ? { kind: 'tag', tag } : { kind: 'whole' } });
       }
     }
+    for (const label of want.labels) if (pipeField(newest, label)) candidates.push({ kind: 'line', label, region: { kind: 'whole' } });
     // Facts as their own small tags, like <time>Day 2, 08:40</time> inside a scene card.
     for (const tag of want.attributes) {
       const at = newest.search(new RegExp(`<${escape(tag)}>[^<]{1,80}</${escape(tag)}>`, 'i'));

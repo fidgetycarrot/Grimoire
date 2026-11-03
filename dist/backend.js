@@ -199,7 +199,10 @@ var RECENT = { turns: 40, chars: 60000, perTurn: 8000 };
 var EARLIER = { part: 30000, maxPart: 60000, maxParts: 12, perTurn: 3000 };
 var KEEP_ATTRIBUTE = /^(?!style$|class$|id$|color$|face$|size$|href$|src$|width$|height$|align$|data-|aria-|role$|on)[a-z][\w-]*$/i;
 var ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", "#39": "'" };
-var spaces = (text) => text.replace(/[\u2800\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]/g, " ").replace(/[\u200b\u2060\ufeff]/g, "");
+var spaces = (text) => {
+  const s = text.replace(/[\u2800\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]/g, " ").replace(/[\u200b\u2060\ufeff]/g, "");
+  return (s.match(/\$\$/g)?.length ?? 0) > (s.match(/ /g)?.length ?? 0) ? s.replace(/\$\$/g, " ") : s;
+};
 var THINKING = /<((?:[\w-]*_)?think(?:ing)?(?:_[\w-]+)?|reasoning|ksc)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi;
 var CLOSE_ONLY = /^[\s\S]*?<\/(?:(?:[\w-]*_)?think(?:ing)?(?:_[\w-]+)?|reasoning)\s*>/i;
 function withoutThinking(text) {
@@ -208,7 +211,7 @@ function withoutThinking(text) {
     s = s.replace(CLOSE_ONLY, " ");
   return s;
 }
-var INLINE = new Set(["font", "b", "i", "u", "s", "em", "strong", "span", "small", "big", "sup", "sub", "a", "br", "q", "code", "mark", "del", "ins", "abbr", "cite", "kbd", "img", "hr"]);
+var INLINE = new Set(["font", "b", "i", "u", "s", "em", "strong", "span", "small", "big", "sup", "sub", "a", "br", "q", "code", "mark", "del", "ins", "abbr", "cite", "kbd", "img", "hr", "div", "p", "center", "blockquote"]);
 var PROSE_BEFORE_PANELS = 300;
 function withoutPanels(text) {
   const blocks = [];
@@ -233,7 +236,7 @@ function withoutPanels(text) {
     blocks.push({ start, end });
     open.lastIndex = end;
   }
-  const filler = (s) => !s.replace(/[\s\-\u2013\u2014_*=~#]+/g, "");
+  const filler = (s) => !s.replace(/<!--[\s\S]*?-->/g, "").replace(/[\s\-\u2013\u2014_*=~#]+/g, "");
   let tail = text.length;
   for (const b of [...blocks].reverse()) {
     if (!filler(text.slice(b.end, tail)))
@@ -2401,6 +2404,19 @@ function jsonPath(value, path) {
   }
   return current;
 }
+function pipeField(text, label) {
+  for (const line of text.split(`
+`)) {
+    if ((line.match(/\|/g)?.length ?? 0) < 2)
+      continue;
+    for (const piece of line.replace(/^[\s\[(]+|[\s\])]+$/g, "").split("|")) {
+      const m = new RegExp(`^[^\\p{L}\\p{N}]*${escape2(label)}\\b\\s*(?::|\uFF1A|=|-|\u2013|\u2014)?\\s*(.+)$`, "iu").exec(piece.trim());
+      if (m && plain2(m[1]))
+        return plain2(m[1]);
+    }
+  }
+  return;
+}
 function readField(field, raw, variables) {
   const from = field.source, reply = withoutThinking(spaces(raw));
   if (from.kind === "variable") {
@@ -2412,6 +2428,9 @@ function readField(field, raw, variables) {
       const line = new RegExp(`^[\\s>*_\\-\u2022|#]*(?:\\*\\*|__)?${escape2(from.label)}(?:\\*\\*|__)?\\s*(?::|\uFF1A|=|-|\u2013|\u2014)\\s*(.+)$`, "im").exec(part);
       if (line && plain2(line[1]))
         return plain2(line[1]);
+      const part2 = pipeField(part, from.label);
+      if (part2)
+        return part2;
     } else if (from.kind === "attribute") {
       const pattern = new RegExp(`<${escape2(from.tag)}\\b[^>]*?\\s${escape2(from.attribute)}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "gi");
       const found = [...part.matchAll(pattern)].at(-1);
@@ -2538,6 +2557,9 @@ function guessRecipe(replies) {
         candidates.push({ kind: "line", label, region: tag ? { kind: "tag", tag } : { kind: "whole" } });
       }
     }
+    for (const label of want.labels)
+      if (pipeField(newest, label))
+        candidates.push({ kind: "line", label, region: { kind: "whole" } });
     for (const tag of want.attributes) {
       const at = newest.search(new RegExp(`<${escape2(tag)}>[^<]{1,80}</${escape2(tag)}>`, "i"));
       if (at < 0)
