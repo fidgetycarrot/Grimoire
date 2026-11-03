@@ -109,7 +109,7 @@ export function setup(ctx: SpindleFrontendContext) {
     shape.addEventListener('change', syncLock); syncLock();
     grid.append(labeled('How the story is built', shape, 'Grimoire can switch shapes between parts of the story as it goes, unless you keep one.'), lockRow);
     const size = select(SIZE_CHOICES, view.preferences.size ?? 'auto');
-    grid.append(labeled('How big the world gets', size, 'Grimoire brings in new places and people over time, and brings back people you’ve met, so the story doesn’t stay small. Keep it close for stories that should stay in one place.'));
+    grid.append(labeled('How big the world gets', size, 'Grow naturally: new people and places now and then, and people you’ve met come back. A big world: more of both, more often. Keep it close: the story stays with the places and people it has.'));
     const ideas = el('textarea', 'gm-talk-input'); ideas.rows = 4; ideas.maxLength = 3000; ideas.placeholder = 'Like “a slow-burn romance, trouble with old friends, a trip that goes sideways”, or someone you’d like to meet';
     const keepIdeas = el('input'); keepIdeas.type = 'checkbox'; keepIdeas.style.width = 'auto';
     const keepRow = el('label', 'gm-row gm-small'); keepRow.append(keepIdeas, document.createTextNode('Keep these as lasting notes'));
@@ -283,7 +283,7 @@ export function setup(ctx: SpindleFrontendContext) {
     d.body.append(check, el('p', 'gm-hint', 'Reads the latest chat and updates the plan. Check-ups also run on their own when a scene changes, time jumps, or enough replies pass.'),
       el('div', 'gm-sub'), skipRow, skip, el('div', 'gm-sub'),
       labeled('Keep one story shape for this chat', kept, 'If this part of the story already has the other shape, the change starts with the next part.'), keep, el('div', 'gm-sub'),
-      labeled('How big the world gets', size), el('div', 'gm-sub'), remove);
+      labeled('How big the world gets', size, 'Grow naturally: new people and places now and then, and people you’ve met come back. A big world: more of both, more often. Keep it close: the story stays with the places and people it has.'), el('div', 'gm-sub'), remove);
     return d.root;
   }
   const QUICK_WORDS: Array<[RegExp, string]> = [[/^due_/, 'Planned development shown'], [/^moment_/, 'Possible moment happened'], [/^detail_mentioned$/, 'Breadcrumb mentioned'], [/^echo_heard$/, 'Echo heard'], [/^callback_/, 'Breadcrumb paid off'], [/^fits_/, 'Storyline still fits'], [/^truth_/, 'Secret came out'], [/^story_shift$/, 'Change of direction'], [/^rushing$/, 'Rushing'], [/^intimate$/, 'Intimate scene'], [/^new_turn$/, 'Something new'], [/^new_problem$/, 'New problem'], [/^easy_fix$/, 'Solved too easily']];
