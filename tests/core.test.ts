@@ -896,3 +896,11 @@ describe('a header split by bars', () => {
     expect(out).not.toContain('agenda');
   });
 });
+
+describe('the version shown in the panel', () => {
+  test('matches the release', () => {
+    const { VERSION } = require('../src/types');
+    expect(VERSION).toBe(require('../package.json').version);
+    expect(VERSION).toBe(require('../spindle.json').version);
+  });
+});
