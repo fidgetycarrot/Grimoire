@@ -4,7 +4,8 @@ import { describeDuration } from './clock';
 import type { Notebook, Pace } from './notebook';
 import { CHAPTER_DONE, CHAPTER_WORKING, VERSION, type ChatView, type Settings, type Snapshot, type StoryListing } from './types';
 
-const ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8 3v18"/><path d="M12 8h3M12 12h3"/></svg>';
+/** A crystal ball: Grimoire sees where the story is going. Picked to stand apart from the book and notebook icons other extensions use. */
+const ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="10" r="7"/><path d="M8.5 7.5a4 4 0 0 1 3-1.8"/><path d="M7 20h10"/><path d="M8.5 16.5 7.5 20M15.5 16.5l1 3.5"/><path d="M14.5 9.2l.5-1.4.5 1.4 1.4.5-1.4.5-.5 1.4-.5-1.4-1.4-.5z" fill="currentColor" stroke-width="0.8"/></svg>';
 const PACE_ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 16a8 8 0 0 1 16 0"/><path d="M12 16l4-5"/></svg>';
 export const PACE_LABELS: Record<Pace, { name: string; help: string }> = {
   auto: { name: 'Auto', help: 'Grimoire reads the story’s rhythm and picks the pace.' },
