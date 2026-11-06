@@ -99,7 +99,7 @@ export function seedPlan(notebook: Notebook, now: number | Moment): { plant: See
 }
 
 export interface NoteInput { notebook: Notebook; pace: Pace; clock: StoryClock; now: number | Moment; /** Threads that no longer fit for now. */ held?: string[]; /** The story just changed direction; old plans are being reworked. */ reworking?: boolean; recent: string; trackerPresent?: string; skipHours?: number; /** True when the time comes from the last check-up, not from a tracker reading of the latest reply. */ clockMayLag?: boolean; /** The player swiped with guidance: the note steps back so it never argues with them. */ guided?: boolean; /** Standing wishes the player pinned. */ notes?: string[]; /** An intimate scene is under way: the story stays out until it ends. */ intimate?: boolean; /** People the player has met who haven't been around for a while, longest away first. */ away?: Person[];
-  /** Replies since someone new last turned up in a scene. */ sinceNewFace?: number; /** How big the world gets; a close story doesn't send the player anywhere. */ size?: StorySize }
+  /** Replies since someone new last turned up in a scene. */ sinceNewFace?: number; /** Where things are in the building the player is in. */ layout?: string; /** How big the world gets; a close story doesn't send the player anywhere. */ size?: StorySize }
 /**
  * The short private note added before a reply. Built by code from the
  * notebook; no model call. It carries reasons and narrator-safe hints, never
@@ -111,6 +111,7 @@ export function buildNote(input: NoteInput): string {
   const quietTime = pace === 'quiet' || (pace === 'auto' && (notebook.rhythm === 'aftermath' || notebook.rhythm === 'peak'));
   lines.push('Grimoire: private story guidance for the narrator. Never mention, quote, or explain it.');
   lines.push(`${input.clockMayLag ? 'Story time at the last check-up' : 'Story time'}: ${describeClock(input.clock)}.${input.clockMayLag ? ' Time may have moved on since; the chat decides what time it is now.' : ''}${input.skipHours ? ` About ${describeDuration(input.skipHours)} have passed since the last message: open with that gap and what changed during it.` : ''}`);
+  if (input.layout) lines.push(input.layout);
   const gentle = notebook.arc.shape === 'kishotenketsu' && notebook.rhythm === 'rising';
   const guided = !!input.guided, intimate = !!input.intimate;
   // Guidance on a swipe is the player's say on this very reply. Pace, stage and plans could
@@ -189,6 +190,8 @@ export function buildNote(input: NoteInput): string {
   }
   if (present.length) {
     lines.push('People here and what drives them (give each one their own voice; nobody should sound like anyone else; a sample line shows how someone sounds, never repeat it word for word):');
+    // A crowded scene: people have their own lives and leave, rather than everyone standing around for the whole scene.
+    if (!guided && present.length > 4) lines.push('A lot of people are here. They have their own schedules and reasons: when it fits, let one or two drift off, get called away, or leave on business of their own, rather than everyone staying for the whole scene.');
     for (const person of present.slice(0, 4)) lines.push(`- ${person.name}${person.role ? ` (${person.role})` : ''}: wants ${end(person.wants || 'nothing stated yet')}${person.doing ? ` Currently: ${end(person.doing)}` : ''}${person.hint ? ` Play them as: ${end(person.hint)}` : ''}${person.voice ? ` Voice: ${end(person.voice)}` : ''}${person.depth ? ` More than their role: ${end(person.depth)}` : ''}`);
   }
   // A possible beat, matched to the pace. Quiet keeps only gentle ones.

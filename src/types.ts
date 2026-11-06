@@ -6,7 +6,7 @@ import type { FieldCheck, Recipe } from './tracker';
 import type { Glance, SkipOffer } from './skip';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.23.0';
+export const VERSION = '0.24.0';
 export const MAX_VERSIONS = 16;
 
 /** One saved state of the notebook and the chat history it describes. */
@@ -27,6 +27,8 @@ export interface ChatState {
   seen: Record<string, number>;
   /** The reply someone new last turned up in a scene. */
   newFaceAt: number;
+  /** The building the story was last in, by id, so a place that names only a room is found in it. */
+  building: string;
   /** A check-up has already looked for a tracker that appeared after the notebook was written. */
   trackerTried: boolean;
   /** The last quick check: when it ran and whether it worked. */

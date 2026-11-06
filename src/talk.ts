@@ -83,7 +83,7 @@ export function applyChanges(base: Notebook, changes: unknown): Record<string, u
   const c = changes as Record<string, unknown>;
   const out: Record<string, unknown> = structuredClone(base) as unknown as Record<string, unknown>;
   let touched = false;
-  for (const key of ['people', 'threads', 'beats', 'seeds', 'covers'] as const) {
+  for (const key of ['people', 'threads', 'beats', 'seeds', 'covers', 'buildings'] as const) {
     const items = c[key];
     if (!Array.isArray(items) || !items.length) continue;
     const list = [...((out[key] ?? []) as Array<{ id: string }>)];

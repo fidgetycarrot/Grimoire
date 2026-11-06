@@ -397,6 +397,15 @@ export function setup(ctx: SpindleFrontendContext) {
     const beats = section('Possible moments'), ul = el('ul');
     for (const b of notebook.beats) { const li = el('li', 'gm-small', b.text); if (b.status !== 'possible') { const c = el('span', 'gm-chip', b.status); if (b.status === 'happened') c.dataset.tone = 'done'; li.append(c); } ul.append(li); }
     beats.append(ul);
+    if (notebook.buildings?.length) {
+      const s = section('Where things are'), list = el('ul');
+      for (const b of notebook.buildings) {
+        const li = el('li', 'gm-small', b.name);
+        for (const f of b.floors) li.append(el('div', 'gm-meta', `${f.name}: ${f.rooms.map(r => r.name).join(', ')}`));
+        list.append(li);
+      }
+      s.append(list);
+    }
     if (notebook.covers?.length) {
       const s = section('Lies and cover stories'), list = el('ul');
       const name = (id: string) => id === 'player' ? 'You' : notebook.people.find(p => p.id === id)?.name ?? id;

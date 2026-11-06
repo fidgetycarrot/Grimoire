@@ -60,7 +60,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.23.0";
+var VERSION = "0.24.0";
 var CHAPTER_WORKING = "Starting a new chapter";
 var CHAPTER_DONE = "New chapter ready";
 
@@ -747,6 +747,16 @@ function setup(ctx) {
       ul.append(li);
     }
     beats.append(ul);
+    if (notebook.buildings?.length) {
+      const s = section("Where things are"), list = el("ul");
+      for (const b of notebook.buildings) {
+        const li = el("li", "gm-small", b.name);
+        for (const f of b.floors)
+          li.append(el("div", "gm-meta", `${f.name}: ${f.rooms.map((r) => r.name).join(", ")}`));
+        list.append(li);
+      }
+      s.append(list);
+    }
     if (notebook.covers?.length) {
       const s = section("Lies and cover stories"), list = el("ul");
       const name = (id) => id === "player" ? "You" : notebook.people.find((p) => p.id === id)?.name ?? id;

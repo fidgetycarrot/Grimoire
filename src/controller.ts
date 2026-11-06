@@ -5,6 +5,7 @@ import { splitOoc } from './ooc';
 import { askJson, askModel, ModelError, type Ask } from './model';
 import { buildNote, liveClock, paceLine, presentPeople, type ClockSources } from './note';
 import { awayPeople, castProblems, noteSeen } from './cast';
+import { layoutLine, whereabouts } from './layout';
 import { dueThreads, fillReplies, isNewArc, keepTimes, mergeRevision, NotebookError, partProgress, stamp, validateNotebook, waitsFor, withoutTimes, type Moment, type Notebook, type Pace, type Preferences } from './notebook';
 import { checkupMessages, creationMessages, digestMessages, talkMessages, type Material } from './prompts';
 import { applyChanges, describeChanges, openExchange } from './talk';
@@ -194,7 +195,7 @@ export class NotebookController {
       return {
         version: 1, chatId, enabled: saved.enabled === true, pace: PACES.includes(saved.pace as Pace) ? saved.pace as Pace : 'auto', preferences: validPreferences(saved.preferences),
         versions, recipe: validateRecipe(saved.recipe).recipe, checks: Array.isArray(saved.checks) ? saved.checks as ChatState['checks'] : [],
-        skipHours: Number(saved.skipHours) > 0 ? Number(saved.skipHours) : 0, skipTurn: Number(saved.skipTurn) > 0 ? Number(saved.skipTurn) : 0, needsCheck: typeof saved.needsCheck === 'string' ? saved.needsCheck : '', queued: typeof saved.queued === 'string' ? saved.queued.slice(0, 200) : '', newFaceAt: Number.isInteger(saved.newFaceAt) ? saved.newFaceAt as number : 0, seen: Object.fromEntries(Object.entries(record(saved.seen)).filter(([k, v]) => typeof k === 'string' && Number.isInteger(v)).slice(0, 200)) as Record<string, number>, trackerTried: saved.trackerTried === true, skipDismissedAt: Number(saved.skipDismissedAt) > 0 ? Number(saved.skipDismissedAt) : 0,
+        skipHours: Number(saved.skipHours) > 0 ? Number(saved.skipHours) : 0, skipTurn: Number(saved.skipTurn) > 0 ? Number(saved.skipTurn) : 0, needsCheck: typeof saved.needsCheck === 'string' ? saved.needsCheck : '', queued: typeof saved.queued === 'string' ? saved.queued.slice(0, 200) : '', newFaceAt: Number.isInteger(saved.newFaceAt) ? saved.newFaceAt as number : 0, building: typeof saved.building === 'string' ? saved.building.slice(0, 80) : '', seen: Object.fromEntries(Object.entries(record(saved.seen)).filter(([k, v]) => typeof k === 'string' && Number.isInteger(v)).slice(0, 200)) as Record<string, number>, trackerTried: saved.trackerTried === true, skipDismissedAt: Number(saved.skipDismissedAt) > 0 ? Number(saved.skipDismissedAt) : 0,
         held: Array.isArray(saved.held) ? saved.held.filter((x): x is string => typeof x === 'string').slice(0, 12) : [], resync: Number.isInteger(saved.resync) ? Number(saved.resync) : null,
         talk: talkLines(saved.talk), notes: playerNotes(saved.notes), quickLog: quickLog(saved.quickLog),
         intimate: Array.isArray(saved.intimate) ? saved.intimate.filter((x): x is string => typeof x === 'string').slice(-300) : [], intimateNow: saved.intimateNow === true,
@@ -214,7 +215,7 @@ export class NotebookController {
     await this.api.userStorage.setJson(this.path(state.chatId), state, { userId: this.userId });
   }
   private blank(chatId: string): ChatState {
-    return { version: 1, chatId, enabled: false, pace: 'auto', preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: '' }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: '', queued: '', seen: {}, newFaceAt: 0, trackerTried: false, quick: null, skipDismissedAt: 0, held: [], resync: null, talk: [], notes: [], quickLog: [], paceSignals: [], replan: false, replannedAt: 0, intimate: [], intimateNow: false, job: null, updatedAt: 0 };
+    return { version: 1, chatId, enabled: false, pace: 'auto', preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: '' }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: '', queued: '', seen: {}, newFaceAt: 0, building: '', trackerTried: false, quick: null, skipDismissedAt: 0, held: [], resync: null, talk: [], notes: [], quickLog: [], paceSignals: [], replan: false, replannedAt: 0, intimate: [], intimateNow: false, job: null, updatedAt: 0 };
   }
   private async chatInfo(chatId: string): Promise<{ name: string; supported: boolean; reason: string; characterId: string }> {
     const chat = await this.api.chats.get(chatId, this.userId);
@@ -942,7 +943,8 @@ export class NotebookController {
       const settings = await this.settings();
       const intimate = state.intimateNow && settings.intimate === 'protect' && live.turns.at(-1)?.role === 'user';
       const away = awayPeople(live.version.notebook, state.seen, this.presentNow(live), live.moment).map(a => a.person);
-      return buildNote({ intimate, away, size: state.preferences.size, sinceNewFace: (live.moment.reply ?? 0) - state.newFaceAt, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map(n => n.text) });
+      const at = whereabouts(live.version.notebook.buildings ?? [], live.values.location, state.building);
+      return buildNote({ intimate, away, layout: at ? layoutLine(at) : undefined, size: state.preferences.size, sinceNewFace: (live.moment.reply ?? 0) - state.newFaceAt, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map(n => n.text) });
     });
   }
   async macro(name: 'clock' | 'pace', chatId: string | undefined): Promise<string> {
@@ -1027,6 +1029,8 @@ export class NotebookController {
     // Someone in the scene for the first time is a new face.
     if (here.some(p => state.seen[p.id] === undefined) && Object.keys(state.seen).length) state.newFaceAt = reply;
     state.seen = noteSeen(state.seen, live.version.notebook, here, reply);
+    const at = whereabouts(live.version.notebook.buildings ?? [], live.values.location, state.building);
+    if (at) state.building = at.building.id;
     if (soft && (!state.queued || SOFT_RANK.indexOf(soft) < SOFT_RANK.indexOf(state.queued))) state.queued = soft;
     // Going back (deleting, editing, or swiping a reply) picks the version from before it, which already fits the chat.
     // A check-up is only needed right away when no saved version fits at all.

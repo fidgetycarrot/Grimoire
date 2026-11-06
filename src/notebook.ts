@@ -66,16 +66,24 @@ export interface Cover {
   said: string; /** What it hides. */ hides: string;
   /** strained: someone has started to doubt it. exposed: it came apart, and can't be put back. */ status: 'holding' | 'strained' | 'exposed';
 }
+/**
+ * Where things are in a building the story spends time in: its floors, their rooms, and what is next to what.
+ * Plain words, no coordinates: enough that a kitchen doesn't turn up next to an upstairs bedroom.
+ */
+export interface Room { name: string; /** Other names the chat uses for it. */ aliases: string[]; /** Rooms beside it or reached straight from it. */ near: string[] }
+export interface Floor { name: string; rooms: Room[] }
+export interface Building { id: string; name: string; aliases: string[]; floors: Floor[] }
 export interface Notebook {
   version: 1; story: Story; arc: Arc; people: Person[]; threads: Thread[]; beats: Beat[]; seeds: Seed[];
   covers: Cover[];
+  buildings: Building[];
   events: string[]; clock: StoryClock; rhythm: Rhythm; summary: string;
 }
 export type ShapeChoice = Shape | 'auto';
 /** How big the story's world gets: close keeps it to a few places and people; wide keeps adding both; auto lets the card decide. */
 export type StorySize = 'auto' | 'close' | 'wide';
 export interface Preferences { tone: 'light' | 'balanced' | 'dark'; twist: boolean; /** The shape the story starts with; auto lets the model choose. */ shape: ShapeChoice; /** Keep that shape for every part of the story. */ lockShape: boolean; size: StorySize }
-export const LIMITS = Object.freeze({ sheets: 6, sheet: 2000, own: 3000, people: 24, threads: 12, steps: 6, beats: 16, seeds: 12, events: 40, truths: 12, covers: 10, text: 600, short: 160 });
+export const LIMITS = Object.freeze({ sheets: 6, sheet: 2000, own: 3000, people: 24, threads: 12, steps: 6, beats: 16, seeds: 12, events: 40, truths: 12, covers: 10, buildings: 8, floors: 6, rooms: 14, text: 600, short: 160 });
 
 const ID = /^[a-z0-9][a-z0-9-]{0,40}$/;
 const count = (v: unknown) => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 10_000_000 ? v : undefined;
@@ -210,9 +218,17 @@ export function validateNotebook(value: unknown): Notebook {
     return { id: id(c.id, `${path}.id`), by, told: [...new Set(list(c.told, `${path}.told`, 8).filter((x): x is string => typeof x === 'string' && personIds.has(x)))],
       said: text(c.said, `${path}.said`, LIMITS.short, false), hides: text(c.hides, `${path}.hides`, LIMITS.short), status: choice(c.status, ['holding', 'strained', 'exposed'] as const, `${path}.status`, 'holding') };
   }), 'covers');
+  const names = (v: unknown, path: string, max: number) => [...new Set(list(v ?? [], path, max).filter((x): x is string => typeof x === 'string').map(x => x.replace(/\s+/g, ' ').trim().slice(0, 60)).filter(Boolean))];
+  const buildings = unique((input.buildings === undefined ? [] : list(input.buildings, 'buildings', LIMITS.buildings)).map((item, i): Building => {
+    const b = record(item), path = `buildings[${i}]`;
+    return { id: id(b.id, `${path}.id`), name: text(b.name, `${path}.name`, 80, false), aliases: names(b.aliases, `${path}.aliases`, 6),
+      floors: list(b.floors, `${path}.floors`, LIMITS.floors).map((f, j) => { const fl = record(f), fp = `${path}.floors[${j}]`;
+        return { name: text(fl.name, `${fp}.name`, 40, false), rooms: list(fl.rooms, `${fp}.rooms`, LIMITS.rooms).map((r, k) => { const rm = record(r), rp = `${fp}.rooms[${k}]`;
+          return { name: text(rm.name, `${rp}.name`, 60, false), aliases: names(rm.aliases, `${rp}.aliases`, 6), near: names(rm.near, `${rp}.near`, 6) }; }) }; }) };
+  }), 'buildings');
   return {
     version: 1,
-    covers,
+    covers, buildings,
     arc: { shape, stage: stage as string, turn: text(arcInput.turn, 'arc.turn'), main: typeof arcInput.main === 'string' && threadIds.has(arcInput.main) ? arcInput.main : '',
       ...(count(arcInput.startReply) !== undefined ? { startReply: count(arcInput.startReply) } : {}), ...(arcInput.opening === 'story' || arcInput.opening === 'chapter' ? { opening: arcInput.opening } : {}) },
     seeds,

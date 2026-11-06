@@ -165,6 +165,26 @@ export function tidyNotebook(value: unknown, previous?: Notebook): unknown {
     if (!next) covers.push(structuredClone(old));
     else if (old.status === 'exposed') next.status = 'exposed';
   }
+  // Layouts: a building, its floors and rooms. Once written, a building and its rooms stay; new rooms can be added.
+  const str = (v: unknown, n: number) => plain(v, n);
+  const roomOf = (raw: unknown) => { const r = record(raw); return typeof raw === 'string' ? { name: plain(raw, 60), aliases: [] as string[], near: [] as string[] } : { name: str(r.name, 60), aliases: array(r.aliases).map(a => str(a, 60)).filter(Boolean).slice(0, 6), near: array(r.near ?? r.next ?? r.adjacent).map(a => str(a, 60)).filter(Boolean).slice(0, 6) }; };
+  let buildings = ids(array(input.buildings).map(raw => {
+    const b = record(raw), name = str(b.name, 80);
+    return { id: slug(b.id) || slug(name).slice(0, 30), name, aliases: array(b.aliases).map(a => str(a, 60)).filter(Boolean).slice(0, 6),
+      floors: array(b.floors).map(f => { const fl = record(f); return { name: str(fl.name ?? fl.level, 40), rooms: array(fl.rooms).map(roomOf).filter(r => r.name).slice(0, LIMITS.rooms) }; }).filter(f => f.name && f.rooms.length).slice(0, LIMITS.floors) };
+  }).filter(b => b.name && b.floors.length), 'building');
+  if (previous) for (const old of previous.buildings ?? []) {
+    const next = buildings.find(b => b.id === old.id);
+    if (!next) { buildings.push(structuredClone(old)); continue; }
+    for (const floor of old.floors) {
+      const nf = next.floors.find(f => f.name.toLowerCase() === floor.name.toLowerCase());
+      if (!nf) { next.floors.push(structuredClone(floor)); continue; }
+      for (const room of floor.rooms) if (!next.floors.some(f => f.rooms.some(r => r.name.toLowerCase() === room.name.toLowerCase()))) nf.rooms.push(structuredClone(room));
+      nf.rooms = nf.rooms.slice(0, LIMITS.rooms);
+    }
+    next.floors = next.floors.slice(0, LIMITS.floors);
+  }
+  buildings = cap(buildings, LIMITS.buildings, b => previous?.buildings?.some(o => o.id === b.id) ? 1 : 0);
   covers = cap(covers, LIMITS.covers, c => (previous?.covers?.some(o => o.id === c.id) ? 4 : 0) + (c.status === 'exposed' ? 0 : 2));
 
   // The arc: a shape and a stage that belongs to it.
@@ -196,7 +216,7 @@ export function tidyNotebook(value: unknown, previous?: Notebook): unknown {
     version: 1,
     story: { question, stakes: plain(story.stakes), direction: plain(story.direction),
       hiddenTruth, twist: cameOut.some(r => r.text.toLowerCase() === plain(story.twist).toLowerCase()) ? '' : plain(story.twist), cameOut },
-    arc, people, threads, beats, seeds, covers, events, clock,
+    arc, people, threads, beats, seeds, covers, buildings, events, clock,
     rhythm: pick(input.rhythm, ['calm', 'rising', 'peak', 'aftermath', 'stalled'] as const, RHYTHM, 'calm'),
     summary: plain(input.summary, LIMITS.short),
   };

@@ -405,7 +405,7 @@ async function askJson(ask, messages, check, signal) {
 
 // src/notebook.ts
 var STAGES = { conflict: ["setup", "rising", "climax", "resolution"], kishotenketsu: ["ki", "sho", "ten", "ketsu"] };
-var LIMITS = Object.freeze({ sheets: 6, sheet: 2000, own: 3000, people: 24, threads: 12, steps: 6, beats: 16, seeds: 12, events: 40, truths: 12, covers: 10, text: 600, short: 160 });
+var LIMITS = Object.freeze({ sheets: 6, sheet: 2000, own: 3000, people: 24, threads: 12, steps: 6, beats: 16, seeds: 12, events: 40, truths: 12, covers: 10, buildings: 8, floors: 6, rooms: 14, text: 600, short: 160 });
 var ID = /^[a-z0-9][a-z0-9-]{0,40}$/;
 var count = (v) => typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 1e7 ? v : undefined;
 var moment = (now) => typeof now === "number" ? { hours: now } : now;
@@ -593,9 +593,26 @@ function validateNotebook(value) {
       status: choice(c.status, ["holding", "strained", "exposed"], `${path}.status`, "holding")
     };
   }), "covers");
+  const names = (v, path, max) => [...new Set(list(v ?? [], path, max).filter((x) => typeof x === "string").map((x) => x.replace(/\s+/g, " ").trim().slice(0, 60)).filter(Boolean))];
+  const buildings = unique((input.buildings === undefined ? [] : list(input.buildings, "buildings", LIMITS.buildings)).map((item, i) => {
+    const b = record2(item), path = `buildings[${i}]`;
+    return {
+      id: id(b.id, `${path}.id`),
+      name: text(b.name, `${path}.name`, 80, false),
+      aliases: names(b.aliases, `${path}.aliases`, 6),
+      floors: list(b.floors, `${path}.floors`, LIMITS.floors).map((f, j) => {
+        const fl = record2(f), fp = `${path}.floors[${j}]`;
+        return { name: text(fl.name, `${fp}.name`, 40, false), rooms: list(fl.rooms, `${fp}.rooms`, LIMITS.rooms).map((r, k) => {
+          const rm = record2(r), rp = `${fp}.rooms[${k}]`;
+          return { name: text(rm.name, `${rp}.name`, 60, false), aliases: names(rm.aliases, `${rp}.aliases`, 6), near: names(rm.near, `${rp}.near`, 6) };
+        }) };
+      })
+    };
+  }), "buildings");
   return {
     version: 1,
     covers,
+    buildings,
     arc: {
       shape,
       stage,
@@ -919,6 +936,8 @@ function buildNote(input) {
   const quietTime = pace === "quiet" || pace === "auto" && (notebook.rhythm === "aftermath" || notebook.rhythm === "peak");
   lines.push("Grimoire: private story guidance for the narrator. Never mention, quote, or explain it.");
   lines.push(`${input.clockMayLag ? "Story time at the last check-up" : "Story time"}: ${describeClock(input.clock)}.${input.clockMayLag ? " Time may have moved on since; the chat decides what time it is now." : ""}${input.skipHours ? ` About ${describeDuration(input.skipHours)} have passed since the last message: open with that gap and what changed during it.` : ""}`);
+  if (input.layout)
+    lines.push(input.layout);
   const gentle = notebook.arc.shape === "kishotenketsu" && notebook.rhythm === "rising";
   const guided = !!input.guided, intimate = !!input.intimate;
   if (guided)
@@ -992,6 +1011,8 @@ function buildNote(input) {
   }
   if (present.length) {
     lines.push("People here and what drives them (give each one their own voice; nobody should sound like anyone else; a sample line shows how someone sounds, never repeat it word for word):");
+    if (!guided && present.length > 4)
+      lines.push("A lot of people are here. They have their own schedules and reasons: when it fits, let one or two drift off, get called away, or leave on business of their own, rather than everyone staying for the whole scene.");
     for (const person of present.slice(0, 4))
       lines.push(`- ${person.name}${person.role ? ` (${person.role})` : ""}: wants ${end(person.wants || "nothing stated yet")}${person.doing ? ` Currently: ${end(person.doing)}` : ""}${person.hint ? ` Play them as: ${end(person.hint)}` : ""}${person.voice ? ` Voice: ${end(person.voice)}` : ""}${person.depth ? ` More than their role: ${end(person.depth)}` : ""}`);
   }
@@ -1080,6 +1101,53 @@ var awayAfter = (m) => Math.max(10, m.waits?.steady ?? 15);
 function awayPeople(notebook, seen, present, m) {
   const reply = m.reply ?? 0, after = awayAfter(m);
   return notebook.people.filter((p) => p.status === "active" && p.met && !present.includes(p) && seen[p.id] !== undefined && reply - seen[p.id] >= after).map((person) => ({ person, replies: reply - seen[person.id] })).sort((a, b) => b.replies - a.replies);
+}
+
+// src/layout.ts
+var GENERIC = new Set(["the", "a", "an", "of", "in", "on", "at", "to", "and", "house", "home", "residence", "building", "room", "floor", "level", "inside", "outside", "near", "by", "main"]);
+var words2 = (s) => s.toLowerCase().replace(/['\u2019]s\b/g, "").split(/[^\p{L}\p{N}]+/u).filter((w) => w && !["the", "a", "an", "of", "in", "on", "at", "to", "and"].includes(w));
+var within = (name, place) => {
+  const w = words2(name);
+  return w.length > 0 && w.every((x) => place.has(x));
+};
+var names = (b, place) => [b.name, ...b.aliases].some((n) => within(n, place) || words2(n).some((w) => !GENERIC.has(w) && w.length > 2 && place.has(w)));
+function roomIn(b, place) {
+  let best = null;
+  for (const floor of b.floors)
+    for (const room of floor.rooms)
+      for (const n of [room.name, ...room.aliases]) {
+        if (!within(n, place))
+          continue;
+        const size = words2(n).length;
+        if (!best || size > best.size)
+          best = { floor, room, size };
+      }
+  return best;
+}
+function whereabouts(buildings, location, last) {
+  if (!location || !buildings.length)
+    return null;
+  const place = new Set(words2(location));
+  const named = buildings.filter((b) => names(b, place));
+  const order = [...named.length ? named : buildings].sort((a, b) => (b.id === last ? 1 : 0) - (a.id === last ? 1 : 0));
+  for (const b of order) {
+    const r = roomIn(b, place);
+    if (r)
+      return { building: b, floor: r.floor, room: r.room };
+  }
+  return named[0] ? { building: named[0] } : null;
+}
+function layoutLine(at, room = 700) {
+  const { building, floor, room: here } = at;
+  const lead = here && floor ? `The player is in the ${here.name.toLowerCase()} (${floor.name.toLowerCase()})${here.near.length ? `, next to ${here.near.join(", ")}` : ""}.` : "";
+  let text = `Where things are in ${building.name}, to keep the rooms consistent (background only; never list or describe the layout unless the scene calls for it): ${lead}`;
+  for (const f of building.floors) {
+    const part = ` ${f.name}: ${f.rooms.map((r) => r.name).join(", ")}.`;
+    if (text.length + part.length > room)
+      break;
+    text += part;
+  }
+  return text.replace(/:\s+ /, ": ").trim();
 }
 
 // src/tidy.ts
@@ -1291,6 +1359,44 @@ function tidyNotebook(value, previous) {
       else if (old.status === "exposed")
         next.status = "exposed";
     }
+  const str = (v, n) => plain(v, n);
+  const roomOf = (raw) => {
+    const r = record3(raw);
+    return typeof raw === "string" ? { name: plain(raw, 60), aliases: [], near: [] } : { name: str(r.name, 60), aliases: array(r.aliases).map((a) => str(a, 60)).filter(Boolean).slice(0, 6), near: array(r.near ?? r.next ?? r.adjacent).map((a) => str(a, 60)).filter(Boolean).slice(0, 6) };
+  };
+  let buildings = ids(array(input.buildings).map((raw) => {
+    const b = record3(raw), name = str(b.name, 80);
+    return {
+      id: slug(b.id) || slug(name).slice(0, 30),
+      name,
+      aliases: array(b.aliases).map((a) => str(a, 60)).filter(Boolean).slice(0, 6),
+      floors: array(b.floors).map((f) => {
+        const fl = record3(f);
+        return { name: str(fl.name ?? fl.level, 40), rooms: array(fl.rooms).map(roomOf).filter((r) => r.name).slice(0, LIMITS.rooms) };
+      }).filter((f) => f.name && f.rooms.length).slice(0, LIMITS.floors)
+    };
+  }).filter((b) => b.name && b.floors.length), "building");
+  if (previous)
+    for (const old of previous.buildings ?? []) {
+      const next = buildings.find((b) => b.id === old.id);
+      if (!next) {
+        buildings.push(structuredClone(old));
+        continue;
+      }
+      for (const floor of old.floors) {
+        const nf = next.floors.find((f) => f.name.toLowerCase() === floor.name.toLowerCase());
+        if (!nf) {
+          next.floors.push(structuredClone(floor));
+          continue;
+        }
+        for (const room of floor.rooms)
+          if (!next.floors.some((f) => f.rooms.some((r) => r.name.toLowerCase() === room.name.toLowerCase())))
+            nf.rooms.push(structuredClone(room));
+        nf.rooms = nf.rooms.slice(0, LIMITS.rooms);
+      }
+      next.floors = next.floors.slice(0, LIMITS.floors);
+    }
+  buildings = cap(buildings, LIMITS.buildings, (b) => previous?.buildings?.some((o) => o.id === b.id) ? 1 : 0);
   covers = cap(covers, LIMITS.covers, (c) => (previous?.covers?.some((o) => o.id === c.id) ? 4 : 0) + (c.status === "exposed" ? 0 : 2));
   const a = record3(input.arc), shapeWord = typeof a.shape === "string" ? a.shape.toLowerCase().replace(/[^a-z]/g, "") : "";
   const shape = shapeWord.startsWith("kish") ? "kishotenketsu" : shapeWord === "conflict" ? "conflict" : previous?.arc.shape ?? "conflict";
@@ -1332,6 +1438,7 @@ function tidyNotebook(value, previous) {
     beats,
     seeds,
     covers,
+    buildings,
     events,
     clock,
     rhythm: pick(input.rhythm, ["calm", "rising", "peak", "aftermath", "stalled"], RHYTHM2, "calm"),
@@ -1659,6 +1766,7 @@ var SHAPE = `{
  "seeds": [{"id": "green-wax", "detail": "an ordinary-looking detail the narrator can mention in passing", "payoff": "what it turns out to mean later", "pays": "the thread id, beat id, or turn it pays into", "status": "waiting|planted|paid|echo|dropped"}],
  "people": [{"id": "cole", "name": "Cole", "aliases": [], "role": "short role", "wants": "what they want", "doing": "what they are doing about it right now, on or off screen", "hint": "a narrator-safe note on how to play them, with no secrets", "voice": "how they talk: word choice, sentence length and rhythm, habits and tics, what they never say, and one short sample line that shows the sound (an example, not a catchphrase); no secrets", "depth": "what keeps them from being a stock type: a contradiction (a want that pulls against a fear or a habit), one specific detail that is not the obvious one for their role, and a tie to the world; no secrets", "sheet": "only for the few who matter most: a fuller character sheet, like a short character card (personality, history, habits, relationships, how they treat the player character, what they are like when pushed); no appearance, no secrets; empty for everyone else", "met": false, "status": "active"}],
  "threads": [{"id": "stolen-ring", "title": "The stolen ring", "speed": "urgent|steady|slow", "why": "why it matters, including hidden causes", "hint": "why it matters, in narrator-safe words with no secrets", "people": ["cole"], "status": "open", "closedReason": "", "outcome": "once closed: won|lost|faded (how it ended for the player)", "scar": "once lost: how it still shows, in narrator-safe words", "ifFollowed": "what following it leads to", "ifIgnored": "what happens if it is left alone", "steps": [{"id": "owner-notices", "text": "what happens", "sign": "how the player could notice it", "afterHours": 24, "status": "waiting"}]}],
+ "buildings": [{"id": "vance-house", "name": "the Vance house", "aliases": ["Vance Residence", "home"], "floors": [{"name": "Upstairs", "rooms": [{"name": "Master bedroom", "aliases": [], "near": ["Hall bathroom", "Landing"]}]}, {"name": "Downstairs", "rooms": [{"name": "Kitchen", "aliases": ["breakfast nook"], "near": ["Living room", "Patio door"]}]}]}],
  "covers": [{"id": "upset-stomach", "by": "player, or the id of the person who told it", "told": ["ids of the people who were told it"], "said": "the lie as it was told", "hides": "what it covers up", "status": "holding|strained|exposed"}],
  "beats": [{"id": "ring-recognized", "text": "a moment the story could reach", "purpose": "what it sets up or pays off", "conditions": "what must be true first", "thread": "stolen-ring", "intensity": "low|high", "status": "possible"}],
  "events": ["important things that already happened in the chat"],
@@ -1678,6 +1786,7 @@ var CRAFT = [
   '3d. Build each important person before naming them, and let the job be a job, not a personality: a dominant trait and a counter-trait that pulls against it; how they are with others (they withdraw, engage, watch, or perform); one thing that reliably irritates them; three hobbies (one they do alone, one they used to do, one they would like to try), specific rather than interesting; a backstory in two or three sentences with one thing they are proud of and one regret; and one small, real thing they never tell anyone, which is texture, not plot. Put these in their sheet when they have one, the most telling ones in "depth" otherwise. Name them last, from the setting and their background: think of five names that fit and use the fifth, since the first that comes to mind is the one every story uses. Never use the names AI stories lean on (Elara, Lyra, Seraphina, Lily, Aria, Kael, Marcus, Silas, Elias, Thorne, Vex, Zara, Kira, Finn, Jax); pick names that fit the place.',
   "3e. People hold their ground. Pleading, charm, tears, flirting, or a good speech earn no automatic yes; closeness does not make anyone more generous, patient, or agreeable, and affection never turns anyone into a pushover. Everyone keeps their pride, vices, and own priorities. Most people are hiding or shading something at any moment; honesty is earned. Write people's wants and plans so they can say no.",
   '3f. Lies need upkeep. When the player character or anyone else tells a lie that matters (an excuse, a cover story, a false name, a hidden affair), record it in "covers": who told it ("player", or their id), who was told, what was said, and what it hides. Plan how it comes back, spaced out like everything else: someone asks a follow-up, a detail stops adding up, the lie needs another lie to hold. Mark it "strained" once someone starts to doubt it; it may come apart ("exposed") at a well-paced moment, never all at once, and an exposed lie stays exposed and has consequences. A lie someone else told is a secret: keep it out of hints. Small talk and white lies that nobody will remember do not count.',
+  '3g. Keep places straight. For each building the story spends time in (a home, a workplace, a dorm, a ship), record its layout in "buildings": its floors, the rooms on each, and which rooms are beside each other, plain words and no measurements. Base it on the card and the chat, keep it ordinary and plausible for that kind of place (in a two-story house the bedrooms are usually upstairs and the kitchen downstairs), and list in "aliases" the names the chat and its tracker use for the building and its rooms. Once written, a layout changes only when the story changes the building; add rooms as they come up. Only buildings the story actually uses.',
   "4. Plan a supporting cast beyond the card's character so the world is not just the main character; how large depends on the story size below. They have their own lives and are met when they fit.",
   "5. Threads are open problems or opportunities, one problem each: an unrelated subplot is its own thread. Each has a speed (urgent: minutes to hours; steady: a day to several days; slow: a week or more) and two to five steps toward its consequence. Most steps are signs the player could notice; only the last is the consequence itself. afterHours is story time after the previous step (or the thread's start) before the step becomes due.",
   "5b. The story is open-ended: plan its first arc (the story question and two to four threads); later check-ups open new arcs as these resolve. Pacing is the shape of the arc, not just the next scene. Stagger the threads so they come to a head at different times, with room between them. The main storyline starts now and builds across the part; side storylines begin with small signs and build. Mix speeds: only one storyline may be urgent at a time (urgent means something bad happens within hours if nobody acts: a fire, a deadline, someone hunting you; feelings and relationships are almost never urgent), and at least one slow one. A later emergency can be prepared with a breadcrumb or two, never started early. Keep story time realistic: Grimoire also moves a thread on after a number of replies, so never squeeze story time to keep things moving. If the card fixes an event at a certain time (a show tonight, a deadline), use it, but let only the threads that truly depend on it peak there.",
@@ -1738,7 +1847,8 @@ ${LORE(input.lore) ? `- ${LORE(input.lore)}` : ""}${MEMORY(input.memory) ? `- ${
 - Problems: a problem the player raised, or one that came up in the chat, becomes a storyline with its own steps unless it truly ended. If the chat solved a problem too easily (in a reply or two, at no real cost, through money, luck, or someone fixing it for the player), keep what happened, but it is not the end: give it a catch, a cost, a delay, or someone it angers, and make that a storyline. Problems are what move the story; do not let them evaporate.
 - ${WORLD(input.preferences.size)}${input.preferences.size !== "close" && input.away.length ? ' "away" lists people the player has met who have not been seen for a while: give one or two of them a reason to come back soon, through what they want.' : ""}
 ${input.preferences.size !== "close" ? `- Where the story goes: "places" lists where recent scenes took place. If the story has spent a long stretch in the same place or the same few rooms, let one storyline's next step give the player a reason to go somewhere else. It should grow out of how these people live and what they want: a shift at work, a class, an errand, an appointment or event people have already mentioned, a favor someone asks, trouble that needs them elsewhere. Give it a place and a time, and let the step after it happen there. Set it up ahead where you can (a breadcrumb, a mention a day or two earlier) so it feels like part of their lives rather than something dropped in. Vary the kind of pull, never the same shape twice running and never on a schedule; some stretches stay home, and that is fine. It stays the player's choice: if they don't go, the world goes on without them (ifIgnored).
-` : ""}- Lies: record new lies that matter in "covers" (see 3f), and keep every one there. Mark one "strained" when someone in the chat starts to doubt it and "exposed" once it comes apart in the chat; an exposed lie never goes back. When a lie has held for a while, plan a step or beat where it needs upkeep.
+` : ""}- Places: if the story has spent time in a building that has no layout in "buildings" yet, add one (see 3g). Keep every layout, and add rooms the chat has shown; never move rooms the chat has already used.
+- Lies: record new lies that matter in "covers" (see 3f), and keep every one there. Mark one "strained" when someone in the chat starts to doubt it and "exposed" once it comes apart in the chat; an exposed lie never goes back. When a lie has held for a while, plan a step or beat where it needs upkeep.
 - Secrets that came out: once the chat shows the player has learned a hidden truth (or the twist), or it came out where they could see, move it word for word to story.cameOut and out of hiddenTruth (empty twist if it was the twist). From then on it is an established fact: rewrite people's "hint" and "doing", thread hints, and beats so nobody keeps acting as if it were still secret, and plan no more clues or reveal moments for it; build on it instead. A suspicion or a guess is not learning it. Never move anything back out of cameOut.
 - Sheets: keep each "sheet" true to how the person has actually been in the chat, and add what has changed (what they learned, how they now feel about the player character, what they did). Return a sheet only when it changes; leave it empty to keep it as it is. Someone who has become important gets a sheet; never more than six. Fill in "depth" for anyone who has none.
 - Voices: fill in "voice" for anyone who has none, and keep each one steady once set. Base it on who the person is (age, background, job, temperament, the card) and the moments where they sounded most like themselves, not on how the narrator has been writing everyone lately: narrators drift into one shared voice, and the notebook is how to pull them back out. If several people have started to sound alike, give each a clearly different voice.
@@ -1763,7 +1873,7 @@ function talkMessages(input) {
     { role: "system", content: `${SAFETY}
 You are Grimoire, the private planner behind an ongoing roleplay chat. The player co-writes this story with you: they play the scene in front of them, and you keep the whole story in mind. Right now they are talking to you directly, outside the story, to give notes or feedback.
 Return {"ask": false, "reply": "...", "changes": {...} or null, "note": "", "push": null, "pushKind": "", "skipHours": 0}.
-"changes" lists only what changes, so keep it small: {"people": [...], "threads": [...], "beats": [...], "seeds": [...], "covers": [...], "story": {...}, "arc": {...}}, each part optional. A person, thread, beat, or seed you include replaces the one with the same id, so write it in full, in the same shape as in the notebook; a new id adds one. "story" and "arc" fields you include replace those fields. Leave out everything that stays the same. The notebook's shape is: ${SHAPE}
+"changes" lists only what changes, so keep it small: {"people": [...], "threads": [...], "beats": [...], "seeds": [...], "covers": [...], "buildings": [...], "story": {...}, "arc": {...}}, each part optional. A person, thread, beat, or seed you include replaces the one with the same id, so write it in full, in the same shape as in the notebook; a new id adds one. "story" and "arc" fields you include replace those fields. Leave out everything that stays the same. The notebook's shape is: ${SHAPE}
 ${input.push ? `The player pressed a button: ${PUSH_ASKS[input.push]} Do it now: return "changes" and "push" (and "skipHours" for a new chapter). Do not ask anything; "reply" can be empty.
 ${PUSH_RULES}
 ` : ""}How to answer:
@@ -1886,7 +1996,7 @@ function applyChanges(base, changes) {
   const c = changes;
   const out = structuredClone(base);
   let touched = false;
-  for (const key of ["people", "threads", "beats", "seeds", "covers"]) {
+  for (const key of ["people", "threads", "beats", "seeds", "covers", "buildings"]) {
     const items = c[key];
     if (!Array.isArray(items) || !items.length)
       continue;
@@ -2691,7 +2801,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.23.0";
+var VERSION = "0.24.0";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -2907,6 +3017,7 @@ class NotebookController {
         needsCheck: typeof saved.needsCheck === "string" ? saved.needsCheck : "",
         queued: typeof saved.queued === "string" ? saved.queued.slice(0, 200) : "",
         newFaceAt: Number.isInteger(saved.newFaceAt) ? saved.newFaceAt : 0,
+        building: typeof saved.building === "string" ? saved.building.slice(0, 80) : "",
         seen: Object.fromEntries(Object.entries(record7(saved.seen)).filter(([k, v]) => typeof k === "string" && Number.isInteger(v)).slice(0, 200)),
         trackerTried: saved.trackerTried === true,
         skipDismissedAt: Number(saved.skipDismissedAt) > 0 ? Number(saved.skipDismissedAt) : 0,
@@ -2934,7 +3045,7 @@ class NotebookController {
     await this.api.userStorage.setJson(this.path(state.chatId), state, { userId: this.userId });
   }
   blank(chatId) {
-    return { version: 1, chatId, enabled: false, pace: "auto", preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: "" }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: "", queued: "", seen: {}, newFaceAt: 0, trackerTried: false, quick: null, skipDismissedAt: 0, held: [], resync: null, talk: [], notes: [], quickLog: [], paceSignals: [], replan: false, replannedAt: 0, intimate: [], intimateNow: false, job: null, updatedAt: 0 };
+    return { version: 1, chatId, enabled: false, pace: "auto", preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: "" }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: "", queued: "", seen: {}, newFaceAt: 0, building: "", trackerTried: false, quick: null, skipDismissedAt: 0, held: [], resync: null, talk: [], notes: [], quickLog: [], paceSignals: [], replan: false, replannedAt: 0, intimate: [], intimateNow: false, job: null, updatedAt: 0 };
   }
   async chatInfo(chatId) {
     const chat = await this.api.chats.get(chatId, this.userId);
@@ -3847,7 +3958,8 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
       const settings = await this.settings();
       const intimate = state.intimateNow && settings.intimate === "protect" && live.turns.at(-1)?.role === "user";
       const away = awayPeople(live.version.notebook, state.seen, this.presentNow(live), live.moment).map((a) => a.person);
-      return buildNote({ intimate, away, size: state.preferences.size, sinceNewFace: (live.moment.reply ?? 0) - state.newFaceAt, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map((n) => n.text) });
+      const at = whereabouts(live.version.notebook.buildings ?? [], live.values.location, state.building);
+      return buildNote({ intimate, away, layout: at ? layoutLine(at) : undefined, size: state.preferences.size, sinceNewFace: (live.moment.reply ?? 0) - state.newFaceAt, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map((n) => n.text) });
     });
   }
   async macro(name, chatId) {
@@ -3956,6 +4068,9 @@ ${recallNote(recall)}`;
     if (here.some((p) => state.seen[p.id] === undefined) && Object.keys(state.seen).length)
       state.newFaceAt = reply;
     state.seen = noteSeen(state.seen, live.version.notebook, here, reply);
+    const at = whereabouts(live.version.notebook.buildings ?? [], live.values.location, state.building);
+    if (at)
+      state.building = at.building.id;
     if (soft && (!state.queued || SOFT_RANK.indexOf(soft) < SOFT_RANK.indexOf(state.queued)))
       state.queued = soft;
     const unmatched = !live.matched;
