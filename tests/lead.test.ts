@@ -92,6 +92,13 @@ describe('the note leads with the main storyline', () => {
     expect(note(nb, 12)).not.toContain('bring it to them');
     expect(note(opened(), 12, { pace: 'quiet' })).not.toContain('A shout from the manor');
   });
+  test('but a big moment can\'t hold it forever: once it has waited a while, it comes in as the scene allows', () => {
+    const nb = opened(); nb.rhythm = 'peak';
+    const text = note(nb, 17, { now: { hours: 42, reply: 17, waits } });
+    expect(text).toContain('bring it in now, in this reply or the next, as the scene allows: it has waited long enough');
+    expect(text).toContain('bring it to them');
+    expect(note(nb, 17, { pace: 'quiet', now: { hours: 42, reply: 17, waits } })).not.toContain('A shout from the manor');
+  });
   test('it steps back for swipe guidance and intimate scenes', () => {
     expect(note(opened(), 12, { guided: true })).not.toContain('main storyline');
     expect(note(opened(), 12, { intimate: true })).not.toContain('A shout from the manor');

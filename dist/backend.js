@@ -898,6 +898,7 @@ var GROUND = "People hold their ground: pleading, charm, tears, flirting, or a g
 var PROBLEMS = "Problems take time. Nothing gets solved in the scene it comes up in: a solution costs something, takes more than one step, and can fail. Nobody produces the money, the answer, the rescue, or the perfect plan out of nowhere, and no one fixes the player's trouble for them. Let problems weigh on people and grow until they are dealt with through effort.";
 var OPENING = "The story is just starting: keep the main storyline in front and moving, and keep side matters small for now.";
 var BRING_AFTER = 2;
+var HOLD_LIMIT = 6;
 var PLANT_GAP = 4;
 function seedPlan(notebook, now) {
   const m = typeof now === "number" ? { hours: now } : now, reply = m.reply, gap = m.waits?.steady ?? 15;
@@ -956,8 +957,10 @@ function buildNote(input) {
   const due = quiet ? [] : dueThreads(notebook, now).filter((d) => !held.has(d.thread.id));
   const lead = due.find((d) => d.thread.id === main?.id && (pace !== "quiet" || d.thread.speed === "urgent"));
   if (lead) {
-    const late = !quietTime && overdue(notebook, lead.thread, now) >= BRING_AFTER;
-    const when = quietTime && lead.thread.speed !== "urgent" ? "as soon as this moment has settled" : "now, in this reply or the next";
+    const waited = overdue(notebook, lead.thread, now);
+    const holding = quietTime && lead.thread.speed !== "urgent" && !(pace === "auto" && waited >= HOLD_LIMIT);
+    const late = !holding && waited >= BRING_AFTER;
+    const when = holding ? "as soon as this moment has settled" : quietTime && lead.thread.speed !== "urgent" ? "now, in this reply or the next, as the scene allows: it has waited long enough" : "now, in this reply or the next";
     const tie = seeds.ready.find((s) => s.pays === lead.thread.id && !used.has(s.id));
     const tied = notebook.people.filter((p) => p.status === "active" && lead.thread.people.includes(p.id)).map((p) => p.name).slice(0, 3);
     lines.push("What the story does now:");
@@ -2684,7 +2687,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.22.4";
+var VERSION = "0.22.5";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };

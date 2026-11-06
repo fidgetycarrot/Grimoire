@@ -70,6 +70,8 @@ export const PROBLEMS = 'Problems take time. Nothing gets solved in the scene it
 const OPENING = 'The story is just starting: keep the main storyline in front and moving, and keep side matters small for now.';
 /** Replies a due main-storyline step may wait before the world brings it to the player. */
 export const BRING_AFTER = 2;
+/** Replies past its turn after which a big moment no longer holds the main storyline's next step back. */
+const HOLD_LIMIT = 6;
 /** Replies between planting one detail and the next, so breadcrumbs stay subtle. */
 export const PLANT_GAP = 4;
 
@@ -145,8 +147,13 @@ export function buildNote(input: NoteInput): string {
   // right after a big moment it waits for the moment to settle.
   const lead = due.find(d => d.thread.id === main?.id && (pace !== 'quiet' || d.thread.speed === 'urgent'));
   if (lead) {
-    const late = !quietTime && overdue(notebook, lead.thread, now) >= BRING_AFTER;
-    const when = quietTime && lead.thread.speed !== 'urgent' ? 'as soon as this moment has settled' : 'now, in this reply or the next';
+    // A big moment holds the main storyline back, but not forever: in a story that is one big moment after another
+    // (a romance, an action run, a raunchy card), the plot would never move. Once the step has waited a while past its
+    // turn, it comes in anyway. A quiet pace the player chose still holds it.
+    const waited = overdue(notebook, lead.thread, now);
+    const holding = quietTime && lead.thread.speed !== 'urgent' && !(pace === 'auto' && waited >= HOLD_LIMIT);
+    const late = !holding && waited >= BRING_AFTER;
+    const when = holding ? 'as soon as this moment has settled' : quietTime && lead.thread.speed !== 'urgent' ? 'now, in this reply or the next, as the scene allows: it has waited long enough' : 'now, in this reply or the next';
     const tie = seeds.ready.find(s => s.pays === lead.thread.id && !used.has(s.id));
     const tied = notebook.people.filter(p => p.status === 'active' && lead.thread.people.includes(p.id)).map(p => p.name).slice(0, 3);
     lines.push('What the story does now:');
