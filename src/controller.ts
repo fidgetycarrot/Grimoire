@@ -306,7 +306,7 @@ export class NotebookController {
         checks: live ? state.checks : [], needsCheck: state.needsCheck || (live && !live.matched ? 'The chat changed before the notebook was written.' : ''),
         job: state.job, updatedAt: state.updatedAt, repliesSinceCheck: live ? this.repliesSince(live) : 0, skipHours: state.skipHours, notebook, behind: !!live && live.index !== state.versions.length - 1, earlierParts, quick: state.quick, dueIds: live ? dueThreads(live.version.notebook, live.moment).map(d => d.thread.id) : [],
         glance: live ? glance(live.version.notebook, live.moment) : null, reworking: !!live && this.reworking(state, live),
-        talk: state.talk, notes: state.notes, quickLog: state.quickLog, canUndo: this.undoable(state) !== null, spent: !!notebook && !storyLeft(notebook), memory: state.enabled ? await this.memoryView(chatId).catch(() => null) : null,
+        talk: state.talk, notes: state.notes, quickLog: state.quickLog, canUndo: this.undoable(state) !== null, spent: !!notebook && !storyLeft(notebook), memory: state.enabled ? this.memoryView(chatId) : null,
         skipOffer: live && state.enabled && state.job?.status !== 'running' && !state.skipHours && !state.intimateNow && !this.reworking(state, live) ? skipOffer(live.version.notebook, live.moment, live.clock, state.skipDismissedAt) : null,
       };
     });
@@ -406,19 +406,28 @@ export class NotebookController {
   /** Counts for the panel, so you can see how well the memory is keeping up. Looked up at most once a minute. */
   private memoryCounts = new Map<string, { at: number; people: number; ties: number; summaries: number }>();
   private lastRecall = new Map<string, NonNullable<MemoryView['last']>>();
-  private async memoryView(chatId: string): Promise<MemoryView | null> {
+  /**
+   * What the Memory Cortex holds for this chat. Counting can be slow on a big chat, so the panel never waits for
+   * it: it shows the last counts and refreshes them in the background (at most once a minute).
+   */
+  private memoryRefreshing = new Set<string>();
+  private memoryView(chatId: string): MemoryView | null {
     if (!this.memoriesReady()) return null;
-    let counts = this.memoryCounts.get(chatId);
-    if (!counts || Date.now() - counts.at > 60_000) {
+    const counts = this.memoryCounts.get(chatId);
+    if ((!counts || Date.now() - counts.at > 60_000) && !this.memoryRefreshing.has(chatId)) {
+      this.memoryRefreshing.add(chatId);
       const m = this.api.memories, opts = this.userId ? { userId: this.userId } : undefined;
-      const [people, ties, summaries] = await Promise.all([
+      void Promise.all([
         m.entities.list(chatId, opts).then(x => x.length).catch(() => 0),
         m.relations.list(chatId, this.userId).then(x => x.length).catch(() => 0),
         m.consolidations.list(chatId, opts).then(x => x.length).catch(() => 0),
-      ]);
-      counts = { at: Date.now(), people, ties, summaries };
-      this.memoryCounts.set(chatId, counts);
+      ]).then(([people, ties, summaries]) => {
+        const first = !this.memoryCounts.has(chatId);
+        this.memoryCounts.set(chatId, { at: Date.now(), people, ties, summaries });
+        if (first) this.changed();
+      }).finally(() => this.memoryRefreshing.delete(chatId));
     }
+    if (!counts) return null;
     return { people: counts.people, ties: counts.ties, summaries: counts.summaries, last: this.lastRecall.get(chatId) ?? null };
   }
 
@@ -612,12 +621,15 @@ export class NotebookController {
       notebook: { ...base.notebook, clock: live.clock }, pace: state.pace, chat, trackerText: live.text, trackerValues: live.values, trackerChecks: live.state.checks, recipe: state.recipe,
       clockOwner: { day: live.sources.day, hour: live.sources.hour }, due: dueThreads(base.notebook, live.moment).map(d => ({ thread: d.thread.id, step: d.step.id })),
       skipHours: state.skipHours, reason, preferences: state.preferences, resync: state.resync !== null, held: state.held, notes: state.notes.map(n => n.text), part: partProgress(base.notebook, live.moment), replan: state.replan, replies: learning ? this.trackerSamples(live.turns, chatId).slice(0, 2).map(r => r.slice(0, 20_000)) : [],
-      lore: await this.loreFor(chatId, chat, base.notebook),
-      memory: await this.recallFor(chatId, chat, base.notebook),
+      lore: NO_LORE as Lore, memory: undefined as Recall | undefined,
       away: awayPeople(base.notebook, state.seen, this.presentNow(live), live.moment).slice(0, 6).map(a => `${a.person.name} (last seen ${a.replies} replies ago)`),
     };
     this.track((async () => {
       try {
+        // Lore and memories can take a while (searching a big lorebook by meaning, asking the Memory Cortex), so
+        // they are gathered here, outside the chat's queue: the panel and the next reply's note never wait on them.
+        input.lore = await this.loreFor(chatId, chat, base.notebook);
+        input.memory = await this.recallFor(chatId, chat, base.notebook);
         let round = 0;
         const result = await askJson(ask, checkupMessages(input), value => {
           round++;

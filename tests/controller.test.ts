@@ -1411,6 +1411,8 @@ describe('Lumiverse memory in the plan and the note', () => {
     expect(queries.at(-1).queryText).toContain('I ask Oswin about the manor.');
     const withBlock = await c.intercept([{ role: 'system', content: '<memories>Oswin was seen near the manor the night the ring went missing, and he lied about it.</memories>' }, { role: 'user', content: 'Hi' }], { chatId: 'chat-1', generationType: 'normal' }) as any;
     expect(withBlock.messages.at(-1).content).not.toContain('Lumiverse\'s memory of this story');
+    // Counts come in the background, so the panel never waits on the Memory Cortex.
+    await c.view('chat-1'); await new Promise(r => setTimeout(r, 5));
     const view = (await c.view('chat-1'))!;
     expect(view.memory).toMatchObject({ people: 3, ties: 1, summaries: 0, last: { to: 'preset', found: 1 } });
     // Off in settings: nothing added, and the panel says so.

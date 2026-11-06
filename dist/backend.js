@@ -2684,7 +2684,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.22.3";
+var VERSION = "0.22.4";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -3045,7 +3045,7 @@ class NotebookController {
         quickLog: state.quickLog,
         canUndo: this.undoable(state) !== null,
         spent: !!notebook && !storyLeft(notebook),
-        memory: state.enabled ? await this.memoryView(chatId).catch(() => null) : null,
+        memory: state.enabled ? this.memoryView(chatId) : null,
         skipOffer: live && state.enabled && state.job?.status !== "running" && !state.skipHours && !state.intimateNow && !this.reworking(state, live) ? skipOffer(live.version.notebook, live.moment, live.clock, state.skipDismissedAt) : null
       };
     });
@@ -3188,20 +3188,27 @@ class NotebookController {
   }
   memoryCounts = new Map;
   lastRecall = new Map;
-  async memoryView(chatId) {
+  memoryRefreshing = new Set;
+  memoryView(chatId) {
     if (!this.memoriesReady())
       return null;
-    let counts = this.memoryCounts.get(chatId);
-    if (!counts || Date.now() - counts.at > 60000) {
+    const counts = this.memoryCounts.get(chatId);
+    if ((!counts || Date.now() - counts.at > 60000) && !this.memoryRefreshing.has(chatId)) {
+      this.memoryRefreshing.add(chatId);
       const m = this.api.memories, opts = this.userId ? { userId: this.userId } : undefined;
-      const [people, ties, summaries] = await Promise.all([
+      Promise.all([
         m.entities.list(chatId, opts).then((x) => x.length).catch(() => 0),
         m.relations.list(chatId, this.userId).then((x) => x.length).catch(() => 0),
         m.consolidations.list(chatId, opts).then((x) => x.length).catch(() => 0)
-      ]);
-      counts = { at: Date.now(), people, ties, summaries };
-      this.memoryCounts.set(chatId, counts);
+      ]).then(([people, ties, summaries]) => {
+        const first = !this.memoryCounts.has(chatId);
+        this.memoryCounts.set(chatId, { at: Date.now(), people, ties, summaries });
+        if (first)
+          this.changed();
+      }).finally(() => this.memoryRefreshing.delete(chatId));
     }
+    if (!counts)
+      return null;
     return { people: counts.people, ties: counts.ties, summaries: counts.summaries, last: this.lastRecall.get(chatId) ?? null };
   }
   meaningIndex = null;
@@ -3453,12 +3460,14 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
       part: partProgress(base.notebook, live.moment),
       replan: state.replan,
       replies: learning ? this.trackerSamples(live.turns, chatId).slice(0, 2).map((r) => r.slice(0, 20000)) : [],
-      lore: await this.loreFor(chatId, chat, base.notebook),
-      memory: await this.recallFor(chatId, chat, base.notebook),
+      lore: NO_LORE,
+      memory: undefined,
       away: awayPeople(base.notebook, state.seen, this.presentNow(live), live.moment).slice(0, 6).map((a) => `${a.person.name} (last seen ${a.replies} replies ago)`)
     };
     this.track((async () => {
       try {
+        input.lore = await this.loreFor(chatId, chat, base.notebook);
+        input.memory = await this.recallFor(chatId, chat, base.notebook);
         let round = 0;
         const result = await askJson(ask, checkupMessages(input), (value) => {
           round++;
