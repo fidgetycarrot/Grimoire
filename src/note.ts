@@ -1,6 +1,6 @@
 import { describeClock, describeDuration, readDay, readTime, type StoryClock } from './clock';
 import { spaces } from './history';
-import { dueThreads, inOpening, overdue, type Moment, type Notebook, type Pace, type Person, type Seed } from './notebook';
+import { dueThreads, inOpening, overdue, type Moment, type Notebook, type Pace, type Person, type Seed, type StorySize } from './notebook';
 import type { FieldType } from './tracker';
 
 export interface ClockSources { day: 'tracker' | 'notebook'; hour: 'tracker' | 'notebook' | 'unknown'; exact: boolean }
@@ -72,6 +72,8 @@ const OPENING = 'The story is just starting: keep the main storyline in front an
 export const BRING_AFTER = 2;
 /** Replies past its turn after which a big moment no longer holds the main storyline's next step back. */
 const HOLD_LIMIT = 6;
+/** Replies without a new face after which a big moment no longer keeps newcomers and returning people out. */
+const NEW_FACE_GAP = 20;
 /** Replies between planting one detail and the next, so breadcrumbs stay subtle. */
 export const PLANT_GAP = 4;
 
@@ -96,7 +98,8 @@ export function seedPlan(notebook: Notebook, now: number | Moment): { plant: See
   return { plant, ready, echo };
 }
 
-export interface NoteInput { notebook: Notebook; pace: Pace; clock: StoryClock; now: number | Moment; /** Threads that no longer fit for now. */ held?: string[]; /** The story just changed direction; old plans are being reworked. */ reworking?: boolean; recent: string; trackerPresent?: string; skipHours?: number; /** True when the time comes from the last check-up, not from a tracker reading of the latest reply. */ clockMayLag?: boolean; /** The player swiped with guidance: the note steps back so it never argues with them. */ guided?: boolean; /** Standing wishes the player pinned. */ notes?: string[]; /** An intimate scene is under way: the story stays out until it ends. */ intimate?: boolean; /** People the player has met who haven't been around for a while, longest away first. */ away?: Person[] }
+export interface NoteInput { notebook: Notebook; pace: Pace; clock: StoryClock; now: number | Moment; /** Threads that no longer fit for now. */ held?: string[]; /** The story just changed direction; old plans are being reworked. */ reworking?: boolean; recent: string; trackerPresent?: string; skipHours?: number; /** True when the time comes from the last check-up, not from a tracker reading of the latest reply. */ clockMayLag?: boolean; /** The player swiped with guidance: the note steps back so it never argues with them. */ guided?: boolean; /** Standing wishes the player pinned. */ notes?: string[]; /** An intimate scene is under way: the story stays out until it ends. */ intimate?: boolean; /** People the player has met who haven't been around for a while, longest away first. */ away?: Person[];
+  /** Replies since someone new last turned up in a scene. */ sinceNewFace?: number; /** How big the world gets; a close story doesn't send the player anywhere. */ size?: StorySize }
 /**
  * The short private note added before a reply. Built by code from the
  * notebook; no model call. It carries reasons and narrator-safe hints, never
@@ -158,7 +161,10 @@ export function buildNote(input: NoteInput): string {
     const tied = notebook.people.filter(p => p.status === 'active' && lead.thread.people.includes(p.id)).map(p => p.name).slice(0, 3);
     lines.push('What the story does now:');
     lines.push(`- ${lead.thread.title}: ${lead.step.sign || lead.step.text} (bring it in ${when}). Why it matters: ${lead.thread.hint || lead.thread.why}${tie ? ` ${callback(tie)}` : ''}`);
-    if (late) lines.push(`- If this has not reached the player yet, bring it to them: someone tied to it seeks them out${tied.length ? ` (${tied.join(', ')})` : ''}, word reaches them, or it happens where they are. They still choose what to do.`);
+    // Bringing everything to where the player already is keeps a story in one room. Unless it is urgent or the story is
+    // kept close, the player is given a reason to go where it is happening instead.
+    const where = lead.thread.speed === 'urgent' || input.size === 'close' ? ', or it happens where they are' : ', with a reason to go where it is happening; it only comes to where they are if there is no other way';
+    if (late) lines.push(`- If this has not reached the player yet, bring it to them: someone tied to it seeks them out${tied.length ? ` (${tied.join(', ')})` : ''} or word reaches them${where}. They still choose what to do.`);
   }
   const side = due.filter(d => d !== lead && d.thread.id !== main?.id);
   // In the opening stretch, side storylines stay small: only urgent ones press in, and signs meant to come at once (a push).
@@ -202,10 +208,14 @@ export function buildNote(input: NoteInput): string {
   if (seeds.echo) lines.push(`Something that happened elsewhere can reach the player in passing, as news, a rumor, an overheard remark, or a message, only if it fits: ${end(seeds.echo.detail)}`);
   // Someone not met yet, so the world is not just the main cast.
   const unmet = notebook.people.filter(p => p.status === 'active' && !p.met && !present.includes(p));
-  const newcomer = !quiet && !quietTime && (notebook.rhythm === 'calm' || notebook.rhythm === 'stalled' || pace === 'fast') ? unmet.find(p => main?.people.includes(p.id)) ?? (opening ? undefined : unmet[0]) : undefined;
+  // New and returning faces come in calm stretches. A story that is one big moment after another never has one, so
+  // once nobody new has turned up for a long while, anything but the aftermath of a big moment will do.
+  const roomForFaces = !quiet && pace !== 'quiet' && ((!quietTime && (notebook.rhythm === 'calm' || notebook.rhythm === 'stalled' || pace === 'fast'))
+    || (pace === 'auto' && notebook.rhythm !== 'aftermath' && (input.sinceNewFace ?? 0) >= NEW_FACE_GAP));
+  const newcomer = roomForFaces ? unmet.find(p => main?.people.includes(p.id)) ?? (opening ? undefined : unmet[0]) : undefined;
   if (newcomer && lines.length < 16) lines.push(`Someone who could appear if it fits: ${newcomer.name}${newcomer.role ? `, ${newcomer.role}` : ''}. Wants ${newcomer.wants || 'something of their own'}.`);
   // Someone met a while ago comes back, so the cast recurs instead of being met once and forgotten.
-  const back = !newcomer && !quiet && !quietTime && (notebook.rhythm === 'calm' || notebook.rhythm === 'stalled' || pace === 'fast') ? input.away?.[0] : undefined;
+  const back = !newcomer && roomForFaces ? input.away?.[0] : undefined;
   if (back && lines.length < 16) lines.push(`Someone the player hasn't seen in a while could cross their path again, if it fits naturally (a run-in, a message, a visit), for reasons of their own: ${back.name}${back.role ? `, ${back.role}` : ''}. Wants ${back.wants || 'something of their own'}.`);
   // Lies the player character told someone in this scene: they remember what they were told.
   const told = guided ? [] : (notebook.covers ?? []).filter(c => c.by === 'player' && c.status !== 'exposed' && c.told.some(id => present.some(p => p.id === id))).slice(0, 2);

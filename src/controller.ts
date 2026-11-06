@@ -109,6 +109,17 @@ export function samePlace(a: string, b: string): boolean {
   return [...small].every(w => big.has(w));
 }
 
+/** Where recent scenes took place, oldest first, from the tracker's place at each update. */
+export function recentPlaces(versions: Array<{ location?: string; covered: unknown[] }>, now: string | undefined): string[] {
+  const out: string[] = [];
+  for (const place of [...versions.slice(-24).map(v => v.location), now]) {
+    if (!place) continue;
+    if (out.length && samePlace(out[out.length - 1], place)) continue;
+    out.push(place.slice(0, 80));
+  }
+  return out.slice(-10);
+}
+
 /** Check-ups the quick check asks for, other than urgent ones, wait until this many replies have passed since the last. */
 const CALM = 3;
 /** Strongest first. */
@@ -183,7 +194,7 @@ export class NotebookController {
       return {
         version: 1, chatId, enabled: saved.enabled === true, pace: PACES.includes(saved.pace as Pace) ? saved.pace as Pace : 'auto', preferences: validPreferences(saved.preferences),
         versions, recipe: validateRecipe(saved.recipe).recipe, checks: Array.isArray(saved.checks) ? saved.checks as ChatState['checks'] : [],
-        skipHours: Number(saved.skipHours) > 0 ? Number(saved.skipHours) : 0, skipTurn: Number(saved.skipTurn) > 0 ? Number(saved.skipTurn) : 0, needsCheck: typeof saved.needsCheck === 'string' ? saved.needsCheck : '', queued: typeof saved.queued === 'string' ? saved.queued.slice(0, 200) : '', seen: Object.fromEntries(Object.entries(record(saved.seen)).filter(([k, v]) => typeof k === 'string' && Number.isInteger(v)).slice(0, 200)) as Record<string, number>, trackerTried: saved.trackerTried === true, skipDismissedAt: Number(saved.skipDismissedAt) > 0 ? Number(saved.skipDismissedAt) : 0,
+        skipHours: Number(saved.skipHours) > 0 ? Number(saved.skipHours) : 0, skipTurn: Number(saved.skipTurn) > 0 ? Number(saved.skipTurn) : 0, needsCheck: typeof saved.needsCheck === 'string' ? saved.needsCheck : '', queued: typeof saved.queued === 'string' ? saved.queued.slice(0, 200) : '', newFaceAt: Number.isInteger(saved.newFaceAt) ? saved.newFaceAt as number : 0, seen: Object.fromEntries(Object.entries(record(saved.seen)).filter(([k, v]) => typeof k === 'string' && Number.isInteger(v)).slice(0, 200)) as Record<string, number>, trackerTried: saved.trackerTried === true, skipDismissedAt: Number(saved.skipDismissedAt) > 0 ? Number(saved.skipDismissedAt) : 0,
         held: Array.isArray(saved.held) ? saved.held.filter((x): x is string => typeof x === 'string').slice(0, 12) : [], resync: Number.isInteger(saved.resync) ? Number(saved.resync) : null,
         talk: talkLines(saved.talk), notes: playerNotes(saved.notes), quickLog: quickLog(saved.quickLog),
         intimate: Array.isArray(saved.intimate) ? saved.intimate.filter((x): x is string => typeof x === 'string').slice(-300) : [], intimateNow: saved.intimateNow === true,
@@ -203,7 +214,7 @@ export class NotebookController {
     await this.api.userStorage.setJson(this.path(state.chatId), state, { userId: this.userId });
   }
   private blank(chatId: string): ChatState {
-    return { version: 1, chatId, enabled: false, pace: 'auto', preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: '' }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: '', queued: '', seen: {}, trackerTried: false, quick: null, skipDismissedAt: 0, held: [], resync: null, talk: [], notes: [], quickLog: [], paceSignals: [], replan: false, replannedAt: 0, intimate: [], intimateNow: false, job: null, updatedAt: 0 };
+    return { version: 1, chatId, enabled: false, pace: 'auto', preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: '' }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: '', queued: '', seen: {}, newFaceAt: 0, trackerTried: false, quick: null, skipDismissedAt: 0, held: [], resync: null, talk: [], notes: [], quickLog: [], paceSignals: [], replan: false, replannedAt: 0, intimate: [], intimateNow: false, job: null, updatedAt: 0 };
   }
   private async chatInfo(chatId: string): Promise<{ name: string; supported: boolean; reason: string; characterId: string }> {
     const chat = await this.api.chats.get(chatId, this.userId);
@@ -623,6 +634,7 @@ export class NotebookController {
       skipHours: state.skipHours, reason, preferences: state.preferences, resync: state.resync !== null, held: state.held, notes: state.notes.map(n => n.text), part: partProgress(base.notebook, live.moment), replan: state.replan, replies: learning ? this.trackerSamples(live.turns, chatId).slice(0, 2).map(r => r.slice(0, 20_000)) : [],
       lore: NO_LORE as Lore, memory: undefined as Recall | undefined,
       away: awayPeople(base.notebook, state.seen, this.presentNow(live), live.moment).slice(0, 6).map(a => `${a.person.name} (last seen ${a.replies} replies ago)`),
+      places: recentPlaces(state.versions, live.values.location),
     };
     this.track((async () => {
       try {
@@ -930,7 +942,7 @@ export class NotebookController {
       const settings = await this.settings();
       const intimate = state.intimateNow && settings.intimate === 'protect' && live.turns.at(-1)?.role === 'user';
       const away = awayPeople(live.version.notebook, state.seen, this.presentNow(live), live.moment).map(a => a.person);
-      return buildNote({ intimate, away, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map(n => n.text) });
+      return buildNote({ intimate, away, size: state.preferences.size, sinceNewFace: (live.moment.reply ?? 0) - state.newFaceAt, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map(n => n.text) });
     });
   }
   async macro(name: 'clock' | 'pace', chatId: string | undefined): Promise<string> {
@@ -1011,7 +1023,10 @@ export class NotebookController {
     // A tracker that shows up once the narrator starts replying is looked for in code first, for free.
     if (this.learnTracker(state, live.turns)) live = (await this.live(state, await this.api.chat.getMessages(chatId)))!;
     const full = this.fullVersion(live), since = this.repliesSince(live);
-    state.seen = noteSeen(state.seen, live.version.notebook, this.presentNow(live), live.moment.reply ?? 0);
+    const here = this.presentNow(live), reply = live.moment.reply ?? 0;
+    // Someone in the scene for the first time is a new face.
+    if (here.some(p => state.seen[p.id] === undefined) && Object.keys(state.seen).length) state.newFaceAt = reply;
+    state.seen = noteSeen(state.seen, live.version.notebook, here, reply);
     if (soft && (!state.queued || SOFT_RANK.indexOf(soft) < SOFT_RANK.indexOf(state.queued))) state.queued = soft;
     // Going back (deleting, editing, or swiping a reply) picks the version from before it, which already fits the chat.
     // A check-up is only needed right away when no saved version fits at all.

@@ -6,7 +6,7 @@ import type { FieldCheck, Recipe } from './tracker';
 import type { Glance, SkipOffer } from './skip';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.22.5';
+export const VERSION = '0.23.0';
 export const MAX_VERSIONS = 16;
 
 /** One saved state of the notebook and the chat history it describes. */
@@ -25,6 +25,8 @@ export interface ChatState {
   queued: string;
   /** The reply each person was last in a scene, by person id, so people who have been away a while can come back. */
   seen: Record<string, number>;
+  /** The reply someone new last turned up in a scene. */
+  newFaceAt: number;
   /** A check-up has already looked for a tracker that appeared after the notebook was written. */
   trackerTried: boolean;
   /** The last quick check: when it ran and whether it worked. */

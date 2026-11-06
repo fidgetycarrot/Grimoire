@@ -73,3 +73,32 @@ describe('lies that need upkeep', () => {
     expect(note(out)).not.toContain('stomach');
   });
 });
+
+describe('getting out of the house', () => {
+  test('a storyline that waited too long gives the player a reason to go, unless it is urgent or the story is kept close', () => {
+    const nb = validateNotebook({ ...sampleNotebook(), arc: { shape: 'conflict', stage: 'setup', turn: '', main: 'stolen-ring' } });
+    nb.threads[0].steps[0].afterHours = 0; nb.threads[0].steps[0].now = true; nb.threads[0].startReply = 10;
+    const at = (extra = {}) => note(nb, { now: { hours: 10, reply: 14, waits }, ...extra });
+    expect(at()).toContain('or word reaches them, with a reason to go where it is happening');
+    expect(at({ size: 'close' })).toContain('or word reaches them, or it happens where they are');
+  });
+  test('a story of nonstop big moments still meets new people, after a long while without anyone new', () => {
+    const nb = validateNotebook(sampleNotebook()); nb.rhythm = 'peak';
+    expect(note(nb, { sinceNewFace: 5 })).not.toContain('Someone who could appear');
+    expect(note(nb, { sinceNewFace: 25 })).toContain('Someone who could appear if it fits: Cole');
+    expect(note(nb, { sinceNewFace: 25, pace: 'quiet' })).not.toContain('Someone who could appear');
+    nb.rhythm = 'aftermath';
+    expect(note(nb, { sinceNewFace: 25 })).not.toContain('Someone who could appear');
+  });
+  test('check-ups see where recent scenes took place, and are told to vary the pull', () => {
+    const { recentPlaces } = require('../src/controller');
+    const v = (location: string) => ({ location, covered: [] });
+    expect(recentPlaces([v('Kitchen, Vance Residence'), v('Vance Residence, kitchen'), v('Master Bedroom'), v('Kitchen, Vance Residence')], 'Backyard Patio'))
+      .toEqual(['Kitchen, Vance Residence', 'Master Bedroom', 'Kitchen, Vance Residence', 'Backyard Patio']);
+    const { checkupMessages } = require('../src/prompts');
+    const input: any = { notebook: validateNotebook(sampleNotebook()), pace: 'auto', chat: [], trackerText: '', trackerValues: {}, trackerChecks: [], recipe: { fields: [], note: '' }, clockOwner: { day: 'notebook', hour: 'notebook' }, due: [], skipHours: 0, reason: 'test', preferences: prefs(), resync: false, held: [], notes: [], part: { elapsed: 0, length: 60 }, replan: false, replies: [], lore: { rules: [], entries: [], index: [], more: 0 }, away: [], places: ['Kitchen'] };
+    const text = checkupMessages(input).map((m: any) => m.content).join('\n');
+    expect(text).toContain('never the same shape twice running and never on a schedule');
+    expect(checkupMessages({ ...input, preferences: prefs({ size: 'close' }) }).map((m: any) => m.content).join('\n')).not.toContain('Where the story goes');
+  });
+});

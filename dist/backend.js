@@ -899,6 +899,7 @@ var PROBLEMS = "Problems take time. Nothing gets solved in the scene it comes up
 var OPENING = "The story is just starting: keep the main storyline in front and moving, and keep side matters small for now.";
 var BRING_AFTER = 2;
 var HOLD_LIMIT = 6;
+var NEW_FACE_GAP = 20;
 var PLANT_GAP = 4;
 function seedPlan(notebook, now) {
   const m = typeof now === "number" ? { hours: now } : now, reply = m.reply, gap = m.waits?.steady ?? 15;
@@ -965,8 +966,9 @@ function buildNote(input) {
     const tied = notebook.people.filter((p) => p.status === "active" && lead.thread.people.includes(p.id)).map((p) => p.name).slice(0, 3);
     lines.push("What the story does now:");
     lines.push(`- ${lead.thread.title}: ${lead.step.sign || lead.step.text} (bring it in ${when}). Why it matters: ${lead.thread.hint || lead.thread.why}${tie ? ` ${callback(tie)}` : ""}`);
+    const where = lead.thread.speed === "urgent" || input.size === "close" ? ", or it happens where they are" : ", with a reason to go where it is happening; it only comes to where they are if there is no other way";
     if (late)
-      lines.push(`- If this has not reached the player yet, bring it to them: someone tied to it seeks them out${tied.length ? ` (${tied.join(", ")})` : ""}, word reaches them, or it happens where they are. They still choose what to do.`);
+      lines.push(`- If this has not reached the player yet, bring it to them: someone tied to it seeks them out${tied.length ? ` (${tied.join(", ")})` : ""} or word reaches them${where}. They still choose what to do.`);
   }
   const side = due.filter((d) => d !== lead && d.thread.id !== main?.id);
   const pressing = (d) => d.thread.speed === "urgent" || !quietTime && d.step.afterHours === 0;
@@ -1011,10 +1013,11 @@ function buildNote(input) {
   if (seeds.echo)
     lines.push(`Something that happened elsewhere can reach the player in passing, as news, a rumor, an overheard remark, or a message, only if it fits: ${end(seeds.echo.detail)}`);
   const unmet = notebook.people.filter((p) => p.status === "active" && !p.met && !present.includes(p));
-  const newcomer = !quiet && !quietTime && (notebook.rhythm === "calm" || notebook.rhythm === "stalled" || pace === "fast") ? unmet.find((p) => main?.people.includes(p.id)) ?? (opening ? undefined : unmet[0]) : undefined;
+  const roomForFaces = !quiet && pace !== "quiet" && (!quietTime && (notebook.rhythm === "calm" || notebook.rhythm === "stalled" || pace === "fast") || pace === "auto" && notebook.rhythm !== "aftermath" && (input.sinceNewFace ?? 0) >= NEW_FACE_GAP);
+  const newcomer = roomForFaces ? unmet.find((p) => main?.people.includes(p.id)) ?? (opening ? undefined : unmet[0]) : undefined;
   if (newcomer && lines.length < 16)
     lines.push(`Someone who could appear if it fits: ${newcomer.name}${newcomer.role ? `, ${newcomer.role}` : ""}. Wants ${newcomer.wants || "something of their own"}.`);
-  const back = !newcomer && !quiet && !quietTime && (notebook.rhythm === "calm" || notebook.rhythm === "stalled" || pace === "fast") ? input.away?.[0] : undefined;
+  const back = !newcomer && roomForFaces ? input.away?.[0] : undefined;
   if (back && lines.length < 16)
     lines.push(`Someone the player hasn't seen in a while could cross their path again, if it fits naturally (a run-in, a message, a visit), for reasons of their own: ${back.name}${back.role ? `, ${back.role}` : ""}. Wants ${back.wants || "something of their own"}.`);
   const told = guided ? [] : (notebook.covers ?? []).filter((c) => c.by === "player" && c.status !== "exposed" && c.told.some((id) => present.some((p) => p.id === id))).slice(0, 2);
@@ -1734,7 +1737,8 @@ ${LORE(input.lore) ? `- ${LORE(input.lore)}` : ""}${MEMORY(input.memory) ? `- ${
 - Endings: when you close a storyline, set "outcome": won (the player got what they were after), lost (it went against them), or faded (it was dropped or petered out). A lost storyline leaves a mark: write in "scar" how it still shows (someone won't forgive, a door is closed, money is gone, a reputation is hurt), and let it color what comes next; it can grow a worse follow-up later. What was lost is never quietly forgotten.
 - Problems: a problem the player raised, or one that came up in the chat, becomes a storyline with its own steps unless it truly ended. If the chat solved a problem too easily (in a reply or two, at no real cost, through money, luck, or someone fixing it for the player), keep what happened, but it is not the end: give it a catch, a cost, a delay, or someone it angers, and make that a storyline. Problems are what move the story; do not let them evaporate.
 - ${WORLD(input.preferences.size)}${input.preferences.size !== "close" && input.away.length ? ' "away" lists people the player has met who have not been seen for a while: give one or two of them a reason to come back soon, through what they want.' : ""}
-- Lies: record new lies that matter in "covers" (see 3f), and keep every one there. Mark one "strained" when someone in the chat starts to doubt it and "exposed" once it comes apart in the chat; an exposed lie never goes back. When a lie has held for a while, plan a step or beat where it needs upkeep.
+${input.preferences.size !== "close" ? `- Where the story goes: "places" lists where recent scenes took place. If the story has spent a long stretch in the same place or the same few rooms, let one storyline's next step give the player a reason to go somewhere else. It should grow out of how these people live and what they want: a shift at work, a class, an errand, an appointment or event people have already mentioned, a favor someone asks, trouble that needs them elsewhere. Give it a place and a time, and let the step after it happen there. Set it up ahead where you can (a breadcrumb, a mention a day or two earlier) so it feels like part of their lives rather than something dropped in. Vary the kind of pull, never the same shape twice running and never on a schedule; some stretches stay home, and that is fine. It stays the player's choice: if they don't go, the world goes on without them (ifIgnored).
+` : ""}- Lies: record new lies that matter in "covers" (see 3f), and keep every one there. Mark one "strained" when someone in the chat starts to doubt it and "exposed" once it comes apart in the chat; an exposed lie never goes back. When a lie has held for a while, plan a step or beat where it needs upkeep.
 - Secrets that came out: once the chat shows the player has learned a hidden truth (or the twist), or it came out where they could see, move it word for word to story.cameOut and out of hiddenTruth (empty twist if it was the twist). From then on it is an established fact: rewrite people's "hint" and "doing", thread hints, and beats so nobody keeps acting as if it were still secret, and plan no more clues or reveal moments for it; build on it instead. A suspicion or a guess is not learning it. Never move anything back out of cameOut.
 - Sheets: keep each "sheet" true to how the person has actually been in the chat, and add what has changed (what they learned, how they now feel about the player character, what they did). Return a sheet only when it changes; leave it empty to keep it as it is. Someone who has become important gets a sheet; never more than six. Fill in "depth" for anyone who has none.
 - Voices: fill in "voice" for anyone who has none, and keep each one steady once set. Base it on who the person is (age, background, job, temperament, the card) and the moments where they sounded most like themselves, not on how the narrator has been writing everyone lately: narrators drift into one shared voice, and the notebook is how to pull them back out. If several people have started to sound alike, give each a clearly different voice.
@@ -2687,7 +2691,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.22.5";
+var VERSION = "0.23.0";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -2795,6 +2799,17 @@ function samePlace(a, b) {
   const [small, big] = x.size <= y.size ? [x, y] : [y, x];
   return [...small].every((w) => big.has(w));
 }
+function recentPlaces(versions, now) {
+  const out = [];
+  for (const place of [...versions.slice(-24).map((v) => v.location), now]) {
+    if (!place)
+      continue;
+    if (out.length && samePlace(out[out.length - 1], place))
+      continue;
+    out.push(place.slice(0, 80));
+  }
+  return out.slice(-10);
+}
 var CALM = 3;
 var SOFT_RANK = ["A problem was solved too easily", "A new problem came up", "Something new happened in the story"];
 function storyRules(previous, revised, round, pace, prefs, checkup = false) {
@@ -2891,6 +2906,7 @@ class NotebookController {
         skipTurn: Number(saved.skipTurn) > 0 ? Number(saved.skipTurn) : 0,
         needsCheck: typeof saved.needsCheck === "string" ? saved.needsCheck : "",
         queued: typeof saved.queued === "string" ? saved.queued.slice(0, 200) : "",
+        newFaceAt: Number.isInteger(saved.newFaceAt) ? saved.newFaceAt : 0,
         seen: Object.fromEntries(Object.entries(record7(saved.seen)).filter(([k, v]) => typeof k === "string" && Number.isInteger(v)).slice(0, 200)),
         trackerTried: saved.trackerTried === true,
         skipDismissedAt: Number(saved.skipDismissedAt) > 0 ? Number(saved.skipDismissedAt) : 0,
@@ -2918,7 +2934,7 @@ class NotebookController {
     await this.api.userStorage.setJson(this.path(state.chatId), state, { userId: this.userId });
   }
   blank(chatId) {
-    return { version: 1, chatId, enabled: false, pace: "auto", preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: "" }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: "", queued: "", seen: {}, trackerTried: false, quick: null, skipDismissedAt: 0, held: [], resync: null, talk: [], notes: [], quickLog: [], paceSignals: [], replan: false, replannedAt: 0, intimate: [], intimateNow: false, job: null, updatedAt: 0 };
+    return { version: 1, chatId, enabled: false, pace: "auto", preferences: { ...DEFAULT_PREFERENCES }, versions: [], recipe: { fields: [], note: "" }, checks: [], skipHours: 0, skipTurn: 0, needsCheck: "", queued: "", seen: {}, newFaceAt: 0, trackerTried: false, quick: null, skipDismissedAt: 0, held: [], resync: null, talk: [], notes: [], quickLog: [], paceSignals: [], replan: false, replannedAt: 0, intimate: [], intimateNow: false, job: null, updatedAt: 0 };
   }
   async chatInfo(chatId) {
     const chat = await this.api.chats.get(chatId, this.userId);
@@ -3465,7 +3481,8 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
       replies: learning ? this.trackerSamples(live.turns, chatId).slice(0, 2).map((r) => r.slice(0, 20000)) : [],
       lore: NO_LORE,
       memory: undefined,
-      away: awayPeople(base.notebook, state.seen, this.presentNow(live), live.moment).slice(0, 6).map((a) => `${a.person.name} (last seen ${a.replies} replies ago)`)
+      away: awayPeople(base.notebook, state.seen, this.presentNow(live), live.moment).slice(0, 6).map((a) => `${a.person.name} (last seen ${a.replies} replies ago)`),
+      places: recentPlaces(state.versions, live.values.location)
     };
     this.track((async () => {
       try {
@@ -3830,7 +3847,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
       const settings = await this.settings();
       const intimate = state.intimateNow && settings.intimate === "protect" && live.turns.at(-1)?.role === "user";
       const away = awayPeople(live.version.notebook, state.seen, this.presentNow(live), live.moment).map((a) => a.person);
-      return buildNote({ intimate, away, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map((n) => n.text) });
+      return buildNote({ intimate, away, size: state.preferences.size, sinceNewFace: (live.moment.reply ?? 0) - state.newFaceAt, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map((n) => n.text) });
     });
   }
   async macro(name, chatId) {
@@ -3935,7 +3952,10 @@ ${recallNote(recall)}`;
     if (this.learnTracker(state, live.turns))
       live = await this.live(state, await this.api.chat.getMessages(chatId));
     const full = this.fullVersion(live), since = this.repliesSince(live);
-    state.seen = noteSeen(state.seen, live.version.notebook, this.presentNow(live), live.moment.reply ?? 0);
+    const here = this.presentNow(live), reply = live.moment.reply ?? 0;
+    if (here.some((p) => state.seen[p.id] === undefined) && Object.keys(state.seen).length)
+      state.newFaceAt = reply;
+    state.seen = noteSeen(state.seen, live.version.notebook, here, reply);
     if (soft && (!state.queued || SOFT_RANK.indexOf(soft) < SOFT_RANK.indexOf(state.queued)))
       state.queued = soft;
     const unmatched = !live.matched;
