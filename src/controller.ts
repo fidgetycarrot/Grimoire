@@ -22,6 +22,7 @@ import { glance, skipOffer } from './skip';
 import type { DecisionResult } from 'lumiverse-spindle-types';
 import { checkRecipe, guessRecipe, readField, readTracker, trackerText, validateRecipe, type FieldType, type Recipe } from './tracker';
 import { CHAPTER_DONE, CHAPTER_WORKING, DEFAULT_PREFERENCES, DEFAULT_SETTINGS, MAX_VERSIONS, QUICK_LOG, TALK_LIMITS, type QuickRecord, VERSION, type ChatState, type PlayerNote, type TalkLine, type ChatView, type MemoryView, type Job, type Settings, type Snapshot, type StoryListing, type Version } from './types';
+import { uuid } from './safe-id';
 
 const record = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
 const PACES: Pace[] = ['auto', 'quiet', 'fast'];
@@ -498,7 +499,7 @@ export class NotebookController {
     if (this.running.has(state.chatId)) throw new Error('The notebook is already being updated. Wait for it to finish.');
     const controller = new AbortController();
     this.running.set(state.chatId, controller);
-    const job: Job = { id: crypto.randomUUID(), kind, status: 'running', label, startedAt: Date.now() };
+    const job: Job = { id: uuid(), kind, status: 'running', label, startedAt: Date.now() };
     state.job = job;
     return { job, signal: controller.signal };
   }
@@ -575,7 +576,7 @@ export class NotebookController {
             const covered = await fingerprints(conversation(messages));
             current.versions = [{ notebook, covered, at: Date.now(), reason: 'Notebook written', ...(values.location ? { location: values.location } : {}) }];
             // Ideas you asked to keep become pinned notes, in the model's short form or your own words.
-            if (pin) { const texts = result.notes.length ? result.notes : [plain(ideas, TALK_LIMITS.note)]; current.notes = [...current.notes, ...texts.map(text => ({ id: crypto.randomUUID(), text, at: Date.now() }))].slice(-TALK_LIMITS.notes); }
+            if (pin) { const texts = result.notes.length ? result.notes : [plain(ideas, TALK_LIMITS.note)]; current.notes = [...current.notes, ...texts.map(text => ({ id: uuid(), text, at: Date.now() }))].slice(-TALK_LIMITS.notes); }
             current.checks = checks; current.enabled = true; current.needsCheck = covers(covered, prints) ? '' : 'The chat changed while the notebook was being written.';
             current.job = { ...job, status: 'complete', label: 'Notebook ready' };
             await this.save(current);
@@ -787,7 +788,7 @@ export class NotebookController {
               const fallback = open.filter(l => l.from === 'you' && l.keep).at(-1)?.text ?? '';
               const text = result.note || plain(fallback, TALK_LIMITS.note);
               if (text) {
-                const note: PlayerNote = { id: crypto.randomUUID(), text, at: Date.now() };
+                const note: PlayerNote = { id: uuid(), text, at: Date.now() };
                 current.notes = [...current.notes, note].slice(-TALK_LIMITS.notes);
                 line.noteId = note.id;
               }

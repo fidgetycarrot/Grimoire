@@ -156,9 +156,154 @@ function storyText(text) {
 [Out-of-character note from the player, not part of the story: ${split.asides.join(" ")}]`;
 }
 
+// src/safe-id.ts
+var HEX = "0123456789abcdef";
+function uuid() {
+  let out = "";
+  for (let i = 0;i < 36; i++) {
+    if (i === 8 || i === 13 || i === 18 || i === 23) {
+      out += "-";
+      continue;
+    }
+    if (i === 14) {
+      out += "4";
+      continue;
+    }
+    const r = Math.random() * 16 | 0;
+    out += HEX[i === 19 ? r & 3 | 8 : r];
+  }
+  return out;
+}
+var K = new Uint32Array([
+  1116352408,
+  1899447441,
+  3049323471,
+  3921009573,
+  961987163,
+  1508970993,
+  2453635748,
+  2870763221,
+  3624381080,
+  310598401,
+  607225278,
+  1426881987,
+  1925078388,
+  2162078206,
+  2614888103,
+  3248222580,
+  3835390401,
+  4022224774,
+  264347078,
+  604807628,
+  770255983,
+  1249150122,
+  1555081692,
+  1996064986,
+  2554220882,
+  2821834349,
+  2952996808,
+  3210313671,
+  3336571891,
+  3584528711,
+  113926993,
+  338241895,
+  666307205,
+  773529912,
+  1294757372,
+  1396182291,
+  1695183700,
+  1986661051,
+  2177026350,
+  2456956037,
+  2730485921,
+  2820302411,
+  3259730800,
+  3345764771,
+  3516065817,
+  3600352804,
+  4094571909,
+  275423344,
+  430227734,
+  506948616,
+  659060556,
+  883997877,
+  958139571,
+  1322822218,
+  1537002063,
+  1747873779,
+  1955562222,
+  2024104815,
+  2227730452,
+  2361852424,
+  2428436474,
+  2756734187,
+  3204031479,
+  3329325298
+]);
+function toBytes(data) {
+  if (typeof data === "string")
+    return new TextEncoder().encode(data);
+  if (data instanceof ArrayBuffer)
+    return new Uint8Array(data);
+  return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+}
+function sha256Bytes(data) {
+  const bytes = toBytes(data);
+  const bitLength = bytes.length * 8;
+  const padded = new Uint8Array(bytes.length + 9 + 63 >> 6 << 6);
+  padded.set(bytes);
+  padded[bytes.length] = 128;
+  const view = new DataView(padded.buffer);
+  view.setUint32(padded.length - 8, Math.floor(bitLength / 4294967296));
+  view.setUint32(padded.length - 4, bitLength >>> 0);
+  const h = new Uint32Array([1779033703, 3144134277, 1013904242, 2773480762, 1359893119, 2600822924, 528734635, 1541459225]);
+  const w = new Uint32Array(64);
+  for (let offset = 0;offset < padded.length; offset += 64) {
+    for (let i = 0;i < 16; i++)
+      w[i] = view.getUint32(offset + i * 4);
+    for (let i = 16;i < 64; i++) {
+      const a = w[i - 15], b = w[i - 2];
+      const s0 = (a >>> 7 | a << 25) ^ (a >>> 18 | a << 14) ^ a >>> 3;
+      const s1 = (b >>> 17 | b << 15) ^ (b >>> 19 | b << 13) ^ b >>> 10;
+      w[i] = w[i - 16] + s0 + w[i - 7] + s1 >>> 0;
+    }
+    let a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], k = h[7];
+    for (let i = 0;i < 64; i++) {
+      const S1 = (e >>> 6 | e << 26) ^ (e >>> 11 | e << 21) ^ (e >>> 25 | e << 7);
+      const t1 = k + S1 + (e & f ^ ~e & g) + K[i] + w[i] >>> 0;
+      const S0 = (a >>> 2 | a << 30) ^ (a >>> 13 | a << 19) ^ (a >>> 22 | a << 10);
+      const t2 = S0 + (a & b ^ a & c ^ b & c) >>> 0;
+      k = g;
+      g = f;
+      f = e;
+      e = d + t1 >>> 0;
+      d = c;
+      c = b;
+      b = a;
+      a = t1 + t2 >>> 0;
+    }
+    h[0] = h[0] + a >>> 0;
+    h[1] = h[1] + b >>> 0;
+    h[2] = h[2] + c >>> 0;
+    h[3] = h[3] + d >>> 0;
+    h[4] = h[4] + e >>> 0;
+    h[5] = h[5] + f >>> 0;
+    h[6] = h[6] + g >>> 0;
+    h[7] = h[7] + k >>> 0;
+  }
+  const out = new Uint8Array(32);
+  const outView = new DataView(out.buffer);
+  for (let i = 0;i < 8; i++)
+    outView.setUint32(i * 4, h[i]);
+  return out;
+}
+async function sha256Digest(data) {
+  return sha256Bytes(data).buffer;
+}
+
 // src/history.ts
 async function fingerprint(turn) {
-  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${turn.role}\x00${turn.content}`));
+  const bytes = await sha256Digest(new TextEncoder().encode(`${turn.role}\x00${turn.content}`));
   return Array.from(new Uint8Array(bytes).slice(0, 12), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 function conversation(messages, exclude, isStory) {
@@ -2801,7 +2946,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.24.1";
+var VERSION = "0.24.2";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -3422,7 +3567,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
       throw new Error("The notebook is already being updated. Wait for it to finish.");
     const controller = new AbortController;
     this.running.set(state.chatId, controller);
-    const job = { id: crypto.randomUUID(), kind, status: "running", label, startedAt: Date.now() };
+    const job = { id: uuid(), kind, status: "running", label, startedAt: Date.now() };
     state.job = job;
     return { job, signal: controller.signal };
   }
@@ -3509,7 +3654,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
             current.versions = [{ notebook, covered, at: Date.now(), reason: "Notebook written", ...values.location ? { location: values.location } : {} }];
             if (pin) {
               const texts = result.notes.length ? result.notes : [plain(ideas, TALK_LIMITS.note)];
-              current.notes = [...current.notes, ...texts.map((text) => ({ id: crypto.randomUUID(), text, at: Date.now() }))].slice(-TALK_LIMITS.notes);
+              current.notes = [...current.notes, ...texts.map((text) => ({ id: uuid(), text, at: Date.now() }))].slice(-TALK_LIMITS.notes);
             }
             current.checks = checks;
             current.enabled = true;
@@ -3769,7 +3914,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
               const fallback = open.filter((l) => l.from === "you" && l.keep).at(-1)?.text ?? "";
               const text = result.note || plain(fallback, TALK_LIMITS.note);
               if (text) {
-                const note = { id: crypto.randomUUID(), text, at: Date.now() };
+                const note = { id: uuid(), text, at: Date.now() };
                 current.notes = [...current.notes, note].slice(-TALK_LIMITS.notes);
                 line.noteId = note.id;
               }

@@ -8,13 +8,14 @@
  * not message ids, so a forked chat matches its shared history.
  */
 import { splitOoc, storyText } from './ooc';
+import { sha256Digest } from './safe-id';
 
 /** ooc: a whole out-of-character message, or the narrator's answer to one. Not part of the story. */
 export interface Turn { id: string; role: 'user' | 'assistant'; content: string; ooc?: true }
 type Message = { id: string; role: string; content: string; index_in_chat: number };
 
 export async function fingerprint(turn: Pick<Turn, 'role' | 'content'>): Promise<string> {
-  const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${turn.role}\u0000${turn.content}`));
+  const bytes = await sha256Digest(new TextEncoder().encode(`${turn.role}\u0000${turn.content}`));
   return Array.from(new Uint8Array(bytes).slice(0, 12), b => b.toString(16).padStart(2, '0')).join('');
 }
 /** The conversation as the narrator sees it: user and assistant turns, in order, optionally without one message. Out-of-character exchanges are marked. */
