@@ -1382,6 +1382,16 @@ function tidyNotebook(value, previous) {
   for (const p of people)
     for (const key of [p.id, p.name, ...p.aliases])
       who.set(slug(key), p.id);
+  const clockNow = previous ? absoluteHours(previous.clock) : NaN;
+  const waitHours = (hours, speed) => {
+    if (!Number.isFinite(hours))
+      return DEFAULT_AFTER[speed];
+    if (hours >= 24 * 120 && Number.isFinite(clockNow) && Math.abs(hours - clockNow) < 24 * 365)
+      return Math.min(Math.max(hours - clockNow, 0), 24 * 120);
+    if (hours >= 24 * 365)
+      return DEFAULT_AFTER[speed];
+    return Math.max(hours, 0);
+  };
   let threads = ids(array(input.threads).map((raw) => {
     const t = record3(raw), id = slug(t.id) || slug(t.title), speed = pick(t.speed, ["urgent", "steady", "slow"], SPEED, "steady");
     const status = pick(t.status, ["open", "paused", "closed"], THREAD, "open");
@@ -1392,7 +1402,7 @@ function tidyNotebook(value, previous) {
         id: slug(s.id) || slug(text).slice(0, 30),
         text,
         sign: plain(s.sign),
-        afterHours: Number.isFinite(hours) ? Math.min(Math.max(hours, 0), 24 * 365) : DEFAULT_AFTER[speed],
+        afterHours: waitHours(hours, speed),
         status: pick(s.status, ["waiting", "shown", "offscreen", "skipped"], STEP, "waiting")
       };
     }).filter((s) => s.text), "step");
@@ -1504,6 +1514,10 @@ function tidyNotebook(value, previous) {
       else if (old.status === "exposed")
         next.status = "exposed";
     }
+  const sameName = (a, b) => {
+    const k = (x) => x.toLowerCase().replace(/&/g, " and ").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    return k(a) === k(b);
+  };
   const str = (v, n) => plain(v, n);
   const roomOf = (raw) => {
     const r = record3(raw);
@@ -1518,7 +1532,14 @@ function tidyNotebook(value, previous) {
       floors: array(b.floors).map((f) => {
         const fl = record3(f);
         return { name: str(fl.name ?? fl.level, 40), rooms: array(fl.rooms).map(roomOf).filter((r) => r.name).slice(0, LIMITS.rooms) };
-      }).filter((f) => f.name && f.rooms.length).slice(0, LIMITS.floors)
+      }).filter((f) => f.name && f.rooms.length).reduce((out, f) => {
+        const same = out.find((o) => sameName(o.name, f.name));
+        if (same)
+          same.rooms.push(...f.rooms.filter((r) => !same.rooms.some((x) => sameName(x.name, r.name))));
+        else
+          out.push(f);
+        return out;
+      }, []).slice(0, LIMITS.floors)
     };
   }).filter((b) => b.name && b.floors.length), "building");
   if (previous)
@@ -1529,13 +1550,13 @@ function tidyNotebook(value, previous) {
         continue;
       }
       for (const floor of old.floors) {
-        const nf = next.floors.find((f) => f.name.toLowerCase() === floor.name.toLowerCase());
+        const nf = next.floors.find((f) => sameName(f.name, floor.name));
         if (!nf) {
           next.floors.push(structuredClone(floor));
           continue;
         }
         for (const room of floor.rooms)
-          if (!next.floors.some((f) => f.rooms.some((r) => r.name.toLowerCase() === room.name.toLowerCase())))
+          if (!next.floors.some((f) => f.rooms.some((r) => sameName(r.name, room.name))))
             nf.rooms.push(structuredClone(room));
         nf.rooms = nf.rooms.slice(0, LIMITS.rooms);
       }
@@ -1933,7 +1954,7 @@ var CRAFT = [
   '3f. Lies need upkeep. When the player character or anyone else tells a lie that matters (an excuse, a cover story, a false name, a hidden affair), record it in "covers": who told it ("player", or their id), who was told, what was said, and what it hides. Plan how it comes back, spaced out like everything else: someone asks a follow-up, a detail stops adding up, the lie needs another lie to hold. Mark it "strained" once someone starts to doubt it; it may come apart ("exposed") at a well-paced moment, never all at once, and an exposed lie stays exposed and has consequences. A lie someone else told is a secret: keep it out of hints. Small talk and white lies that nobody will remember do not count.',
   '3g. Keep places straight. For each building the story spends time in (a home, a workplace, a dorm, a ship), record its layout in "buildings": its floors, the rooms on each, and which rooms are beside each other, plain words and no measurements. Base it on the card and the chat, keep it ordinary and plausible for that kind of place (in a two-story house the bedrooms are usually upstairs and the kitchen downstairs), and list in "aliases" the names the chat and its tracker use for the building and its rooms. Once written, a layout changes only when the story changes the building; add rooms as they come up. Only buildings the story actually uses.',
   "4. Plan a supporting cast beyond the card's character so the world is not just the main character; how large depends on the story size below. They have their own lives and are met when they fit.",
-  "5. Threads are open problems or opportunities, one problem each: an unrelated subplot is its own thread. Each has a speed (urgent: minutes to hours; steady: a day to several days; slow: a week or more) and two to five steps toward its consequence. Most steps are signs the player could notice; only the last is the consequence itself. afterHours is story time after the previous step (or the thread's start) before the step becomes due.",
+  "5. Threads are open problems or opportunities, one problem each: an unrelated subplot is its own thread. Each has a speed (urgent: minutes to hours; steady: a day to several days; slow: a week or more) and two to five steps toward its consequence. Most steps are signs the player could notice; only the last is the consequence itself. afterHours is story time after the previous step (or the thread's start) before the step becomes due: a number of hours like 6, 24, or 72, never a clock time or a date.",
   "5b. The story is open-ended: plan its first arc (the story question and two to four threads); later check-ups open new arcs as these resolve. Pacing is the shape of the arc, not just the next scene. Stagger the threads so they come to a head at different times, with room between them. The main storyline starts now and builds across the part; side storylines begin with small signs and build. Mix speeds: only one storyline may be urgent at a time (urgent means something bad happens within hours if nobody acts: a fire, a deadline, someone hunting you; feelings and relationships are almost never urgent), and at least one slow one. A later emergency can be prepared with a breadcrumb or two, never started early. Keep story time realistic: Grimoire also moves a thread on after a number of replies, so never squeeze story time to keep things moving. If the card fixes an event at a certain time (a show tonight, a deadline), use it, but let only the threads that truly depend on it peak there.",
   '5c. Every step is specific: who acts (someone in the notebook), what concretely happens, why it matters, and how it reaches the player (its "sign": something they can see, hear, or be told). "Tension rises" or "things get worse" is not a step.',
   "6. Beats are possible moments, not a script. Each says what it sets up or pays off and what must be true first. Most should be low intensity; plan no more than two high-intensity moments at a time, so big moments stay big.",
@@ -2946,7 +2967,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.24.2";
+var VERSION = "0.24.3";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };

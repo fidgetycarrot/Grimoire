@@ -1,5 +1,5 @@
-import { readTime } from './clock';
-import { LIMITS, STAGES, type Notebook, type Shape } from './notebook';
+import { absoluteHours, readTime } from './clock';
+import { LIMITS, STAGES, type Notebook, type Room, type Shape } from './notebook';
 
 /**
  * Tidy a notebook as a model wrote it, before the strict checks.
@@ -87,13 +87,24 @@ export function tidyNotebook(value: unknown, previous?: Notebook): unknown {
   const who = new Map<string, string>();
   for (const p of people) for (const key of [p.id, p.name, ...p.aliases]) who.set(slug(key), p.id);
 
+  // A wait is hours after the previous step. With a calendar date in the tracker the clock reads in the hundreds of
+  // thousands of hours, and a model sometimes writes that clock time instead; read back, it would put the step a year
+  // out. A wait close to the clock is taken as a time and counted from now; any other wait of a year or more (the
+  // old cap) falls back to the usual wait for its speed.
+  const clockNow = previous ? absoluteHours(previous.clock) : NaN;
+  const waitHours = (hours: number, speed: keyof typeof DEFAULT_AFTER) => {
+    if (!Number.isFinite(hours)) return DEFAULT_AFTER[speed];
+    if (hours >= 24 * 120 && Number.isFinite(clockNow) && Math.abs(hours - clockNow) < 24 * 365) return Math.min(Math.max(hours - clockNow, 0), 24 * 120);
+    if (hours >= 24 * 365) return DEFAULT_AFTER[speed];
+    return Math.max(hours, 0);
+  };
   let threads = ids(array(input.threads).map(raw => {
     const t = record(raw), id = slug(t.id) || slug(t.title), speed = pick(t.speed, ['urgent', 'steady', 'slow'] as const, SPEED, 'steady');
     const status = pick(t.status, ['open', 'paused', 'closed'] as const, THREAD, 'open');
     const steps = ids(array(t.steps).map(rawStep => {
       const s = record(rawStep), hours = typeof s.afterHours === 'number' ? s.afterHours : parseFloat(String(s.afterHours ?? ''));
       const text = plain(s.text) || plain(s.sign);
-      return { id: slug(s.id) || slug(text).slice(0, 30), text, sign: plain(s.sign), afterHours: Number.isFinite(hours) ? Math.min(Math.max(hours, 0), 24 * 365) : DEFAULT_AFTER[speed],
+      return { id: slug(s.id) || slug(text).slice(0, 30), text, sign: plain(s.sign), afterHours: waitHours(hours, speed),
         status: pick(s.status, ['waiting', 'shown', 'offscreen', 'skipped'] as const, STEP, 'waiting') };
     }).filter(s => s.text), 'step');
     return { id, title: plain(t.title, LIMITS.short) || human(id), speed, why: plain(t.why), hint: plain(t.hint),
@@ -165,21 +176,23 @@ export function tidyNotebook(value: unknown, previous?: Notebook): unknown {
     if (!next) covers.push(structuredClone(old));
     else if (old.status === 'exposed') next.status = 'exposed';
   }
+  const sameName = (a: string, b: string) => { const k = (x: string) => x.toLowerCase().replace(/&/g, ' and ').replace(/[^\p{L}\p{N}]+/gu, ' ').trim(); return k(a) === k(b); };
   // Layouts: a building, its floors and rooms. Once written, a building and its rooms stay; new rooms can be added.
   const str = (v: unknown, n: number) => plain(v, n);
   const roomOf = (raw: unknown) => { const r = record(raw); return typeof raw === 'string' ? { name: plain(raw, 60), aliases: [] as string[], near: [] as string[] } : { name: str(r.name, 60), aliases: array(r.aliases).map(a => str(a, 60)).filter(Boolean).slice(0, 6), near: array(r.near ?? r.next ?? r.adjacent).map(a => str(a, 60)).filter(Boolean).slice(0, 6) }; };
   let buildings = ids(array(input.buildings).map(raw => {
     const b = record(raw), name = str(b.name, 80);
     return { id: slug(b.id) || slug(name).slice(0, 30), name, aliases: array(b.aliases).map(a => str(a, 60)).filter(Boolean).slice(0, 6),
-      floors: array(b.floors).map(f => { const fl = record(f); return { name: str(fl.name ?? fl.level, 40), rooms: array(fl.rooms).map(roomOf).filter(r => r.name).slice(0, LIMITS.rooms) }; }).filter(f => f.name && f.rooms.length).slice(0, LIMITS.floors) };
+      floors: array(b.floors).map(f => { const fl = record(f); return { name: str(fl.name ?? fl.level, 40), rooms: array(fl.rooms).map(roomOf).filter(r => r.name).slice(0, LIMITS.rooms) }; }).filter(f => f.name && f.rooms.length)
+        .reduce<Array<{ name: string; rooms: Room[] }>>((out, f) => { const same = out.find(o => sameName(o.name, f.name)); if (same) same.rooms.push(...f.rooms.filter(r => !same.rooms.some(x => sameName(x.name, r.name)))); else out.push(f); return out; }, []).slice(0, LIMITS.floors) };
   }).filter(b => b.name && b.floors.length), 'building');
   if (previous) for (const old of previous.buildings ?? []) {
     const next = buildings.find(b => b.id === old.id);
     if (!next) { buildings.push(structuredClone(old)); continue; }
     for (const floor of old.floors) {
-      const nf = next.floors.find(f => f.name.toLowerCase() === floor.name.toLowerCase());
+      const nf = next.floors.find(f => sameName(f.name, floor.name));
       if (!nf) { next.floors.push(structuredClone(floor)); continue; }
-      for (const room of floor.rooms) if (!next.floors.some(f => f.rooms.some(r => r.name.toLowerCase() === room.name.toLowerCase()))) nf.rooms.push(structuredClone(room));
+      for (const room of floor.rooms) if (!next.floors.some(f => f.rooms.some(r => sameName(r.name, room.name)))) nf.rooms.push(structuredClone(room));
       nf.rooms = nf.rooms.slice(0, LIMITS.rooms);
     }
     next.floors = next.floors.slice(0, LIMITS.floors);

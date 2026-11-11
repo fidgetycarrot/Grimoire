@@ -49,3 +49,21 @@ describe('where things are', () => {
     expect(note('Mira and Cole talk.')).not.toContain('drift off');
   });
 });
+
+describe('waits a model wrote as clock times', () => {
+  test('a wait close to a calendar clock counts from now; a year or more falls back to the usual wait', () => {
+    const before = validateNotebook(sampleNotebook()); before.clock = { day: 20710, hour: 15, label: 'Monday' } as any;
+    const now = 20710 * 24 + 15;
+    const raw: any = structuredClone(before);
+    raw.threads[0].steps[1].afterHours = now + 30; raw.threads[0].steps[2].afterHours = 8760;
+    const after = validateNotebook(tidyNotebook(raw, before));
+    expect(after.threads[0].steps[1].afterHours).toBe(30);
+    expect(after.threads[0].steps[2].afterHours).toBe(24);
+  });
+  test('floors named the same way twice become one', () => {
+    const raw: any = { ...sampleNotebook(), buildings: [{ id: 'c', name: 'Cathedral', floors: [{ name: 'Upper Level and Crypts', rooms: ['Crypt'] }, { name: 'Upper Level & Crypts', rooms: ['Bell tower', 'crypt'] }] }] };
+    const nb = validateNotebook(tidyNotebook(raw));
+    expect(nb.buildings[0].floors).toHaveLength(1);
+    expect(nb.buildings[0].floors[0].rooms.map(r => r.name)).toEqual(['Crypt', 'Bell tower']);
+  });
+});
