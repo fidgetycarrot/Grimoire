@@ -60,7 +60,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.27.1";
+var VERSION = "0.28.0";
 var CHAPTER_WORKING = "Starting a new chapter";
 var CHAPTER_DONE = "New chapter ready";
 

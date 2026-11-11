@@ -32,7 +32,7 @@ export function whereabouts(buildings: Building[], location: string | undefined,
 }
 
 /** The narrator's line: the building the player is in, and where everything in it is. Background, not something to describe. */
-export function layoutLine(at: Whereabouts, room = 700): string {
+export function layoutLine(at: Whereabouts, room = 460): string {
   const { building, floor, room: here } = at;
   const lead = here && floor ? `The player is in the ${here.name.toLowerCase()} (${floor.name.toLowerCase()})${here.near.length ? `, next to ${here.near.join(', ')}` : ''}.` : '';
   let text = `Where things are in ${building.name}, to keep the rooms consistent (background only; never list or describe the layout unless the scene calls for it): ${lead}`;

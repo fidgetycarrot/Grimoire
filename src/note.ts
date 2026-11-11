@@ -105,42 +105,57 @@ export interface NoteInput { notebook: Notebook; pace: Pace; clock: StoryClock; 
  * notebook; no model call. It carries reasons and narrator-safe hints, never
  * the hidden truth itself.
  */
+/** Shorten to about `max` characters at a sentence or word end. */
+export function fit(text: string, max: number): string {
+  const t = text.replace(/\s+/g, ' ').trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max), stop = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('! '), cut.lastIndexOf('? '));
+  return stop > max * 0.5 ? cut.slice(0, stop + 1) : `${cut.slice(0, cut.lastIndexOf(' ') > 0 ? cut.lastIndexOf(' ') : max).replace(/[,;:\s]+$/, '')}…`;
+}
+/**
+ * Room for the guidance, apart from the closing rules and the character sheets. The limit once counted the rules
+ * too, and as the planner's own lines grew (a story question of 450 characters, a 600-character storyline line) it
+ * cut off everything after them: in one long chat, 50 of 61 notes that had a step due lost the step itself and
+ * kept only its heading. What the narrator must do is now never cut, and long background lines are shortened.
+ */
+const ROOM = 3600;
 export function buildNote(input: NoteInput): string {
-  const { notebook, pace, now } = input, lines: string[] = [];
+  const { notebook, pace, now } = input, lines: string[] = [], vital = new Set<string>();
+  const must = (text: string) => { vital.add(text); lines.push(text); };
   const present = presentPeople(notebook, input.recent, input.trackerPresent);
   const quietTime = pace === 'quiet' || (pace === 'auto' && (notebook.rhythm === 'aftermath' || notebook.rhythm === 'peak'));
-  lines.push('Grimoire: private story guidance for the narrator. Never mention, quote, or explain it.');
+  must('Grimoire: private story guidance for the narrator. Never mention, quote, or explain it.');
   lines.push(`${input.clockMayLag ? 'Story time at the last check-up' : 'Story time'}: ${describeClock(input.clock)}.${input.clockMayLag ? ' Time may have moved on since; the chat decides what time it is now.' : ''}${input.skipHours ? ` About ${describeDuration(input.skipHours)} have passed since the last message: open with that gap and what changed during it.` : ''}`);
   if (input.layout) lines.push(input.layout);
   const gentle = notebook.arc.shape === 'kishotenketsu' && notebook.rhythm === 'rising';
   const guided = !!input.guided, intimate = !!input.intimate;
   // Guidance on a swipe is the player's say on this very reply. Pace, stage and plans could
   // pull against it, so they are left out; who people are and what the story is about stay.
-  if (guided) lines.push(GUIDED);
-  else if (intimate) lines.push(INTIMATE);
+  if (guided) must(GUIDED);
+  else if (intimate) must(INTIMATE);
   else {
     lines.push(pace === 'auto' ? (gentle ? DEEPENING : RHYTHM[notebook.rhythm]) : PACE[pace]);
     if (STAGE[notebook.arc.stage]) lines.push(STAGE[notebook.arc.stage]);
   }
-  lines.push(`What the story is about: ${notebook.story.question}`);
+  lines.push(`What the story is about: ${fit(notebook.story.question, 240)}`);
   // The co-author's standing wishes come before any plan, and are never cut for length.
   const wishes = (input.notes ?? []).map(n => n.trim()).filter(Boolean).slice(0, 8);
-  if (wishes.length) lines.push(`The player's standing wishes for this story (they outrank the plans below): ${wishes.map(end).join(' ')}`.slice(0, 900));
+  if (wishes.length) must(`The player's standing wishes for this story (they outrank the plans below): ${wishes.map(end).join(' ')}`.slice(0, 900));
   const held = new Set(input.held ?? []), reworking = !!input.reworking, quiet = reworking || guided || intimate;
   const m: Moment = typeof now === 'number' ? { hours: now } : now;
   // The main storyline: the story the player is in. The note keeps it in front so the player never has to go looking for it.
   const main = quiet ? undefined : notebook.threads.find(t => t.id === notebook.arc.main && t.status === 'open' && !held.has(t.id));
   const opening = !!main && inOpening(notebook, m);
-  if (main) lines.push(`The main storyline is ${main.title}: ${end(main.hint || main.why)} This is the story the player is in. Keep it present through what people say and do, and let its next development arrive when it is due.`);
+  if (main) lines.push(`The main storyline is ${main.title}: ${end(fit(main.hint || main.why, 220))} This is the story the player is in. Keep it present through what people say and do, and let its next development arrive when it is due.`);
   if (opening) lines.push(OPENING);
   const seedsAll = seedPlan(notebook, now), used = new Set<string>();
   // While plans are reworked, no breadcrumbs: they may belong to storylines that no longer fit.
   const seeds = quiet ? { plant: null, ready: [] as Seed[], echo: null } : { plant: seedsAll.plant && !held.has(seedsAll.plant.pays) ? seedsAll.plant : null, ready: seedsAll.ready.filter(s => !held.has(s.pays)), echo: seedsAll.echo };
-  if (reworking) lines.push('The story has just changed direction. Follow the player\'s lead; older plans are being reworked, so do not steer back toward them. People left behind can still be thought of, but nothing needs to happen yet.');
+  if (reworking) must('The story has just changed direction. Follow the player\'s lead; older plans are being reworked, so do not steer back toward them. People left behind can still be thought of, but nothing needs to happen yet.');
   const callback = (seed: Seed) => { used.add(seed.id); return `Bring back something mentioned earlier: "${seed.detail}" (${seed.payoff.replace(/[.!?]+$/, '')}).`; };
   // The turn itself, only once the arc has reached it.
   if (!guided && !intimate && notebook.arc.shape === 'kishotenketsu' && notebook.arc.stage === 'ten' && notebook.arc.turn) {
-    lines.push(`The turn: ${end(notebook.arc.turn)} Let it land through what happens, then give people room to react.`);
+    lines.push(`The turn: ${end(fit(notebook.arc.turn, 240))} Let it land through what happens, then give people room to react.`);
     for (const seed of seeds.ready.filter(s => s.pays === 'turn').slice(0, 2)) lines.push(`- ${callback(seed)}`);
   }
 
@@ -160,12 +175,12 @@ export function buildNote(input: NoteInput): string {
     const when = holding ? 'as soon as this moment has settled' : quietTime && lead.thread.speed !== 'urgent' ? 'now, in this reply or the next, as the scene allows: it has waited long enough' : 'now, in this reply or the next';
     const tie = seeds.ready.find(s => s.pays === lead.thread.id && !used.has(s.id));
     const tied = notebook.people.filter(p => p.status === 'active' && lead.thread.people.includes(p.id)).map(p => p.name).slice(0, 3);
-    lines.push('What the story does now:');
-    lines.push(`- ${lead.thread.title}: ${lead.step.sign || lead.step.text} (bring it in ${when}). Why it matters: ${lead.thread.hint || lead.thread.why}${tie ? ` ${callback(tie)}` : ''}`);
+    must('What the story does now:');
+    must(`- ${lead.thread.title}: ${fit(lead.step.sign || lead.step.text, 320)} (bring it in ${when}). Why it matters: ${fit(lead.thread.hint || lead.thread.why, 200)}${tie ? ` ${callback(tie)}` : ''}`);
     // Bringing everything to where the player already is keeps a story in one room. Unless it is urgent or the story is
     // kept close, the player is given a reason to go where it is happening instead.
     const where = lead.thread.speed === 'urgent' || input.size === 'close' ? ', or it happens where they are' : ', with a reason to go where it is happening; it only comes to where they are if there is no other way';
-    if (late) lines.push(`- If this has not reached the player yet, bring it to them: someone tied to it seeks them out${tied.length ? ` (${tied.join(', ')})` : ''} or word reaches them${where}. They still choose what to do.`);
+    if (late) must(`- If this has not reached the player yet, bring it to them: someone tied to it seeks them out${tied.length ? ` (${tied.join(', ')})` : ''} or word reaches them${where}. They still choose what to do.`);
   }
   const side = due.filter(d => d !== lead && d.thread.id !== main?.id);
   // In the opening stretch, side storylines stay small: only urgent ones press in, and signs meant to come at once (a push).
@@ -174,11 +189,11 @@ export function buildNote(input: NoteInput): string {
   const slower = quietTime || opening ? [] : side.filter(d => !pressing(d)).slice(0, lead ? (pace === 'fast' ? 1 : 0) : pace === 'fast' ? 2 : 1);
   const developments = [...(lead ? [lead] : []), ...urgent, ...slower];
   if (urgent.length || slower.length) {
-    lines.push(lead ? 'Side storylines that are due (bring in only if they fit what is happening):' : 'Developments that are due (bring in only if they fit what is happening):');
+    must(lead ? 'Side storylines that are due (bring in only if they fit what is happening):' : 'Developments that are due (bring in only if they fit what is happening):');
     for (const { thread, step } of [...urgent, ...slower]) {
       const when = thread.speed === 'urgent' ? 'this can interrupt' : pace === 'fast' || step.afterHours === 0 ? 'bring this in soon' : 'at a natural break, such as the end of this scene';
       const tie = seeds.ready.find(s => s.pays === thread.id && !used.has(s.id));
-      lines.push(`- ${thread.title}: ${step.sign || step.text} (${when}). Why it matters: ${thread.hint || thread.why}${tie ? ` ${callback(tie)}` : ''}`);
+      must(`- ${thread.title}: ${fit(step.sign || step.text, 320)} (${when}). Why it matters: ${fit(thread.hint || thread.why, 200)}${tie ? ` ${callback(tie)}` : ''}`);
     }
   }
   // Other open threads involving people in the scene, so they act with purpose.
@@ -230,8 +245,15 @@ export function buildNote(input: NoteInput): string {
   // Fuller sheets for the people here who have one, like short character cards: kept apart from the length limit above.
   const sheets = present.filter(p => p.sheet || p.own).slice(0, 3).map(p => `${p.name}:${p.own ? ` ${end(p.own)}` : ''}${p.sheet ? ` ${end(p.sheet)}` : ''}`.slice(0, 2600));
   const rules = 'The latest messages decide what actually happened; skip anything they have made impossible. Never write the player character\'s actions, words, thoughts, or feelings. Keep secrets hidden and let them show only through small details.\n' + PROBLEMS + ' ' + GROUND;
-  // Too long: drop whole lines from the end of the guidance, never the rules.
-  while (lines.length > 4 && lines.join('\n').length + rules.length + 1 > 2800) lines.pop();
+  // Too long: drop whole lines from the end of the guidance, but never what the narrator must do, and never the rules.
+  while (lines.join('\n').length > ROOM) {
+    let at = lines.length - 1;
+    while (at >= 0 && vital.has(lines[at])) at--;
+    if (at < 0) break;
+    lines.splice(at, 1);
+  }
+  // A heading whose items were all dropped says nothing.
+  for (let i = lines.length - 1; i >= 0; i--) if (lines[i].endsWith(':') && !vital.has(lines[i]) && !(lines[i + 1] ?? '').startsWith('- ')) lines.splice(i, 1);
   const cast = sheets.length ? `\nWho they are, in full (play them true to this, and let it show in what they do, not in explanations):\n${sheets.join('\n')}` : '';
   return `${lines.join('\n')}${cast}\n${rules}`;
 }

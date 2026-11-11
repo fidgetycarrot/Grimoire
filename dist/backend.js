@@ -1093,47 +1093,59 @@ function seedPlan(notebook, now) {
   const ready = planted.filter((s) => (s.pays === "turn" ? atTurn : reply !== undefined && s.plantedAt !== undefined && reply - s.plantedAt >= gap) && open(s));
   return { plant, ready, echo };
 }
+function fit(text, max) {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (t.length <= max)
+    return t;
+  const cut = t.slice(0, max), stop = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("! "), cut.lastIndexOf("? "));
+  return stop > max * 0.5 ? cut.slice(0, stop + 1) : `${cut.slice(0, cut.lastIndexOf(" ") > 0 ? cut.lastIndexOf(" ") : max).replace(/[,;:\s]+$/, "")}\u2026`;
+}
+var ROOM = 3600;
 function buildNote(input) {
-  const { notebook, pace, now } = input, lines = [];
+  const { notebook, pace, now } = input, lines = [], vital = new Set;
+  const must = (text) => {
+    vital.add(text);
+    lines.push(text);
+  };
   const present = presentPeople(notebook, input.recent, input.trackerPresent);
   const quietTime = pace === "quiet" || pace === "auto" && (notebook.rhythm === "aftermath" || notebook.rhythm === "peak");
-  lines.push("Grimoire: private story guidance for the narrator. Never mention, quote, or explain it.");
+  must("Grimoire: private story guidance for the narrator. Never mention, quote, or explain it.");
   lines.push(`${input.clockMayLag ? "Story time at the last check-up" : "Story time"}: ${describeClock(input.clock)}.${input.clockMayLag ? " Time may have moved on since; the chat decides what time it is now." : ""}${input.skipHours ? ` About ${describeDuration(input.skipHours)} have passed since the last message: open with that gap and what changed during it.` : ""}`);
   if (input.layout)
     lines.push(input.layout);
   const gentle = notebook.arc.shape === "kishotenketsu" && notebook.rhythm === "rising";
   const guided = !!input.guided, intimate = !!input.intimate;
   if (guided)
-    lines.push(GUIDED);
+    must(GUIDED);
   else if (intimate)
-    lines.push(INTIMATE);
+    must(INTIMATE);
   else {
     lines.push(pace === "auto" ? gentle ? DEEPENING : RHYTHM[notebook.rhythm] : PACE[pace]);
     if (STAGE[notebook.arc.stage])
       lines.push(STAGE[notebook.arc.stage]);
   }
-  lines.push(`What the story is about: ${notebook.story.question}`);
+  lines.push(`What the story is about: ${fit(notebook.story.question, 240)}`);
   const wishes = (input.notes ?? []).map((n) => n.trim()).filter(Boolean).slice(0, 8);
   if (wishes.length)
-    lines.push(`The player's standing wishes for this story (they outrank the plans below): ${wishes.map(end).join(" ")}`.slice(0, 900));
+    must(`The player's standing wishes for this story (they outrank the plans below): ${wishes.map(end).join(" ")}`.slice(0, 900));
   const held = new Set(input.held ?? []), reworking = !!input.reworking, quiet = reworking || guided || intimate;
   const m = typeof now === "number" ? { hours: now } : now;
   const main = quiet ? undefined : notebook.threads.find((t) => t.id === notebook.arc.main && t.status === "open" && !held.has(t.id));
   const opening = !!main && inOpening(notebook, m);
   if (main)
-    lines.push(`The main storyline is ${main.title}: ${end(main.hint || main.why)} This is the story the player is in. Keep it present through what people say and do, and let its next development arrive when it is due.`);
+    lines.push(`The main storyline is ${main.title}: ${end(fit(main.hint || main.why, 220))} This is the story the player is in. Keep it present through what people say and do, and let its next development arrive when it is due.`);
   if (opening)
     lines.push(OPENING);
   const seedsAll = seedPlan(notebook, now), used = new Set;
   const seeds = quiet ? { plant: null, ready: [], echo: null } : { plant: seedsAll.plant && !held.has(seedsAll.plant.pays) ? seedsAll.plant : null, ready: seedsAll.ready.filter((s) => !held.has(s.pays)), echo: seedsAll.echo };
   if (reworking)
-    lines.push("The story has just changed direction. Follow the player's lead; older plans are being reworked, so do not steer back toward them. People left behind can still be thought of, but nothing needs to happen yet.");
+    must("The story has just changed direction. Follow the player's lead; older plans are being reworked, so do not steer back toward them. People left behind can still be thought of, but nothing needs to happen yet.");
   const callback = (seed) => {
     used.add(seed.id);
     return `Bring back something mentioned earlier: "${seed.detail}" (${seed.payoff.replace(/[.!?]+$/, "")}).`;
   };
   if (!guided && !intimate && notebook.arc.shape === "kishotenketsu" && notebook.arc.stage === "ten" && notebook.arc.turn) {
-    lines.push(`The turn: ${end(notebook.arc.turn)} Let it land through what happens, then give people room to react.`);
+    lines.push(`The turn: ${end(fit(notebook.arc.turn, 240))} Let it land through what happens, then give people room to react.`);
     for (const seed of seeds.ready.filter((s) => s.pays === "turn").slice(0, 2))
       lines.push(`- ${callback(seed)}`);
   }
@@ -1146,11 +1158,11 @@ function buildNote(input) {
     const when = holding ? "as soon as this moment has settled" : quietTime && lead.thread.speed !== "urgent" ? "now, in this reply or the next, as the scene allows: it has waited long enough" : "now, in this reply or the next";
     const tie = seeds.ready.find((s) => s.pays === lead.thread.id && !used.has(s.id));
     const tied = notebook.people.filter((p) => p.status === "active" && lead.thread.people.includes(p.id)).map((p) => p.name).slice(0, 3);
-    lines.push("What the story does now:");
-    lines.push(`- ${lead.thread.title}: ${lead.step.sign || lead.step.text} (bring it in ${when}). Why it matters: ${lead.thread.hint || lead.thread.why}${tie ? ` ${callback(tie)}` : ""}`);
+    must("What the story does now:");
+    must(`- ${lead.thread.title}: ${fit(lead.step.sign || lead.step.text, 320)} (bring it in ${when}). Why it matters: ${fit(lead.thread.hint || lead.thread.why, 200)}${tie ? ` ${callback(tie)}` : ""}`);
     const where = lead.thread.speed === "urgent" || input.size === "close" ? ", or it happens where they are" : ", with a reason to go where it is happening; it only comes to where they are if there is no other way";
     if (late)
-      lines.push(`- If this has not reached the player yet, bring it to them: someone tied to it seeks them out${tied.length ? ` (${tied.join(", ")})` : ""} or word reaches them${where}. They still choose what to do.`);
+      must(`- If this has not reached the player yet, bring it to them: someone tied to it seeks them out${tied.length ? ` (${tied.join(", ")})` : ""} or word reaches them${where}. They still choose what to do.`);
   }
   const side = due.filter((d) => d !== lead && d.thread.id !== main?.id);
   const pressing = (d) => d.thread.speed === "urgent" || !quietTime && d.step.afterHours === 0;
@@ -1158,11 +1170,11 @@ function buildNote(input) {
   const slower = quietTime || opening ? [] : side.filter((d) => !pressing(d)).slice(0, lead ? pace === "fast" ? 1 : 0 : pace === "fast" ? 2 : 1);
   const developments = [...lead ? [lead] : [], ...urgent, ...slower];
   if (urgent.length || slower.length) {
-    lines.push(lead ? "Side storylines that are due (bring in only if they fit what is happening):" : "Developments that are due (bring in only if they fit what is happening):");
+    must(lead ? "Side storylines that are due (bring in only if they fit what is happening):" : "Developments that are due (bring in only if they fit what is happening):");
     for (const { thread, step } of [...urgent, ...slower]) {
       const when = thread.speed === "urgent" ? "this can interrupt" : pace === "fast" || step.afterHours === 0 ? "bring this in soon" : "at a natural break, such as the end of this scene";
       const tie = seeds.ready.find((s) => s.pays === thread.id && !used.has(s.id));
-      lines.push(`- ${thread.title}: ${step.sign || step.text} (${when}). Why it matters: ${thread.hint || thread.why}${tie ? ` ${callback(tie)}` : ""}`);
+      must(`- ${thread.title}: ${fit(step.sign || step.text, 320)} (${when}). Why it matters: ${fit(thread.hint || thread.why, 200)}${tie ? ` ${callback(tie)}` : ""}`);
     }
   }
   const shown = new Set(developments.map((d) => d.thread.id));
@@ -1213,9 +1225,18 @@ function buildNote(input) {
   const sheets = present.filter((p) => p.sheet || p.own).slice(0, 3).map((p) => `${p.name}:${p.own ? ` ${end(p.own)}` : ""}${p.sheet ? ` ${end(p.sheet)}` : ""}`.slice(0, 2600));
   const rules = `The latest messages decide what actually happened; skip anything they have made impossible. Never write the player character's actions, words, thoughts, or feelings. Keep secrets hidden and let them show only through small details.
 ` + PROBLEMS + " " + GROUND;
-  while (lines.length > 4 && lines.join(`
-`).length + rules.length + 1 > 2800)
-    lines.pop();
+  while (lines.join(`
+`).length > ROOM) {
+    let at = lines.length - 1;
+    while (at >= 0 && vital.has(lines[at]))
+      at--;
+    if (at < 0)
+      break;
+    lines.splice(at, 1);
+  }
+  for (let i = lines.length - 1;i >= 0; i--)
+    if (lines[i].endsWith(":") && !vital.has(lines[i]) && !(lines[i + 1] ?? "").startsWith("- "))
+      lines.splice(i, 1);
   const cast = sheets.length ? `
 Who they are, in full (play them true to this, and let it show in what they do, not in explanations):
 ${sheets.join(`
@@ -1323,7 +1344,7 @@ function whereabouts(buildings, location, last) {
   }
   return named[0] ? { building: named[0] } : null;
 }
-function layoutLine(at, room = 700) {
+function layoutLine(at, room = 460) {
   const { building, floor, room: here } = at;
   const lead = here && floor ? `The player is in the ${here.name.toLowerCase()} (${floor.name.toLowerCase()})${here.near.length ? `, next to ${here.near.join(", ")}` : ""}.` : "";
   let text = `Where things are in ${building.name}, to keep the rooms consistent (background only; never list or describe the layout unless the scene calls for it): ${lead}`;
@@ -1976,11 +1997,11 @@ var MEMORY = (r) => r && hasRecall(r) ? `"memory" is what Lumiverse remembers of
 var NOTES = `- "notes" are standing wishes from the player, who co-writes this story. Every plan must respect them. When the chat itself goes against one, the chat decides what happened, but plan what comes next by the notes.
 `;
 var SHAPE = `{
- "story": {"question": "what the story is about and its central question", "stakes": "what can be won or lost", "direction": "roughly where it could end, as possibilities", "hiddenTruth": ["established background facts the player does not know yet"], "twist": "a twist, or empty", "cameOut": ["hidden truths the player has since learned, moved here word for word from hiddenTruth or twist"]},
+ "story": {"question": "one sentence: what this part of the story is about, as a question. It stays the same for the whole part; never rewrite it into what is happening in the current scene", "stakes": "what can be won or lost", "direction": "roughly where it could end, as possibilities", "hiddenTruth": ["established background facts the player does not know yet"], "twist": "a twist, or empty", "cameOut": ["hidden truths the player has since learned, moved here word for word from hiddenTruth or twist"]},
  "arc": {"shape": "conflict|kishotenketsu", "stage": "setup|rising|climax|resolution for conflict; ki|sho|ten|ketsu for kishotenketsu", "turn": "kishotenketsu only: what the turn is, or empty", "main": "the id of the thread that is this part's main storyline"},
  "seeds": [{"id": "green-wax", "detail": "an ordinary-looking detail the narrator can mention in passing", "payoff": "what it turns out to mean later", "pays": "the thread id, beat id, or turn it pays into", "status": "waiting|planted|paid|echo|dropped"}],
  "people": [{"id": "cole", "name": "Cole", "aliases": [], "role": "short role", "wants": "what they want", "doing": "what they are doing about it right now, on or off screen", "hint": "a narrator-safe note on how to play them, with no secrets", "voice": "how they talk: word choice, sentence length and rhythm, habits and tics, what they never say, and one short sample line that shows the sound (an example, not a catchphrase); no secrets", "depth": "what keeps them from being a stock type: a contradiction (a want that pulls against a fear or a habit), one specific detail that is not the obvious one for their role, and a tie to the world; no secrets", "sheet": "only for the few who matter most: a fuller character sheet, like a short character card (personality, history, habits, relationships, how they treat the player character, what they are like when pushed); no appearance, no secrets; empty for everyone else", "met": false, "status": "active"}],
- "threads": [{"id": "stolen-ring", "title": "The stolen ring", "speed": "urgent|steady|slow", "why": "why it matters, including hidden causes", "hint": "why it matters, in narrator-safe words with no secrets", "people": ["cole"], "status": "open", "closedReason": "", "outcome": "once closed: won|lost|faded (how it ended for the player)", "scar": "once lost: how it still shows, in narrator-safe words", "ifFollowed": "what following it leads to", "ifIgnored": "what happens if it is left alone", "steps": [{"id": "owner-notices", "text": "what happens", "sign": "how the player could notice it", "afterHours": 24, "status": "waiting"}]}],
+ "threads": [{"id": "stolen-ring", "title": "The stolen ring", "speed": "urgent|steady|slow", "why": "why it matters, including hidden causes", "hint": "why it matters, in one or two narrator-safe sentences with no secrets (not a recap of the current scene)", "people": ["cole"], "status": "open", "closedReason": "", "outcome": "once closed: won|lost|faded (how it ended for the player)", "scar": "once lost: how it still shows, in narrator-safe words", "ifFollowed": "what following it leads to", "ifIgnored": "what happens if it is left alone", "steps": [{"id": "owner-notices", "text": "what happens", "sign": "how the player could notice it", "afterHours": 24, "status": "waiting"}]}],
  "buildings": [{"id": "vance-house", "name": "the Vance house", "aliases": ["Vance Residence", "home"], "floors": [{"name": "Upstairs", "rooms": [{"name": "Master bedroom", "aliases": [], "near": ["Hall bathroom", "Landing"]}]}, {"name": "Downstairs", "rooms": [{"name": "Kitchen", "aliases": ["breakfast nook"], "near": ["Living room", "Patio door"]}]}]}],
  "covers": [{"id": "upset-stomach", "by": "player, or the id of the person who told it", "told": ["ids of the people who were told it"], "said": "the lie as it was told", "hides": "what it covers up", "status": "holding|strained|exposed"}],
  "beats": [{"id": "ring-recognized", "text": "a moment the story could reach", "purpose": "what it sets up or pays off", "conditions": "what must be true first", "thread": "stolen-ring", "intensity": "low|high", "status": "possible"}],
@@ -3030,7 +3051,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.27.1";
+var VERSION = "0.28.0";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };

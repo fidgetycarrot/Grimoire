@@ -151,3 +151,22 @@ describe('people who hold their ground, specific plans, and losses that leave a 
     expect(validateNotebook(tidyNotebook(raw, prev)).threads[1]).toMatchObject({ outcome: 'lost', scar: 'the ferry is out of service' });
   });
 });
+
+describe('the note never loses what the narrator must do', () => {
+  test('long background lines are shortened, and the step that is due always reaches the narrator, with the people in the scene', () => {
+    const nb = opened();
+    const long = 'At 3:54 PM inside the unit, one minute before the cord pull and six minutes before everyone arrives, how will the player get everyone out without anyone seeing what they should not see, and what happens next. '.repeat(3);
+    nb.story.question = long.slice(0, 590); nb.threads[0].hint = long.slice(0, 590); nb.threads[0].why = long.slice(0, 590);
+    for (const p of nb.people) { p.wants = long.slice(0, 300); p.doing = long.slice(0, 300); }
+    const text = note(nb, 12, { layout: `Where things are in the house: ${'Kitchen, Living room, Hall. '.repeat(15)}`, recent: 'Mira, Cole and Oswin look up.' });
+    expect(text).toContain('What the story does now:\n- The stolen ring: A shout from the manor on the hill.');
+    expect(text).toContain('If this has not reached the player yet');
+    expect(text).toContain('People here and what drives them');
+    expect(text).toContain('- Mira (ferry keeper)');
+    expect(text).toContain('Problems take time');
+    // No heading left without its items.
+    const lines = text.split('\n');
+    lines.forEach((l, i) => { if (/^(What the story does now|Side storylines that are due|Developments that are due|People here|Open threads near this scene)/.test(l)) expect(lines[i + 1].startsWith('- ')).toBe(true); });
+    expect(text.split('\n').find(l => l.startsWith('What the story is about'))!.length).toBeLessThan(280);
+  });
+});
