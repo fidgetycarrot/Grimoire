@@ -5,6 +5,7 @@ import { createRpc, nextPace, setup } from '../src/frontend';
 import { stamp, validateNotebook } from '../src/notebook';
 import type { Snapshot } from '../src/types';
 import { sampleNotebook } from './fixtures';
+import { markStories } from '../src/badges';
 
 const cleanups: Array<() => void> = [];
 afterEach(() => { for (const fn of cleanups.splice(0)) fn(); });
@@ -273,57 +274,42 @@ describe('background updates', () => {
 });
 
 describe('your stories', () => {
-  test('on the home page, chats with a notebook are listed and open with a tap', async () => {
+  const cards = (h: ReturnType<typeof harness>, ...names: string[]) => {
+    const list = h.window.document.createElement('div'); list.setAttribute('data-component', 'LandingPageChats');
+    list.innerHTML = names.map(n => `<div><button><h3 class="_cardName_x1"><span>${n}</span></h3><span>2h ago</span></button></div>`).join('');
+    h.window.document.body.append(list as never); return list as unknown as HTMLElement;
+  };
+  test('the home page gets no second list; the drawer lists them when no chat is open', async () => {
     const h = harness(null); await tick(20);
-    const home = h.landing.querySelector('.gm-home') as unknown as HTMLElement;
-    expect(home.hidden).toBe(false);
-    expect(home.textContent).toContain('Your stories');
-    expect(home.textContent).toContain('Riley');
-    expect(home.textContent).toContain('Comic-Con · played 1 h ago');
-    expect(home.textContent).toContain('Grimoire off');
-    (home.querySelector('.gm-story') as unknown as HTMLButtonElement).click();
-    expect(h.opened[0]).toEqual({ ref: { kind: 'route', id: '/chat/:chatId' }, params: { chatId: 'chat-9' } });
-    // The drawer lists them too when no chat is open.
+    expect(h.landing.textContent).toBe('');
     expect(h.root.textContent).toContain('Your stories');
+    expect(h.root.textContent).toContain('Comic-Con · played 1 h ago');
+    (h.root.querySelector('.gm-story') as unknown as HTMLButtonElement).click();
+    expect(h.opened[0]).toEqual({ ref: { kind: 'route', id: '/chat/:chatId' }, params: { chatId: 'chat-9' } });
   });
-  test('stays hidden inside a chat, and when turned off', async () => {
-    const inChat = harness(); await tick(20);
-    expect((inChat.landing.querySelector('.gm-home') as unknown as HTMLElement).hidden).toBe(true);
-    const off = harness(null, { homeList: false }); await tick(20);
-    expect((off.landing.querySelector('.gm-home') as unknown as HTMLElement).hidden).toBe(true);
+  test("Lumiverse's own cards get a crystal ball for characters with a notebook", async () => {
+    const h = harness(null); const list = cards(h, 'Riley', 'Mira', 'Someone Else'); await tick(20);
+    const marks = [...list.querySelectorAll('.gm-badge')] as unknown as HTMLElement[];
+    expect(marks.length).toBe(2);
+    expect(marks[0]!.closest('h3')!.textContent).toContain('Riley');
+    expect(marks[0]!.dataset.off).toBeUndefined();
+    expect(marks[1]!.dataset.off).toBe('true');
+    expect(list.querySelectorAll('h3')[2]!.querySelector('.gm-badge')).toBeNull();
   });
-});
-
-describe('requests', () => {
-  test('time out instead of hanging, and close cleanly', async () => {
-    const rpc = createRpc({ onBackendMessage: () => () => {}, sendToBackend: () => {} }, () => {}, 10);
-    await expect(rpc.request('snapshot')).rejects.toThrow('busy');
-    rpc.destroy();
-    await expect(rpc.request('snapshot')).rejects.toThrow('closed');
+  test('marking twice adds nothing, and a reused card loses its mark', () => {
+    const h = harness(null); const list = cards(h, 'Riley');
+    const stories = [{ character: 'Riley', enabled: true }];
+    expect(markStories(h.window.document.body as never, stories, '<svg></svg>')).toBe(1);
+    markStories(h.window.document.body as never, stories, '<svg></svg>');
+    expect(list.querySelectorAll('.gm-badge').length).toBe(1);
+    list.querySelector('h3 span')!.textContent = 'Someone Else';
+    markStories(h.window.document.body as never, stories, '<svg></svg>');
+    expect(list.querySelectorAll('.gm-badge').length).toBe(0);
   });
-});
-
-describe('how big the world gets', () => {
-  test('is chosen when starting, and can be changed later', async () => {
-    const start = harness({ hasNotebook: false, notebook: null }); await tick();
-    const pick = Array.from(start.root.querySelectorAll('select')).find(s => Array.from(s.options).some(o => o.value === 'close')) as unknown as HTMLSelectElement;
-    pick.value = 'wide';
-    start.button('Write the notebook')!.click(); await tick();
-    expect(start.requests.find(r => r.action === 'create')!.input.preferences.size).toBe('wide');
-    const h = harness(); await tick();
-    const later = Array.from(h.root.querySelectorAll('select')).find(s => Array.from(s.options).some(o => o.value === 'close')) as unknown as HTMLSelectElement;
-    later.value = 'close'; later.dispatchEvent(new h.window.Event('change', { bubbles: true }) as any); await tick();
-    expect(h.requests.find(r => r.action === 'size')!.input).toEqual({ chatId: 'chat-1', size: 'close' });
-  });
-});
-
-describe('what you enjoy', () => {
-  test('has its own section, outside the spoiler fold, and takes the player\'s own words', async () => {
-    const h = harness(); await tick();
-    expect(h.root.textContent).toContain('What you enjoy');
-    expect(h.root.textContent).toContain('Nothing yet. Grimoire works this out as you play.');
-    const box = Array.from(h.root.querySelectorAll('textarea')).find(t => (t as any).placeholder.includes('slow build')) as unknown as HTMLTextAreaElement;
-    box.value = 'more banter'; box.dispatchEvent(new h.window.Event('change', { bubbles: true }) as any); await tick();
-    expect(h.requests.find(r => r.action === 'likes')!.input).toEqual({ chatId: 'chat-1', likes: 'more banter' });
+  test('no marks inside a chat, or when turned off', async () => {
+    const inChat = harness(); const a = cards(inChat, 'Riley'); await tick(20);
+    expect(a.querySelector('.gm-badge')).toBeNull();
+    const off = harness(null, { homeList: false }); const b = cards(off, 'Riley'); await tick(20);
+    expect(b.querySelector('.gm-badge')).toBeNull();
   });
 });

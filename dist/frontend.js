@@ -29,8 +29,8 @@ var styles = `
 .gm-empty{text-align:center;padding:30px 18px;border:1px dashed var(--gm-line);border-radius:14px;color:var(--gm-muted)}
 .gm-footer{margin:18px 4px 0;font-size:10px;letter-spacing:.08em;color:var(--gm-muted);opacity:.75}
 .gm-pace-button{box-sizing:border-box;flex:0 0 auto;width:auto;user-select:none;display:inline-flex;white-space:nowrap;align-items:center;gap:6px;border:1px solid var(--lumiverse-border,rgba(255,255,255,.14));background:transparent;color:inherit;border-radius:999px;padding:3px 10px 3px 8px;font:600 12px/1.6 ui-sans-serif,system-ui,sans-serif;cursor:pointer;opacity:.9}.gm-pace-button:hover{opacity:1}.gm-pace-button:focus-visible{outline:2px solid currentColor;outline-offset:2px}.gm-pace-button svg{width:14px;height:14px}.gm-pace-button[hidden]{display:none!important}
-.gm-home{margin:14px 0;font:13px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--lumiverse-text,inherit)}.gm-home[hidden]{display:none!important}.gm-home-title{display:flex;align-items:center;gap:7px;font-weight:650;font-size:12px;letter-spacing:.5px;text-transform:uppercase;opacity:.75;margin-bottom:8px}.gm-home-title svg{width:15px;height:15px}
-.gm-home-list,.gm-story-list{display:flex;gap:8px;flex-wrap:wrap}.gm-story-list{flex-direction:column}
+.gm-badge{display:inline-flex;vertical-align:-2px;margin-left:6px;width:15px;height:15px;color:var(--lumiverse-accent,var(--lumiverse-primary,#8fb3d9));opacity:.9;flex:none}.gm-badge svg{width:100%;height:100%}.gm-badge[data-off=true]{opacity:.4}
+.gm-story-list{display:flex;gap:8px;flex-wrap:wrap}.gm-story-list{flex-direction:column}
 .gm-story{display:flex;flex-direction:column;align-items:flex-start;gap:1px;text-align:left;border:1px solid var(--lumiverse-border,rgba(127,127,127,.28));border-radius:10px;background:var(--lumiverse-bg-secondary,rgba(127,127,127,.08));color:inherit;padding:8px 12px;cursor:pointer;max-width:260px;min-width:0;font:inherit}.gm-story:hover{border-color:var(--lumiverse-primary,#8fb3d9)}.gm-story-name{font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}.gm-story-meta{font-size:11.5px;opacity:.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}.gm-story-list .gm-story{max-width:none;width:100%}
 .gm-app textarea.gm-talk-input{min-height:72px;font:13px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}.gm-note{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;border-left:2px solid var(--gm-accent);padding:2px 0 2px 10px}.gm-note .gm-button{flex:none;padding:3px 9px;font-size:11.5px}
 .gm-talk-log{display:flex;flex-direction:column;gap:7px}.gm-line{display:flex;flex-direction:column;gap:2px;padding:8px 11px;border-radius:12px;background:var(--gm-fill);font-size:12.5px}.gm-line-you{align-self:flex-end;max-width:88%;background:color-mix(in srgb,var(--gm-accent) 16%,transparent)}.gm-line-grimoire{align-self:flex-start;max-width:94%}.gm-line-who{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--gm-muted)}.gm-changes{margin:3px 0 0;padding-left:16px;font-size:11.5px;color:var(--gm-muted)}
@@ -47,6 +47,46 @@ var styles = `
 @media(prefers-color-scheme:light){.gm-app{--gm-bg:var(--lumiverse-bg,#faf8f3);--gm-ink:var(--lumiverse-text,#25231e);--gm-muted:var(--lumiverse-text-muted,#6f6a60);--gm-card:color-mix(in srgb,var(--lumiverse-fill-subtle,var(--lumiverse-bg-secondary,#fffdf8)) 88%,transparent);--gm-accent:var(--lumiverse-accent,var(--lumiverse-primary,#2f6699));--gm-warn:#a06d10;--gm-good:#2f7a45;color-scheme:light}}
 @container(max-width:340px){.gm-grid,.gm-stats{grid-template-columns:1fr}}
 `;
+
+// src/badges.ts
+var NAMES = '[data-component="LandingPageChats"] h3';
+var text = (node) => [...node.children].filter((c) => !c.classList.contains("gm-badge")).map((c) => c.textContent ?? "").join(" ").replace(/\s+/g, " ").trim() || (node.querySelector(".gm-badge") ? "" : (node.textContent ?? "").trim());
+function markStories(root, stories, icon) {
+  const wanted = new Map;
+  for (const story of stories)
+    if (story.character)
+      wanted.set(story.character, wanted.get(story.character) || story.enabled);
+  let placed = 0;
+  for (const name of [...root.querySelectorAll(NAMES)]) {
+    const on = wanted.get(text(name)), old = name.querySelector(".gm-badge");
+    if (on === undefined) {
+      old?.remove();
+      continue;
+    }
+    placed++;
+    const off = on ? "" : "true";
+    if (old) {
+      if ((old.dataset.off ?? "") !== off) {
+        if (off)
+          old.dataset.off = off;
+        else
+          delete old.dataset.off;
+      }
+      continue;
+    }
+    const badge = name.ownerDocument.createElement("span");
+    badge.className = "gm-badge";
+    badge.innerHTML = icon;
+    badge.title = on ? "Grimoire is keeping a notebook for this story" : "Grimoire has a notebook for this story (turned off)";
+    if (off)
+      badge.dataset.off = off;
+    name.append(badge);
+  }
+  for (const stray of [...root.querySelectorAll(".gm-badge")])
+    if (!stray.closest(NAMES))
+      stray.remove();
+  return placed;
+}
 
 // src/clock.ts
 function describeDuration(hours) {
@@ -65,7 +105,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.29.0";
+var VERSION = "0.29.1";
 var CHAPTER_WORKING = "Starting a new chapter";
 var CHAPTER_DONE = "New chapter ready";
 
@@ -984,7 +1024,7 @@ function setup(ctx) {
     home.type = "checkbox";
     home.checked = settings.homeList !== false;
     home.style.width = "auto";
-    homeRow.append(home, document.createTextNode("Show my stories on the home page"));
+    homeRow.append(home, document.createTextNode("Mark my stories on the home page"));
     card.append(homeRow);
     const status = el("p", "gm-hint", "Changes save on their own.");
     const save = async () => {
@@ -1064,29 +1104,31 @@ function setup(ctx) {
     }
     return list;
   }
-  let homeMount = null;
-  try {
-    homeMount = ctx.ui.mount("landing_hero");
-  } catch {
-    homeMount = null;
-  }
-  const home = el("section", "gm-home");
-  home.hidden = true;
-  if (homeMount) {
-    homeMount.append(home);
-    teardown.push(() => home.remove());
-  }
+  let marking = null;
   function renderHome() {
-    const show = !!snapshot && snapshot.settings.homeList !== false && !chatId() && stories.length > 0;
-    home.hidden = !show;
-    if (!show) {
-      home.replaceChildren();
-      return;
-    }
-    const title = el("div", "gm-home-title");
-    title.innerHTML = ICON;
-    title.append(el("span", "", "Your stories"));
-    home.replaceChildren(title, storyList("gm-home-list"));
+    const on = !!snapshot && snapshot.settings.homeList !== false && !chatId();
+    try {
+      markStories(document.body, on ? stories : [], ICON);
+    } catch {}
+  }
+  if (typeof MutationObserver !== "undefined") {
+    const watcher = new MutationObserver(() => {
+      if (marking || destroyed || chatId() || !stories.length)
+        return;
+      marking = setTimeout(() => {
+        marking = null;
+        renderHome();
+      }, 200);
+    });
+    watcher.observe(document.body, { childList: true, subtree: true });
+    teardown.push(() => {
+      watcher.disconnect();
+      if (marking)
+        clearTimeout(marking);
+      try {
+        markStories(document.body, [], ICON);
+      } catch {}
+    });
   }
   async function refreshStories() {
     if (destroyed || chatId()) {

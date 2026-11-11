@@ -1,5 +1,6 @@
 import type { SpindleFrontendContext } from 'lumiverse-spindle-types';
 import { styles } from './styles';
+import { markStories } from './badges';
 import { describeDuration } from './clock';
 import type { Notebook, Pace } from './notebook';
 import { CHAPTER_DONE, CHAPTER_WORKING, VERSION, type ChatView, type Settings, type Snapshot, type StoryListing } from './types';
@@ -530,7 +531,7 @@ export function setup(ctx: SpindleFrontendContext) {
     memRow.append(mem, document.createTextNode('Add Lumiverse’s memories to the note'));
     card.append(memRow, el('p', 'gm-hint', 'Gives the narrator what Lumiverse’s Memory Cortex remembers about the scene, so any preset has it. Skipped on its own when your preset already includes memories. Grimoire also reads the memory when it plans, either way.'));
     const homeRow = el('label', 'gm-row gm-small'), home = el('input'); home.type = 'checkbox'; home.checked = settings.homeList !== false; home.style.width = 'auto';
-    homeRow.append(home, document.createTextNode('Show my stories on the home page'));
+    homeRow.append(home, document.createTextNode('Mark my stories on the home page'));
     card.append(homeRow);
     // Every change saves on its own, so nothing is lost to a button below the fold.
     const status = el('p', 'gm-hint', 'Changes save on their own.');
@@ -588,16 +589,17 @@ export function setup(ctx: SpindleFrontendContext) {
     }
     return list;
   }
-  let homeMount: HTMLElement | null = null;
-  try { homeMount = ctx.ui.mount('landing_hero') as HTMLElement; } catch { homeMount = null; }
-  const home = el('section', 'gm-home'); home.hidden = true;
-  if (homeMount) { homeMount.append(home); teardown.push(() => home.remove()); }
+  // On the home page, chats with a notebook get a small crystal ball on Lumiverse's own cards (no second list).
+  let marking: ReturnType<typeof setTimeout> | null = null;
   function renderHome() {
-    const show = !!snapshot && snapshot.settings.homeList !== false && !chatId() && stories.length > 0;
-    home.hidden = !show;
-    if (!show) { home.replaceChildren(); return; }
-    const title = el('div', 'gm-home-title'); title.innerHTML = ICON; title.append(el('span', '', 'Your stories'));
-    home.replaceChildren(title, storyList('gm-home-list'));
+    const on = !!snapshot && snapshot.settings.homeList !== false && !chatId();
+    try { markStories(document.body, on ? stories : [], ICON); } catch { /* the home page changed shape: no marks */ }
+  }
+  if (typeof MutationObserver !== 'undefined') {
+    // Cards load, scroll and get reused; mark again shortly after the page changes.
+    const watcher = new MutationObserver(() => { if (marking || destroyed || chatId() || !stories.length) return; marking = setTimeout(() => { marking = null; renderHome(); }, 200); });
+    watcher.observe(document.body, { childList: true, subtree: true });
+    teardown.push(() => { watcher.disconnect(); if (marking) clearTimeout(marking); try { markStories(document.body, [], ICON); } catch { /* nothing to clear */ } });
   }
   async function refreshStories() {
     if (destroyed || chatId()) { renderHome(); return; }

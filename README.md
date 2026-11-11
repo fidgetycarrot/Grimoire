@@ -64,7 +64,7 @@ New features should keep these promises: they make play more fun, they keep the 
 
 ## Your stories
 
-Chats that have a notebook are listed on the home page under **Your stories**, newest first, with when you last played. Tap one to open it. The Grimoire drawer shows the same list when no chat is open. Turn the home page list off in **Settings → Show my stories on the home page**.
+On the home page, characters whose chats have a notebook get a small crystal ball next to their name (dimmed when Grimoire is turned off there). With no chat open, the Grimoire drawer lists them under **Your stories**, newest first, with when you last played; tap one to open it. The mark can be turned off in Settings.
 
 ## Install
 
