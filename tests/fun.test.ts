@@ -59,6 +59,7 @@ describe('check-ups that list only what changes', () => {
     expect(checkup).toContain('Return {"changes": {...}');
     expect(checkup).toContain('do not copy unchanged items');
     expect(checkup).toContain('What the player enjoys');
+    expect(checkup).toContain('a long intimate scene says nothing by its length');
     const material = { character: { name: 'Claire', description: '', personality: '', scenario: '', firstMessage: '' }, persona: null, lore: { rules: [], entries: [], index: [], more: 0 }, storySoFar: '', chat: [], replies: [], variables: {} };
     const create = creationMessages(material, prefs())[0].content;
     for (const part of ['at least one win the player can earn', 'one real choice', 'a storyline of their own', 'never invent their past']) expect(create).toContain(part);
