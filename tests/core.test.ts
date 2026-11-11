@@ -907,3 +907,21 @@ describe('the version shown in the panel', () => {
     expect(VERSION).toBe(require('../spindle.json').version);
   });
 });
+
+describe('a backup planner', () => {
+  const { withBackup, ModelError } = require('../src/model');
+  test('takes over when the main one declines, and only then', async () => {
+    const declines = async () => { throw new ModelError('DECLINED', 'no'); };
+    const down = async () => { throw new ModelError('RATE_LIMIT', 'busy'); };
+    const backup = async () => 'from backup';
+    expect(await withBackup(declines, backup)([])).toBe('from backup');
+    expect(await withBackup(async () => 'main', backup)([])).toBe('main');
+    await expect(withBackup(down, backup)([])).rejects.toThrow('RATE_LIMIT');
+    await expect(withBackup(declines, null)([])).rejects.toThrow('DECLINED');
+  });
+  test('the setting is kept, and never the same as the main connection', () => {
+    const { validSettings } = require('../src/controller');
+    expect(validSettings({ connectionId: 'a', backupId: 'b' }).backupId).toBe('b');
+    expect(validSettings({ connectionId: 'a', backupId: 'a' }).backupId).toBe('');
+  });
+});

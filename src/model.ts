@@ -75,3 +75,15 @@ export async function askJson<T>(ask: Ask, messages: Message[], check: (value: u
   }
   throw new ModelError('UNREACHABLE', 'Unexpected state.');
 }
+
+/**
+ * A planner that falls back. Some models decline some stories (a cautious model and an explicit chat). When the
+ * main connection declines, the same request goes to the backup once, so the check-up isn't lost.
+ */
+export function withBackup(main: Ask, backup: Ask | null): Ask {
+  if (!backup) return main;
+  return async (messages, signal) => {
+    try { return await main(messages, signal); }
+    catch (error) { if (error instanceof ModelError && error.code === 'DECLINED') return backup(messages, signal); throw error; }
+  };
+}

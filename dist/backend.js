@@ -547,6 +547,19 @@ async function askJson(ask, messages, check, signal) {
   }
   throw new ModelError("UNREACHABLE", "Unexpected state.");
 }
+function withBackup(main, backup) {
+  if (!backup)
+    return main;
+  return async (messages, signal) => {
+    try {
+      return await main(messages, signal);
+    } catch (error) {
+      if (error instanceof ModelError && error.code === "DECLINED")
+        return backup(messages, signal);
+      throw error;
+    }
+  };
+}
 
 // src/notebook.ts
 var STAGES = { conflict: ["setup", "rising", "climax", "resolution"], kishotenketsu: ["ki", "sho", "ten", "ketsu"] };
@@ -2967,11 +2980,11 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.24.3";
+var VERSION = "0.25.0";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
-var DEFAULT_SETTINGS = { connectionId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true, intimate: "protect", memories: true };
+var DEFAULT_SETTINGS = { connectionId: "", backupId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true, intimate: "protect", memories: true };
 var DEFAULT_PREFERENCES = { tone: "balanced", twist: true, shape: "auto", lockShape: false, size: "auto" };
 var CHAPTER_WORKING = "Starting a new chapter";
 var CHAPTER_DONE = "New chapter ready";
@@ -3114,6 +3127,7 @@ function validSettings(value) {
   const v = record7(value), every = Number(v.every), tokens = Number(v.maxOutputTokens), quick = record7(v.quick);
   return {
     connectionId: typeof v.connectionId === "string" ? v.connectionId : "",
+    backupId: typeof v.backupId === "string" && v.backupId !== v.connectionId ? v.backupId.slice(0, 120) : "",
     maxOutputTokens: [8000, 16000, 32000, 64000].includes(tokens) ? tokens : DEFAULT_SETTINGS.maxOutputTokens,
     reasoningMode: ["inherit", "off", "low"].includes(v.reasoningMode) ? v.reasoningMode : "inherit",
     every: Number.isInteger(every) && every >= 2 && every <= 50 ? every : DEFAULT_SETTINGS.every,
@@ -3401,7 +3415,8 @@ class NotebookController {
       return this.ask;
     if (!settings.connectionId)
       throw new Error("Choose a connection in Grimoire settings first.");
-    return (messages, signal) => askModel(this.api, this.userId, settings, messages, signal);
+    const on = (connectionId) => (messages, signal) => askModel(this.api, this.userId, { ...settings, connectionId }, messages, signal);
+    return withBackup(on(settings.connectionId), settings.backupId ? on(settings.backupId) : null);
   }
   async character(characterId) {
     const character = await this.api.characters.get(characterId, this.userId);

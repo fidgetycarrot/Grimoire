@@ -465,9 +465,10 @@ export function setup(ctx: SpindleFrontendContext) {
 
   // ----- Settings -----
   function renderSettings() {
-    const settings: Settings = { ...(snapshot?.settings ?? { connectionId: '', maxOutputTokens: 16000, reasoningMode: 'inherit', every: 8, quick: { enabled: false, connectionId: '', model: '' }, wait: 'medium', homeList: true, intimate: 'protect', memories: true }) };
+    const settings: Settings = { ...(snapshot?.settings ?? { connectionId: '', backupId: '', maxOutputTokens: 16000, reasoningMode: 'inherit', every: 8, quick: { enabled: false, connectionId: '', model: '' }, wait: 'medium', homeList: true, intimate: 'protect', memories: true }) };
     const card = el('section', 'gm-card gm-stack');
     const connection = select([['', 'Choose a connection'], ...(snapshot?.connections ?? []).map(c => [c.id, `${c.name}${c.model ? ` · ${c.model}` : ''}`] as [string, string])], settings.connectionId);
+    const backup = select([['', 'None'], ...(snapshot?.connections ?? []).map(c => [c.id, `${c.name}${c.model ? ` · ${c.model}` : ''}`] as [string, string])], settings.backupId ?? '');
     const every = el('input'); every.type = 'number'; every.min = '2'; every.max = '50'; every.value = String(settings.every);
     const tokens = select([['8000', '8,000'], ['16000', '16,000'], ['32000', '32,000'], ['64000', '64,000']], String(settings.maxOutputTokens));
     const reasoning = select([['inherit', 'Use the connection’s setting'], ['off', 'Off'], ['low', 'Low']], settings.reasoningMode);
@@ -475,6 +476,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const grid = el('div', 'gm-grid'); grid.append(labeled('Response room (tokens)', tokens), labeled('Reasoning', reasoning));
     card.append(el('h2', '', 'Settings'),
       labeled('Model connection', connection, 'Used to write notebooks and run check-ups. Your chat keeps its own connection. A cheaper model may do, but test it on a chat first.'),
+      labeled('Backup connection', backup, 'Some models refuse some stories. If the main connection declines a request, Grimoire sends it here instead, so the check-up isn’t lost.'),
       labeled('Longest a story thread waits', wait, 'A thread moves on when enough story time has passed, or after this many replies, whichever comes first, so a long scene never leaves the story stuck. Urgent threads wait less and slow ones longer. Big scenes still aren’t interrupted for slow threads; they come in at the next break.'),
       labeled('Check-up after this many replies', every, 'A fallback. Check-ups also run when the scene changes or time jumps.'), grid);
 
@@ -505,7 +507,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const status = el('p', 'gm-hint', 'Changes save on their own.');
     const save = async () => {
       // Saved without redrawing the page, so the next change isn't interrupted.
-      try { await rpc.request('settings', { settings: { connectionId: connection.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, wait: wait.value, homeList: home.checked, intimate: intimate.value, memories: mem.checked, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } }); }
+      try { await rpc.request('settings', { settings: { connectionId: connection.value, backupId: backup.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, wait: wait.value, homeList: home.checked, intimate: intimate.value, memories: mem.checked, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } }); }
       catch (error) { notify(error instanceof Error ? error.message : String(error), 'error'); return; }
       status.textContent = 'Saved.';
       void refresh();

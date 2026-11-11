@@ -2,7 +2,7 @@ import type { SpindleAPI, LlmMessageDTO, InterceptorContextDTO, InterceptorResul
 import { absoluteHours, advanceClock, describeClock, describeDuration, durationHours, type StoryClock } from './clock';
 import { conversation, fingerprints, newestMatching, covers, planHistory, readable, storyReplies, told, type Piece, type Turn } from './history';
 import { splitOoc } from './ooc';
-import { askJson, askModel, ModelError, type Ask } from './model';
+import { askJson, askModel, ModelError, withBackup, type Ask } from './model';
 import { buildNote, liveClock, paceLine, presentPeople, type ClockSources } from './note';
 import { awayPeople, castProblems, noteSeen } from './cast';
 import { layoutLine, whereabouts } from './layout';
@@ -152,6 +152,7 @@ export function validSettings(value: unknown): Settings {
   const v = record(value), every = Number(v.every), tokens = Number(v.maxOutputTokens), quick = record(v.quick);
   return {
     connectionId: typeof v.connectionId === 'string' ? v.connectionId : '',
+    backupId: typeof v.backupId === 'string' && v.backupId !== v.connectionId ? v.backupId.slice(0, 120) : '',
     maxOutputTokens: [8000, 16000, 32000, 64000].includes(tokens) ? tokens : DEFAULT_SETTINGS.maxOutputTokens,
     reasoningMode: ['inherit', 'off', 'low'].includes(v.reasoningMode as string) ? v.reasoningMode as Settings['reasoningMode'] : 'inherit',
     every: Number.isInteger(every) && every >= 2 && every <= 50 ? every : DEFAULT_SETTINGS.every,
@@ -358,7 +359,8 @@ export class NotebookController {
   private asker(settings: Settings): Ask {
     if (this.ask) return this.ask;
     if (!settings.connectionId) throw new Error('Choose a connection in Grimoire settings first.');
-    return (messages, signal) => askModel(this.api, this.userId, settings, messages, signal);
+    const on = (connectionId: string): Ask => (messages, signal) => askModel(this.api, this.userId, { ...settings, connectionId }, messages, signal);
+    return withBackup(on(settings.connectionId), settings.backupId ? on(settings.backupId) : null);
   }
   private async character(characterId: string) {
     const character = await this.api.characters.get(characterId, this.userId);
