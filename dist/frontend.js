@@ -1,46 +1,51 @@
 // src/styles.ts
 var styles = `
-.gm-app{--gm-bg:var(--lumiverse-bg,#16181c);--gm-card:var(--lumiverse-bg-secondary,#1e2126);--gm-ink:var(--lumiverse-text,#ece8df);--gm-muted:var(--lumiverse-text-muted,#9fa2a8);--gm-line:color-mix(in srgb,var(--gm-ink) 13%,transparent);--gm-rule:color-mix(in srgb,var(--gm-ink) 7%,transparent);--gm-accent:#8fb3d9;--gm-accent-ink:#0f1a26;--gm-warn:#e0b25c;--gm-good:#8cc49a;color:var(--gm-ink);background:var(--gm-bg);font:14px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;min-height:100%;padding:24px 22px 34px;box-sizing:border-box;color-scheme:dark;container-type:inline-size;overflow-wrap:anywhere}
+.gm-app{--gm-bg:var(--lumiverse-bg,#16181c);--gm-ink:var(--lumiverse-text,#ece8df);--gm-muted:var(--lumiverse-text-muted,#9fa2a8);--gm-line:var(--lumiverse-border,color-mix(in srgb,var(--gm-ink) 13%,transparent));--gm-rule:color-mix(in srgb,var(--gm-ink) 8%,transparent);--gm-fill:var(--lumiverse-fill,color-mix(in srgb,var(--gm-ink) 7%,transparent));--gm-card:color-mix(in srgb,var(--lumiverse-fill-subtle,var(--lumiverse-bg-secondary,#1e2126)) 88%,transparent);--gm-accent:var(--lumiverse-accent,var(--lumiverse-primary,#8fb3d9));--gm-warn:#e0b25c;--gm-good:#8cc49a;color:var(--gm-ink);background:var(--gm-bg);font:13.5px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;min-height:100%;padding:16px 14px 28px;box-sizing:border-box;color-scheme:dark;container-type:inline-size;overflow-wrap:anywhere}
 .gm-app *,.gm-app *:before,.gm-app *:after{box-sizing:border-box}.gm-app [hidden]{display:none!important}.gm-app h1,.gm-app h2,.gm-app h3,.gm-app h4,.gm-app p,.gm-app ul,.gm-app ol{margin:0}
-.gm-app h1{font:normal 30px/1.15 Georgia,"Times New Roman",serif;letter-spacing:-.6px}.gm-app h2{font:normal 21px/1.25 Georgia,"Times New Roman",serif}.gm-app h3{font-size:14px;font-weight:650}.gm-app h4{font-size:12px;font-weight:650;letter-spacing:.6px;text-transform:uppercase;color:var(--gm-muted)}
+.gm-app h1{font-size:16px;font-weight:750;letter-spacing:.01em;line-height:1.2}.gm-app h2{font-size:17px;font-weight:700;line-height:1.3}.gm-app h3{font-size:13.5px;font-weight:700}.gm-app h4{font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--gm-muted)}
 .gm-app button,.gm-app input,.gm-app select,.gm-app textarea{font:inherit}.gm-app button{cursor:pointer}.gm-app button:disabled{cursor:not-allowed;opacity:.45}
 .gm-app :is(button,summary,input,select,textarea):focus-visible{outline:2px solid var(--gm-accent);outline-offset:2px}
-.gm-app :is(input,select,textarea){width:100%;border:1px solid var(--gm-line);border-radius:8px;background:color-mix(in srgb,var(--gm-bg) 70%,transparent);color:var(--gm-ink);padding:9px 11px;min-width:0}.gm-app textarea{resize:vertical;min-height:120px;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}.gm-app select option{background:var(--gm-card);color:var(--gm-ink)}
-.gm-header{display:flex;gap:14px;align-items:flex-start;margin-bottom:20px}.gm-mark{flex:none;width:38px;height:46px;border:1.5px solid var(--gm-accent);border-radius:3px 7px 7px 3px;position:relative;margin-top:3px;background:repeating-linear-gradient(to bottom,transparent 0 9px,var(--gm-rule) 9px 10px)}.gm-mark:before{content:"";position:absolute;left:6px;top:-1px;bottom:-1px;border-left:1.5px solid var(--gm-accent);opacity:.6}
+.gm-app :is(input,select,textarea){width:100%;border:1px solid var(--gm-line);border-radius:10px;background:var(--gm-fill);color:var(--gm-ink);padding:9px 11px;min-width:0}.gm-app :is(input,select,textarea):focus{outline:2px solid color-mix(in srgb,var(--gm-accent) 60%,transparent);outline-offset:1px}.gm-app textarea{resize:vertical;min-height:120px;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}.gm-app select option{background:var(--gm-bg);color:var(--gm-ink)}.gm-app input[type=checkbox]:not([role=switch]){width:auto;accent-color:var(--gm-accent)}
+.gm-header{display:flex;gap:10px;align-items:center;margin:0 2px 14px}.gm-mark{flex:none;width:26px;height:26px;color:var(--gm-accent);display:inline-flex}.gm-mark svg{width:100%;height:100%}.gm-header .gm-spacer{flex:1}
 .gm-sub{color:var(--gm-muted);font-size:12.5px;margin-top:4px!important}
-.gm-tabs{display:flex;gap:18px;border-bottom:1px solid var(--gm-line);margin-bottom:18px}.gm-tab{background:none;border:0;color:var(--gm-muted);padding:8px 0 11px;border-bottom:2px solid transparent;margin-bottom:-1px;font-size:13px}.gm-tab[aria-selected=true]{color:var(--gm-ink);border-color:var(--gm-accent)}
-.gm-stack{display:flex;flex-direction:column;gap:12px}.gm-panel{display:flex;flex-direction:column;gap:16px}.gm-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.gm-row.gm-spread{justify-content:space-between}.gm-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.gm-card{border:1px solid var(--gm-line);border-radius:12px;padding:16px;background:var(--gm-card)}.gm-field{display:flex;flex-direction:column;gap:5px}.gm-label{font-size:12px;font-weight:650}.gm-hint{font-size:11.5px;color:var(--gm-muted);line-height:1.5}.gm-small{font-size:12.5px}
-.gm-button{border:1px solid var(--gm-line);border-radius:8px;background:transparent;color:var(--gm-ink);padding:8px 12px;font-weight:600;font-size:12.5px;line-height:1.35}.gm-button:hover:not(:disabled){background:color-mix(in srgb,var(--gm-ink) 7%,transparent)}.gm-primary{background:var(--gm-accent);color:var(--gm-accent-ink);border-color:var(--gm-accent)}.gm-primary:hover:not(:disabled){filter:brightness(1.06)}.gm-danger{color:#e38b7c;border-color:color-mix(in srgb,#e38b7c 45%,transparent)}.gm-wide{width:100%;padding:11px 14px}
+.gm-tabs{display:inline-flex;gap:2px;padding:3px;border-radius:999px;background:var(--gm-fill)}.gm-tab{background:none;border:0;color:var(--gm-muted);padding:5px 12px;border-radius:999px;font-size:12px;font-weight:650;transition:background .12s ease,color .12s ease}.gm-tab[aria-selected=true]{color:var(--gm-ink);background:var(--gm-bg);box-shadow:0 1px 4px rgba(0,0,0,.14)}
+.gm-stack{display:flex;flex-direction:column;gap:10px}.gm-panel{display:flex;flex-direction:column;gap:12px}.gm-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.gm-row.gm-spread{justify-content:space-between}.gm-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.gm-card{border:1px solid var(--gm-line);border-radius:14px;padding:14px;background:var(--gm-card);box-shadow:0 5px 18px rgba(0,0,0,.10)}.gm-field{display:flex;flex-direction:column;gap:5px}.gm-label{font-size:12px;font-weight:650}.gm-hint{font-size:11.5px;color:var(--gm-muted);line-height:1.45}.gm-small{font-size:12.5px;line-height:1.5}
+.gm-button{border:1px solid transparent;border-radius:10px;background:var(--gm-fill);color:var(--gm-ink);padding:8px 12px;font-weight:650;font-size:12.5px;line-height:1.35;transition:transform .12s ease,border-color .12s ease,background .12s ease}.gm-button:hover:not(:disabled){transform:translateY(-1px);border-color:var(--gm-line)}.gm-button:active:not(:disabled){transform:translateY(0)}.gm-primary{background:color-mix(in srgb,var(--gm-accent) 24%,transparent);border-color:color-mix(in srgb,var(--gm-accent) 55%,transparent)}.gm-primary:hover:not(:disabled){border-color:var(--gm-accent)}.gm-danger{color:#e38b7c;background:transparent;border-color:color-mix(in srgb,#e38b7c 40%,transparent)}.gm-wide{width:100%;padding:10px 14px}
 .gm-status{font-size:12.5px;min-height:1.4em;color:var(--gm-muted)}.gm-status[data-kind=error]{color:#e38b7c}
-.gm-notice{font-size:12.5px;border-left:2px solid var(--gm-warn);padding:6px 10px;background:color-mix(in srgb,var(--gm-warn) 8%,transparent);border-radius:0 6px 6px 0}
-.gm-clock{font:normal 26px/1.2 Georgia,"Times New Roman",serif;letter-spacing:-.3px}.gm-source{font-size:11.5px;color:var(--gm-muted)}
-.gm-pace{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid var(--gm-line);border-radius:9px;overflow:hidden}.gm-pace button{background:none;border:0;border-right:1px solid var(--gm-line);color:var(--gm-muted);padding:9px 6px;font-weight:600;font-size:12.5px}.gm-pace button:last-child{border-right:0}.gm-pace button[aria-pressed=true]{background:color-mix(in srgb,var(--gm-accent) 18%,transparent);color:var(--gm-ink)}
-.gm-switch{display:flex;align-items:center;justify-content:space-between;gap:12px}.gm-switch input{width:38px;height:22px;appearance:none;border-radius:999px;background:var(--gm-line);position:relative;cursor:pointer;flex:none;padding:0;border:0}.gm-switch input:before{content:"";position:absolute;width:16px;height:16px;border-radius:50%;left:3px;top:3px;background:var(--gm-ink);transition:left .15s}.gm-switch input:checked{background:var(--gm-accent)}.gm-switch input:checked:before{left:19px;background:var(--gm-accent-ink)}
-.gm-details{border:1px solid var(--gm-line);border-radius:12px;background:var(--gm-card)}.gm-details>summary{padding:13px 16px;cursor:pointer;font-weight:600;font-size:13px;list-style-position:inside}.gm-details>.gm-stack{padding:0 16px 16px}
+.gm-notice{font-size:12.5px;padding:8px 11px;background:color-mix(in srgb,var(--gm-warn) 11%,transparent);border:1px solid color-mix(in srgb,var(--gm-warn) 35%,transparent);border-radius:11px}
+.gm-clock{font-size:22px;font-weight:750;line-height:1.2;letter-spacing:-.2px}.gm-source{font-size:11px;color:var(--gm-muted)}
+.gm-hero{display:flex;align-items:center;gap:12px}.gm-hero>div{flex:1;min-width:0}.gm-hero h2{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gm-recap{padding:10px 12px;border-radius:12px;background:var(--gm-fill);font-size:12.5px;line-height:1.5}.gm-recap h4{margin-bottom:4px}
+.gm-stats{display:grid;grid-template-columns:1fr 1fr;gap:8px}.gm-stat{padding:10px 12px;border-radius:12px;background:var(--gm-fill);display:flex;flex-direction:column;gap:5px;min-width:0}
+.gm-foot{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center;font-size:11px;color:var(--gm-muted)}.gm-foot .gm-ok:before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--gm-good);margin-right:5px;vertical-align:1px}
+.gm-act{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:12px;background:var(--gm-fill)}.gm-act>div{flex:1;min-width:0}.gm-act .gm-button{flex:none;background:var(--gm-bg)}
+.gm-pace{display:grid;grid-template-columns:repeat(3,1fr);gap:2px;padding:3px;border-radius:10px;background:var(--gm-bg)}.gm-pace button{background:none;border:0;border-radius:8px;color:var(--gm-muted);padding:6px 4px;font-weight:650;font-size:12px;transition:background .12s ease,color .12s ease}.gm-pace button[aria-pressed=true]{background:color-mix(in srgb,var(--gm-accent) 24%,transparent);color:var(--gm-ink)}
+.gm-switch{display:flex;align-items:center;justify-content:space-between;gap:12px}.gm-app input[role=switch]{width:38px;height:22px;appearance:none;border-radius:999px;background:var(--gm-line);position:relative;cursor:pointer;flex:none;padding:0;border:0}.gm-app input[role=switch]:before{content:"";position:absolute;width:16px;height:16px;border-radius:50%;left:3px;top:3px;background:var(--gm-ink);transition:left .15s}.gm-app input[role=switch]:checked{background:var(--gm-accent)}.gm-app input[role=switch]:checked:before{left:19px;background:var(--gm-bg)}
+.gm-details{border:1px solid var(--gm-line);border-radius:14px;background:var(--gm-card)}.gm-details>summary{display:flex;align-items:center;gap:10px;padding:11px 14px;cursor:pointer;list-style:none;border-radius:14px}.gm-details>summary::-webkit-details-marker{display:none}.gm-details>summary:hover{background:var(--gm-fill)}.gm-sum-words{flex:1;min-width:0;display:flex;flex-direction:column}.gm-sum-title{font-weight:700;font-size:13px}.gm-sum-sub{font-size:11px;color:var(--gm-muted)}.gm-details>summary:after{content:"";flex:none;width:7px;height:7px;border-right:1.5px solid var(--gm-muted);border-bottom:1.5px solid var(--gm-muted);transform:rotate(-45deg);transition:transform .15s ease;margin-right:3px}.gm-details[open]>summary:after{transform:rotate(45deg)}.gm-details[open]>summary{border-radius:14px 14px 0 0}.gm-details>.gm-stack{padding:6px 14px 14px}
 .gm-fields{list-style:none;padding:0;display:flex;flex-direction:column;gap:6px}.gm-fields li{display:flex;justify-content:space-between;gap:12px;font-size:12.5px;border-bottom:1px solid var(--gm-rule);padding-bottom:6px}.gm-fields li:last-child{border:0}.gm-dot{font-size:11.5px;text-align:right;min-width:0;overflow-wrap:break-word}.gm-fields li>span:first-child{flex:none;max-width:50%}.gm-dot[data-state=verified]{color:var(--gm-good)}.gm-dot[data-state=waiting]{color:var(--gm-warn)}.gm-dot[data-state=unavailable]{color:var(--gm-muted)}
 .gm-book{display:flex;flex-direction:column;gap:18px}.gm-book section{display:flex;flex-direction:column;gap:7px}.gm-book ul{padding-left:18px;display:flex;flex-direction:column;gap:5px}.gm-entry{border-top:1px solid var(--gm-rule);padding-top:8px;display:flex;flex-direction:column;gap:3px}.gm-entry:first-of-type{border:0;padding-top:0}.gm-meta{font-size:11.5px;color:var(--gm-muted)}.gm-chip{display:inline-block;font-size:10.5px;font-weight:650;letter-spacing:.3px;padding:1px 7px;border-radius:999px;border:1px solid var(--gm-line);color:var(--gm-muted);margin-left:6px;vertical-align:1px}.gm-chip[data-tone=due]{border-color:var(--gm-warn);color:var(--gm-warn)}.gm-chip[data-tone=done]{border-color:var(--gm-good);color:var(--gm-good)}
 .gm-steps{list-style:decimal!important}.gm-steps li[data-status=shown],.gm-steps li[data-status=offscreen]{color:var(--gm-muted)}.gm-steps li[data-status=skipped]{text-decoration:line-through;color:var(--gm-muted)}
-.gm-empty{text-align:center;padding:34px 18px;border:1px dashed var(--gm-line);border-radius:12px;color:var(--gm-muted)}
-.gm-footer{margin-top:26px;font-size:10px;letter-spacing:1.4px;color:var(--gm-muted);text-transform:uppercase}
+.gm-empty{text-align:center;padding:30px 18px;border:1px dashed var(--gm-line);border-radius:14px;color:var(--gm-muted)}
+.gm-footer{margin:18px 4px 0;font-size:10px;letter-spacing:.08em;color:var(--gm-muted);opacity:.75}
 .gm-pace-button{box-sizing:border-box;flex:0 0 auto;width:auto;user-select:none;display:inline-flex;white-space:nowrap;align-items:center;gap:6px;border:1px solid var(--lumiverse-border,rgba(255,255,255,.14));background:transparent;color:inherit;border-radius:999px;padding:3px 10px 3px 8px;font:600 12px/1.6 ui-sans-serif,system-ui,sans-serif;cursor:pointer;opacity:.9}.gm-pace-button:hover{opacity:1}.gm-pace-button:focus-visible{outline:2px solid currentColor;outline-offset:2px}.gm-pace-button svg{width:14px;height:14px}.gm-pace-button[hidden]{display:none!important}
 .gm-home{margin:14px 0;font:13px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--lumiverse-text,inherit)}.gm-home[hidden]{display:none!important}.gm-home-title{display:flex;align-items:center;gap:7px;font-weight:650;font-size:12px;letter-spacing:.5px;text-transform:uppercase;opacity:.75;margin-bottom:8px}.gm-home-title svg{width:15px;height:15px}
 .gm-home-list,.gm-story-list{display:flex;gap:8px;flex-wrap:wrap}.gm-story-list{flex-direction:column}
 .gm-story{display:flex;flex-direction:column;align-items:flex-start;gap:1px;text-align:left;border:1px solid var(--lumiverse-border,rgba(127,127,127,.28));border-radius:10px;background:var(--lumiverse-bg-secondary,rgba(127,127,127,.08));color:inherit;padding:8px 12px;cursor:pointer;max-width:260px;min-width:0;font:inherit}.gm-story:hover{border-color:var(--lumiverse-primary,#8fb3d9)}.gm-story-name{font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}.gm-story-meta{font-size:11.5px;opacity:.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}.gm-story-list .gm-story{max-width:none;width:100%}
 .gm-app textarea.gm-talk-input{min-height:72px;font:13px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}.gm-note{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;border-left:2px solid var(--gm-accent);padding:2px 0 2px 10px}.gm-note .gm-button{flex:none;padding:3px 9px;font-size:11.5px}
-.gm-talk-log{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--gm-rule);padding-top:10px}.gm-line{display:flex;flex-direction:column;gap:2px;padding:7px 10px;border-radius:9px;background:color-mix(in srgb,var(--gm-ink) 4%,transparent)}.gm-line-you{align-self:flex-end;max-width:88%;background:color-mix(in srgb,var(--gm-accent) 12%,transparent)}.gm-line-grimoire{align-self:flex-start;max-width:94%}.gm-line-who{font-size:10.5px;font-weight:650;letter-spacing:.5px;text-transform:uppercase;color:var(--gm-muted)}.gm-changes{margin:3px 0 0;padding-left:16px;font-size:11.5px;color:var(--gm-muted)}
+.gm-talk-log{display:flex;flex-direction:column;gap:7px}.gm-line{display:flex;flex-direction:column;gap:2px;padding:8px 11px;border-radius:12px;background:var(--gm-fill);font-size:12.5px}.gm-line-you{align-self:flex-end;max-width:88%;background:color-mix(in srgb,var(--gm-accent) 16%,transparent)}.gm-line-grimoire{align-self:flex-start;max-width:94%}.gm-line-who{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--gm-muted)}.gm-changes{margin:3px 0 0;padding-left:16px;font-size:11.5px;color:var(--gm-muted)}
 .gm-sub{border-top:1px solid var(--gm-rule);padding-top:12px}.gm-part{border-top:1px solid var(--gm-rule);padding-top:12px}.gm-part:first-child{border:0;padding-top:0}
-.gm-chips{display:flex;flex-wrap:wrap;gap:6px}.gm-chips .gm-button{padding:6px 11px;font-size:12px;border-radius:999px}
+.gm-chips{display:flex;flex-wrap:wrap;gap:6px}.gm-chips .gm-button{padding:6px 12px;font-size:12px;border-radius:999px}
 .gm-quiet .gm-button{border-color:transparent;color:var(--gm-muted);padding:4px 8px;font-size:11.5px}.gm-quiet .gm-button:hover:not(:disabled){color:var(--gm-ink)}
 .gm-since{font-variant-numeric:tabular-nums;color:var(--gm-muted)}
-.gm-live{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;border:1px solid color-mix(in srgb,var(--gm-accent) 50%,transparent);background:color-mix(in srgb,var(--gm-accent) 10%,transparent);animation:gm-breathe 2.6s ease-in-out infinite}.gm-live-words{flex:1;min-width:0;font-size:13px;font-weight:600;overflow-wrap:normal;word-break:normal;hyphens:none}.gm-live .gm-since{display:block;font-weight:500}
+.gm-live{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;border:1px solid color-mix(in srgb,var(--gm-accent) 50%,transparent);background:color-mix(in srgb,var(--gm-accent) 10%,transparent);animation:gm-breathe 2.6s ease-in-out infinite}.gm-live-words{flex:1;min-width:0;font-size:13px;font-weight:600;overflow-wrap:normal;word-break:normal;hyphens:none}.gm-live .gm-since{display:block;font-weight:500}
 .gm-pulse-dot{width:9px;height:9px;flex:none;border-radius:50%;background:var(--gm-accent);animation:gm-pulse 1.1s ease-in-out infinite}
 .gm-done{font-size:13px;color:var(--gm-good);font-weight:600}
 @keyframes gm-pulse{0%,100%{transform:scale(.7);opacity:.55}50%{transform:scale(1.15);opacity:1}}
 @keyframes gm-breathe{0%,100%{background:color-mix(in srgb,var(--gm-accent) 7%,transparent)}50%{background:color-mix(in srgb,var(--gm-accent) 16%,transparent)}}
 @media (prefers-reduced-motion:reduce){.gm-live,.gm-pulse-dot{animation:none}}.gm-waiting{opacity:.85;border:1px dashed var(--gm-line)}
-@media(prefers-color-scheme:light){.gm-app{--gm-bg:var(--lumiverse-bg,#faf8f3);--gm-card:var(--lumiverse-bg-secondary,#fffdf8);--gm-ink:var(--lumiverse-text,#25231e);--gm-muted:var(--lumiverse-text-muted,#6f6a60);--gm-accent:#2f6699;--gm-accent-ink:#f5f9fd;--gm-warn:#a06d10;--gm-good:#2f7a45;color-scheme:light}}
-@container(max-width:380px){.gm-grid{grid-template-columns:1fr}.gm-app h1{font-size:26px}}
+@media(prefers-color-scheme:light){.gm-app{--gm-bg:var(--lumiverse-bg,#faf8f3);--gm-ink:var(--lumiverse-text,#25231e);--gm-muted:var(--lumiverse-text-muted,#6f6a60);--gm-card:color-mix(in srgb,var(--lumiverse-fill-subtle,var(--lumiverse-bg-secondary,#fffdf8)) 88%,transparent);--gm-accent:var(--lumiverse-accent,var(--lumiverse-primary,#2f6699));--gm-warn:#a06d10;--gm-good:#2f7a45;color-scheme:light}}
+@container(max-width:340px){.gm-grid,.gm-stats{grid-template-columns:1fr}}
 `;
 
 // src/clock.ts
@@ -60,7 +65,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.28.0";
+var VERSION = "0.29.0";
 var CHAPTER_WORKING = "Starting a new chapter";
 var CHAPTER_DONE = "New chapter ready";
 
@@ -166,9 +171,10 @@ function setup(ctx) {
       status.dataset.kind = kind;
     }
   };
-  const header = el("header", "gm-header"), mark = el("div", "gm-mark"), titles = el("div");
-  titles.append(el("h1", "", "Grimoire"), el("p", "gm-sub", "The story behind your chat: where it is going, why, and how fast."));
-  header.append(mark, titles);
+  const header = el("header", "gm-header"), mark = el("span", "gm-mark");
+  mark.innerHTML = ICON;
+  mark.setAttribute("aria-hidden", "true");
+  header.append(mark, el("h1", "", "Grimoire"), el("span", "gm-spacer"));
   const tabs = el("div", "gm-tabs");
   tabs.setAttribute("role", "tablist");
   const tabButtons = ["chat", "settings"].map((key) => {
@@ -183,7 +189,8 @@ function setup(ctx) {
     return [key, b];
   });
   const body = el("div", "gm-panel"), footer = el("footer", "gm-footer", `Grimoire ${VERSION}`);
-  app.append(header, tabs, status, body, footer);
+  header.append(tabs);
+  app.append(header, status, body, footer);
   function button(label, action, kind = "") {
     const b = el("button", `gm-button${kind ? ` gm-${kind}` : ""}`, label);
     b.type = "button";
@@ -222,10 +229,12 @@ function setup(ctx) {
     s.value = value;
     return s;
   }
-  function details(title, open = false) {
-    const d = el("details", "gm-details");
-    const s = el("summary", "", title);
-    const inner = el("div", "gm-stack");
+  function details(title, sub = "", open = false) {
+    const d = el("details", "gm-details"), s = el("summary"), words = el("span", "gm-sum-words"), inner = el("div", "gm-stack");
+    words.append(el("span", "gm-sum-title", title));
+    if (sub)
+      words.append(el("span", "gm-sum-sub", sub));
+    s.append(words);
     d.append(s, inner);
     d.open = open;
     return { root: d, body: inner };
@@ -322,23 +331,33 @@ function setup(ctx) {
   function renderSkipOffer(view) {
     const card = el("section", "gm-card gm-stack gm-skip");
     card.append(el("h3", "", "This scene has gone quiet"), el("p", "gm-hint", "Skipping ahead is up to you. The next reply opens with the time that passed."));
+    const choices = el("div", "gm-chips");
     for (const option of view.skipOffer.options)
-      card.append(button(option.label, async () => {
+      choices.append(button(option.label, async () => {
         await act("skip", { chatId: view.chatId, amount: option.hours, unit: "hours" });
         notify(`Skipped about ${describeDuration(option.hours)}. The narrator will open with that gap.`);
       }));
-    card.append(button("Not now", async () => {
+    choices.append(button("Not now", async () => {
       await act("dismiss-skip", { chatId: view.chatId });
     }));
+    card.append(choices);
     return card;
   }
-  function renderNow(view) {
+  function renderNow(view, toggle) {
     const card = el("section", "gm-card gm-stack");
+    const hero = el("div", "gm-hero"), words = el("div");
+    words.append(el("h2", "", view.name || "This chat"), el("p", "gm-hint", view.enabled ? "Grimoire is guiding this story." : "Turned off. The narrator gets no notes from Grimoire."));
+    hero.append(words, toggle);
+    card.append(hero);
+    if (view.recap) {
+      const recap = el("div", "gm-recap");
+      recap.append(el("h4", "", "Where you left off"), el("p", "", view.recap));
+      card.append(recap);
+    }
     const s = view.sources;
     const source = !s ? "" : s.day === "tracker" && s.hour === "tracker" ? "From your preset’s tracker" : s.day === "tracker" || s.hour === "tracker" ? `${s.day === "tracker" ? "Day" : "Hour"} from your preset’s tracker, the rest kept by Grimoire` : "Kept by Grimoire, updated at check-ups";
-    card.append(el("h4", "", "Story time"), el("p", "gm-clock", view.clockText || "Not set yet"), el("p", "gm-source", `${source}${s && s.hour !== "unknown" && !s.exact ? " · approximate" : ""}`));
-    if (view.skipHours)
-      card.append(el("p", "gm-hint", `The narrator will be told that about ${describeDuration(view.skipHours)} have passed.`));
+    const time = el("div", "gm-stat");
+    time.append(el("h4", "", "Story time"), el("p", "gm-clock", view.clockText || "Not set yet"), el("p", "gm-source", `${source}${s && s.hour !== "unknown" && !s.exact ? " · approximate" : ""}`));
     const group = el("div", "gm-pace");
     group.setAttribute("role", "group");
     group.setAttribute("aria-label", "Story pace");
@@ -351,21 +370,26 @@ function setup(ctx) {
       });
       group.append(b);
     }
-    const pace = el("div", "gm-stack gm-sub");
-    pace.append(el("h4", "", "Pace"), group, el("p", "gm-hint", PACE_LABELS[view.pace].help));
-    const status = el("div", "gm-sub gm-stack");
-    if (view.recap)
-      status.append(el("h4", "", "Where you left off"), el("p", "gm-small", view.recap));
-    status.append(el("p", "gm-small", view.summary || "No updates yet."), el("p", "gm-hint", `${view.repliesSinceCheck} ${view.repliesSinceCheck === 1 ? "reply" : "replies"} since the last update${view.updatedAt ? ` · saved ${ago(view.updatedAt)}` : ""}`));
+    const pace = el("div", "gm-stat");
+    pace.append(el("h4", "", "Pace"), group, el("p", "gm-source", PACE_LABELS[view.pace].help));
+    const stats = el("div", "gm-stats");
+    stats.append(time, pace);
+    card.append(stats);
+    if (view.skipHours)
+      card.append(el("p", "gm-hint", `The narrator will be told that about ${describeDuration(view.skipHours)} have passed.`));
+    card.append(renderChapter(view));
+    const foot = el("div", "gm-foot");
+    foot.append(el("span", "", view.summary || "No updates yet."), el("span", "", `${view.repliesSinceCheck} ${view.repliesSinceCheck === 1 ? "reply" : "replies"} since the last update${view.updatedAt ? ` · saved ${ago(view.updatedAt)}` : ""}`));
     const quick = snapshot?.settings.quick.enabled ? view.quick : undefined;
-    if (snapshot?.settings.quick.enabled)
-      status.append(el("p", quick && !quick.ok ? "gm-notice" : "gm-hint", !quick ? "Quick check is on. It runs after the next reply." : quick.ok ? `Quick check ran ${ago(quick.at)}.` : `The last quick check didn’t run: ${quick.error}`));
-    card.append(pace, renderChapter(view), status);
+    if (snapshot?.settings.quick.enabled && (!quick || quick.ok))
+      foot.append(el("span", quick ? "gm-ok" : "", !quick ? "Quick check is on. It runs after the next reply." : `Quick check ran ${ago(quick.at)}.`));
+    card.append(foot);
+    if (quick && !quick.ok)
+      card.append(el("p", "gm-notice", `The last quick check didn’t run: ${quick.error}`));
     return card;
   }
   function renderChapter(view) {
-    const box = el("div", "gm-sub gm-stack");
-    box.append(el("h4", "", "Chapter"));
+    const box = el("div", "gm-stack");
     const job = view.job, offline = !snapshot?.settings.connectionId;
     if (job?.status === "running" && job.label === CHAPTER_WORKING) {
       const live = el("div", "gm-live"), words = el("span", "gm-live-words");
@@ -385,9 +409,11 @@ function setup(ctx) {
       await act("push", { chatId: view.chatId, kind: "chapter" });
       notify("Starting a new chapter. One model request.");
     }, view.spent ? "primary" : "");
-    start.classList.add("gm-wide");
     start.disabled = job?.status === "running" || offline || !view.enabled;
-    box.append(start, el("p", "gm-hint", "Wraps up what’s run its course and starts the next part from where things stand, sometimes after a jump in time. You won’t be told what’s coming."));
+    const row = el("div", "gm-act"), about = el("div");
+    about.append(el("h4", "", "Chapter"), el("p", "gm-source", "Wraps up this part and starts the next, sometimes after a jump in time. No spoilers."));
+    row.append(about, start);
+    box.append(row);
     return box;
   }
   const PUSHES = [["person", "Someone makes a move"], ["secret", "A secret starts to surface"], ["consequence", "Something catches up with me"], ["surprise", "Surprise me"]];
@@ -399,7 +425,7 @@ function setup(ctx) {
       draftChat = view.chatId;
     }
     const busy = view.job?.status === "running", offline = !snapshot?.settings.connectionId;
-    card.append(el("h4", "", "Talk to Grimoire"), el("p", "gm-hint", "Tell Grimoire what you’d like from the story, or share an idea. If it’s open-ended, it asks what kind you mean; then it changes its plans without telling you what they are. Stuck for ideas? Ask it for some."));
+    card.append(el("h4", "", "Talk to Grimoire"), el("p", "gm-hint", "Say what you’d like from the story, or ask for ideas. Grimoire changes its plans without telling you what they are."));
     if (view.notes.length) {
       const notes = el("div", "gm-stack gm-notes");
       notes.append(el("p", "gm-label", "Your notes"));
@@ -513,7 +539,7 @@ function setup(ctx) {
     return card;
   }
   function renderMore(view) {
-    const d = details("More: check-ups, time skips, story shape and size, delete");
+    const d = details("More", "Check-ups, time skips, story shape and size, delete");
     const kept = select([["off", "No, let Grimoire choose"], ...SHAPE_CHOICES.slice(1)], view.preferences.lockShape ? view.preferences.shape : "off");
     const keep = button("Save", async () => {
       await act("shape", { chatId: view.chatId, shape: kept.value === "off" ? "auto" : kept.value, lockShape: kept.value !== "off" });
@@ -642,7 +668,7 @@ function setup(ctx) {
     return s;
   }
   function renderTaste(view) {
-    const d = details("What you enjoy");
+    const d = details("What you enjoy", "What Grimoire has noticed, and what you tell it");
     const learned = view.notebook?.taste ?? [];
     d.body.append(el("h4", "", "What Grimoire has noticed"));
     if (learned.length) {
@@ -665,7 +691,7 @@ function setup(ctx) {
     return d.root;
   }
   function renderBehind(view) {
-    const d = details("Behind the scenes · no spoilers");
+    const d = details("Behind the scenes", "How Grimoire is doing · no spoilers");
     d.body.append(glancePart(view));
     if (snapshot?.settings.quick.enabled || view.quickLog?.length)
       d.body.append(quickPart(view));
@@ -825,7 +851,7 @@ function setup(ctx) {
     return book;
   }
   function renderSpoilers(view) {
-    const d = details("Show the notebook · spoilers");
+    const d = details("The notebook", "The plan itself · spoilers inside");
     if (!view.notebook)
       return d.root;
     if (!editing) {
@@ -882,7 +908,7 @@ function setup(ctx) {
       body.append(renderStart(view));
       return;
     }
-    const toggleRow = el("div", "gm-card gm-switch"), toggle = el("input");
+    const toggle = el("input");
     toggle.type = "checkbox";
     toggle.checked = view.enabled;
     toggle.setAttribute("role", "switch");
@@ -893,10 +919,6 @@ function setup(ctx) {
         notify(error.message, "error");
       });
     });
-    const words = el("div");
-    words.append(el("h3", "", view.name || "This chat"), el("p", "gm-hint", view.enabled ? "Grimoire is guiding this story." : "Turned off. The narrator gets no notes from Grimoire."));
-    toggleRow.append(words, toggle);
-    body.append(toggleRow);
     if (job)
       body.append(job);
     if (view.needsCheck && view.enabled && view.job?.status !== "running")
@@ -905,9 +927,10 @@ function setup(ctx) {
       body.append(el("p", "gm-hint", "You went back in the chat, so Grimoire is using its notebook from before that point. Nothing from the removed replies counts."));
     if (view.reworking && view.enabled)
       body.append(el("p", "gm-hint", "The story changed direction. Grimoire is reworking its plans to fit, and holds older plans back meanwhile. Nothing it already set up is forgotten."));
+    body.append(renderNow(view, toggle));
     if (view.skipOffer && view.enabled)
       body.append(renderSkipOffer(view));
-    body.append(renderNow(view), renderSteer(view), ...view.hasNotebook ? [renderTaste(view)] : [], renderBehind(view), renderSpoilers(view), renderMore(view));
+    body.append(renderSteer(view), ...view.hasNotebook ? [renderTaste(view)] : [], renderBehind(view), renderSpoilers(view), renderMore(view));
   }
   function renderSettings() {
     const settings = { ...snapshot?.settings ?? { connectionId: "", backupId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true, intimate: "protect", memories: true } };

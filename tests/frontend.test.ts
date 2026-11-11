@@ -84,7 +84,7 @@ describe('the panel', () => {
   test('quick check answers show as numbers with plain labels', async () => {
     const h = harness({ quickLog: [{ reply: 7, at: Date.now(), ok: true, answers: { due_1: 0.91, new_turn: 0.82, story_shift: 0.03, rhythm: { choice: 'peak', confidence: 0.7 } }, marked: 1, checkup: true, shifted: false, held: 0 }] }, { quick: { enabled: true, connectionId: '', model: '' } }); await tick();
     const text = h.root.textContent!;
-    expect(text).toContain('Behind the scenes · no spoilers'); expect(text).toContain('Quick check answers');
+    expect(text).toContain('Behind the scenes'); expect(text).toContain('Quick check answers');
     expect(text).toContain('Reply 7');
     expect(text).toContain('marked 1 · asked for a check-up');
     expect(text).toContain('Scene: big moment (70%) · Planned development shown 1: 91% · Something new: 82% · Change of direction: 3%');
@@ -110,7 +110,7 @@ describe('the panel', () => {
     expect(h.root.textContent).toContain('Day 2, 21:00');
     expect(h.root.textContent).toContain('Kept by Grimoire');
     expect(h.root.textContent).toContain('Notebook updated after the tavern.');
-    const spoilers = Array.from(h.root.querySelectorAll('details')).find(d => d.textContent?.includes('Show the notebook'))!;
+    const spoilers = Array.from(h.root.querySelectorAll('details')).find(d => d.textContent?.includes('spoilers inside'))!;
     expect(spoilers.open).toBe(false);
     expect(h.button('Check now')).toBeTruthy();
   });

@@ -64,13 +64,13 @@ export function setup(ctx: SpindleFrontendContext) {
   const rpc = createRpc(ctx, () => { void refresh(); });
   const status = el('p', 'gm-status'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
   const notify = (text: string, kind: 'info' | 'error' = 'info') => { if (!destroyed) { status.textContent = text; status.dataset.kind = kind; } };
-  const header = el('header', 'gm-header'), mark = el('div', 'gm-mark'), titles = el('div');
-  titles.append(el('h1', '', 'Grimoire'), el('p', 'gm-sub', 'The story behind your chat: where it is going, why, and how fast.'));
-  header.append(mark, titles);
+  const header = el('header', 'gm-header'), mark = el('span', 'gm-mark'); mark.innerHTML = ICON; mark.setAttribute('aria-hidden', 'true');
+  header.append(mark, el('h1', '', 'Grimoire'), el('span', 'gm-spacer'));
   const tabs = el('div', 'gm-tabs'); tabs.setAttribute('role', 'tablist');
   const tabButtons = (['chat', 'settings'] as const).map(key => { const b = el('button', 'gm-tab', key === 'chat' ? 'This chat' : 'Settings'); b.type = 'button'; b.setAttribute('role', 'tab'); b.addEventListener('click', () => { page = key; render(); }); tabs.append(b); return [key, b] as const; });
   const body = el('div', 'gm-panel'), footer = el('footer', 'gm-footer', `Grimoire ${VERSION}`);
-  app.append(header, tabs, status, body, footer);
+  header.append(tabs);
+  app.append(header, status, body, footer);
 
   function button(label: string, action: () => unknown | Promise<unknown>, kind: '' | 'primary' | 'danger' = '') {
     const b = el('button', `gm-button${kind ? ` gm-${kind}` : ''}`, label); b.type = 'button';
@@ -87,7 +87,12 @@ export function setup(ctx: SpindleFrontendContext) {
   function select(options: Array<[string, string]>, value: string) {
     const s = el('select'); for (const [v, l] of options) { const o = el('option', '', l); o.value = v; s.append(o); } s.value = value; return s;
   }
-  function details(title: string, open = false) { const d = el('details', 'gm-details'); const s = el('summary', '', title); const inner = el('div', 'gm-stack'); d.append(s, inner); d.open = open; return { root: d, body: inner }; }
+  /** A section that stays closed until opened: a title, a few words on what is inside, and a chevron. */
+  function details(title: string, sub = '', open = false) {
+    const d = el('details', 'gm-details'), s = el('summary'), words = el('span', 'gm-sum-words'), inner = el('div', 'gm-stack');
+    words.append(el('span', 'gm-sum-title', title)); if (sub) words.append(el('span', 'gm-sum-sub', sub));
+    s.append(words); d.append(s, inner); d.open = open; return { root: d, body: inner };
+  }
   const chatId = () => ctx.getActiveChat().chatId ?? null;
   async function act<T>(action: string, input: Record<string, unknown> = {}): Promise<T> {
     const result = await rpc.request<T>(action, input); await refresh(true); return result;
@@ -144,40 +149,50 @@ export function setup(ctx: SpindleFrontendContext) {
   function renderSkipOffer(view: ChatView) {
     const card = el('section', 'gm-card gm-stack gm-skip');
     card.append(el('h3', '', 'This scene has gone quiet'), el('p', 'gm-hint', 'Skipping ahead is up to you. The next reply opens with the time that passed.'));
-    for (const option of view.skipOffer!.options) card.append(button(option.label, async () => {
+    const choices = el('div', 'gm-chips');
+    for (const option of view.skipOffer!.options) choices.append(button(option.label, async () => {
       await act('skip', { chatId: view.chatId, amount: option.hours, unit: 'hours' });
       notify(`Skipped about ${describeDuration(option.hours)}. The narrator will open with that gap.`);
     }));
-    card.append(button('Not now', async () => { await act('dismiss-skip', { chatId: view.chatId }); }));
+    choices.append(button('Not now', async () => { await act('dismiss-skip', { chatId: view.chatId }); }));
+    card.append(choices);
     return card;
   }
   /** Where the story stands: time, pace, and when Grimoire last updated. */
-  function renderNow(view: ChatView) {
+  function renderNow(view: ChatView, toggle: HTMLElement) {
     const card = el('section', 'gm-card gm-stack');
+    // The chat, whether Grimoire is on, and the switch.
+    const hero = el('div', 'gm-hero'), words = el('div');
+    words.append(el('h2', '', view.name || 'This chat'), el('p', 'gm-hint', view.enabled ? 'Grimoire is guiding this story.' : 'Turned off. The narrator gets no notes from Grimoire.'));
+    hero.append(words, toggle); card.append(hero);
+    if (view.recap) { const recap = el('div', 'gm-recap'); recap.append(el('h4', '', 'Where you left off'), el('p', '', view.recap)); card.append(recap); }
+    // Story time and pace, side by side.
     const s = view.sources;
     const source = !s ? '' : s.day === 'tracker' && s.hour === 'tracker' ? 'From your preset’s tracker' : s.day === 'tracker' || s.hour === 'tracker' ? `${s.day === 'tracker' ? 'Day' : 'Hour'} from your preset’s tracker, the rest kept by Grimoire` : 'Kept by Grimoire, updated at check-ups';
-    card.append(el('h4', '', 'Story time'), el('p', 'gm-clock', view.clockText || 'Not set yet'), el('p', 'gm-source', `${source}${s && s.hour !== 'unknown' && !s.exact ? ' · approximate' : ''}`));
-    if (view.skipHours) card.append(el('p', 'gm-hint', `The narrator will be told that about ${describeDuration(view.skipHours)} have passed.`));
+    const time = el('div', 'gm-stat');
+    time.append(el('h4', '', 'Story time'), el('p', 'gm-clock', view.clockText || 'Not set yet'), el('p', 'gm-source', `${source}${s && s.hour !== 'unknown' && !s.exact ? ' · approximate' : ''}`));
     const group = el('div', 'gm-pace'); group.setAttribute('role', 'group'); group.setAttribute('aria-label', 'Story pace');
     for (const pace of ORDER) {
       const b = el('button', '', PACE_LABELS[pace].name); b.type = 'button'; b.setAttribute('aria-pressed', String(view.pace === pace));
       b.addEventListener('click', () => { void act('pace', { chatId: view.chatId, pace }).catch(error => notify(error.message, 'error')); });
       group.append(b);
     }
-    const pace = el('div', 'gm-stack gm-sub'); pace.append(el('h4', '', 'Pace'), group, el('p', 'gm-hint', PACE_LABELS[view.pace].help));
-    const status = el('div', 'gm-sub gm-stack');
-    if (view.recap) status.append(el('h4', '', 'Where you left off'), el('p', 'gm-small', view.recap));
-    status.append(el('p', 'gm-small', view.summary || 'No updates yet.'),
-      el('p', 'gm-hint', `${view.repliesSinceCheck} ${view.repliesSinceCheck === 1 ? 'reply' : 'replies'} since the last update${view.updatedAt ? ` · saved ${ago(view.updatedAt)}` : ''}`));
+    const pace = el('div', 'gm-stat'); pace.append(el('h4', '', 'Pace'), group, el('p', 'gm-source', PACE_LABELS[view.pace].help));
+    const stats = el('div', 'gm-stats'); stats.append(time, pace); card.append(stats);
+    if (view.skipHours) card.append(el('p', 'gm-hint', `The narrator will be told that about ${describeDuration(view.skipHours)} have passed.`));
+    card.append(renderChapter(view));
+    // The last update, in one quiet line.
+    const foot = el('div', 'gm-foot');
+    foot.append(el('span', '', view.summary || 'No updates yet.'), el('span', '', `${view.repliesSinceCheck} ${view.repliesSinceCheck === 1 ? 'reply' : 'replies'} since the last update${view.updatedAt ? ` · saved ${ago(view.updatedAt)}` : ''}`));
     const quick = snapshot?.settings.quick.enabled ? view.quick : undefined;
-    if (snapshot?.settings.quick.enabled) status.append(el('p', quick && !quick.ok ? 'gm-notice' : 'gm-hint', !quick ? 'Quick check is on. It runs after the next reply.' : quick.ok ? `Quick check ran ${ago(quick.at)}.` : `The last quick check didn’t run: ${quick.error}`));
-    card.append(pace, renderChapter(view), status);
+    if (snapshot?.settings.quick.enabled && (!quick || quick.ok)) foot.append(el('span', quick ? 'gm-ok' : '', !quick ? 'Quick check is on. It runs after the next reply.' : `Quick check ran ${ago(quick.at)}.`));
+    card.append(foot);
+    if (quick && !quick.ok) card.append(el('p', 'gm-notice', `The last quick check didn’t run: ${quick.error}`));
     return card;
   }
   /** A new chapter: easy to find, and visibly at work while it's being written. */
   function renderChapter(view: ChatView) {
-    const box = el('div', 'gm-sub gm-stack');
-    box.append(el('h4', '', 'Chapter'));
+    const box = el('div', 'gm-stack');
     const job = view.job, offline = !snapshot?.settings.connectionId;
     if (job?.status === 'running' && job.label === CHAPTER_WORKING) {
       const live = el('div', 'gm-live'), words = el('span', 'gm-live-words');
@@ -189,8 +204,10 @@ export function setup(ctx: SpindleFrontendContext) {
     if (job?.status === 'complete' && job.label === CHAPTER_DONE && Date.now() - job.startedAt < 10 * 60_000) box.append(el('p', 'gm-done', 'A new chapter is set. It begins with the next reply.'));
     else if (view.spent) box.append(el('p', 'gm-notice', 'This part of the story has wrapped up. Start a new chapter to begin the next one.'));
     const start = button('Start a new chapter', async () => { await act('push', { chatId: view.chatId, kind: 'chapter' }); notify('Starting a new chapter. One model request.'); }, view.spent ? 'primary' : '');
-    start.classList.add('gm-wide'); start.disabled = job?.status === 'running' || offline || !view.enabled;
-    box.append(start, el('p', 'gm-hint', 'Wraps up what’s run its course and starts the next part from where things stand, sometimes after a jump in time. You won’t be told what’s coming.'));
+    start.disabled = job?.status === 'running' || offline || !view.enabled;
+    const row = el('div', 'gm-act'), about = el('div');
+    about.append(el('h4', '', 'Chapter'), el('p', 'gm-source', 'Wraps up this part and starts the next, sometimes after a jump in time. No spoilers.'));
+    row.append(about, start); box.append(row);
     return box;
   }
   const PUSHES: Array<[string, string]> = [['person', 'Someone makes a move'], ['secret', 'A secret starts to surface'], ['consequence', 'Something catches up with me'], ['surprise', 'Surprise me']];
@@ -199,7 +216,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const card = el('section', 'gm-card gm-stack gm-talk');
     if (draftChat !== view.chatId) { draft = ''; draftKeep = false; draftChat = view.chatId; }
     const busy = view.job?.status === 'running', offline = !snapshot?.settings.connectionId;
-    card.append(el('h4', '', 'Talk to Grimoire'), el('p', 'gm-hint', 'Tell Grimoire what you’d like from the story, or share an idea. If it’s open-ended, it asks what kind you mean; then it changes its plans without telling you what they are. Stuck for ideas? Ask it for some.'));
+    card.append(el('h4', '', 'Talk to Grimoire'), el('p', 'gm-hint', 'Say what you’d like from the story, or ask for ideas. Grimoire changes its plans without telling you what they are.'));
     if (view.notes.length) {
       const notes = el('div', 'gm-stack gm-notes'); notes.append(el('p', 'gm-label', 'Your notes'));
       for (const note of view.notes) {
@@ -266,7 +283,7 @@ export function setup(ctx: SpindleFrontendContext) {
   }
   /** Things you seldom need: a check-up on demand, a manual time skip, deleting the notebook. */
   function renderMore(view: ChatView) {
-    const d = details('More: check-ups, time skips, story shape and size, delete');
+    const d = details('More', 'Check-ups, time skips, story shape and size, delete');
     const kept = select([['off', 'No, let Grimoire choose'], ...SHAPE_CHOICES.slice(1)], view.preferences.lockShape ? view.preferences.shape : 'off');
     const keep = button('Save', async () => { await act('shape', { chatId: view.chatId, shape: kept.value === 'off' ? 'auto' : kept.value, lockShape: kept.value !== 'off' }); notify(kept.value === 'off' ? 'Grimoire will choose the shape of each part.' : 'Saved. Every part of the story will use this shape.'); });
     const size = select(SIZE_CHOICES, view.preferences.size ?? 'auto');
@@ -346,7 +363,7 @@ export function setup(ctx: SpindleFrontendContext) {
   }
   /** What the player enjoys: what Grimoire has worked out from how they play, and what they choose to tell it. Closed until opened. */
   function renderTaste(view: ChatView) {
-    const d = details('What you enjoy');
+    const d = details('What you enjoy', 'What Grimoire has noticed, and what you tell it');
     const learned = view.notebook?.taste ?? [];
     d.body.append(el('h4', '', 'What Grimoire has noticed'));
     if (learned.length) { const list = el('ul'); for (const line of learned) list.append(el('li', 'gm-small', line)); d.body.append(list); }
@@ -358,7 +375,7 @@ export function setup(ctx: SpindleFrontendContext) {
   }
   /** How Grimoire is doing, in shapes, counts, and numbers only. */
   function renderBehind(view: ChatView) {
-    const d = details('Behind the scenes · no spoilers');
+    const d = details('Behind the scenes', 'How Grimoire is doing · no spoilers');
     d.body.append(glancePart(view));
     if (snapshot?.settings.quick.enabled || view.quickLog?.length) d.body.append(quickPart(view));
     d.body.append(trackerPart(view));
@@ -441,7 +458,7 @@ export function setup(ctx: SpindleFrontendContext) {
     return book;
   }
   function renderSpoilers(view: ChatView) {
-    const d = details('Show the notebook · spoilers');
+    const d = details('The notebook', 'The plan itself · spoilers inside');
     if (!view.notebook) return d.root;
     if (!editing) {
       d.body.append(renderBook(view.notebook, view.dueIds ?? []), button('Edit as text', () => { editing = true; render(); d.root.open = true; }));
@@ -464,17 +481,15 @@ export function setup(ctx: SpindleFrontendContext) {
     if (!view.supported) { body.append(el('p', 'gm-notice', view.reason)); return; }
     const job = renderJob(view);
     if (!view.hasNotebook) { if (job) body.append(job); body.append(renderStart(view)); return; }
-    const toggleRow = el('div', 'gm-card gm-switch'), toggle = el('input'); toggle.type = 'checkbox'; toggle.checked = view.enabled; toggle.setAttribute('role', 'switch'); toggle.setAttribute('aria-label', 'Use Grimoire in this chat');
+    const toggle = el('input'); toggle.type = 'checkbox'; toggle.checked = view.enabled; toggle.setAttribute('role', 'switch'); toggle.setAttribute('aria-label', 'Use Grimoire in this chat');
     toggle.addEventListener('change', () => { void act('enable', { chatId: view.chatId, enabled: toggle.checked }).catch(error => { toggle.checked = !toggle.checked; notify(error.message, 'error'); }); });
-    const words = el('div'); words.append(el('h3', '', view.name || 'This chat'), el('p', 'gm-hint', view.enabled ? 'Grimoire is guiding this story.' : 'Turned off. The narrator gets no notes from Grimoire.'));
-    toggleRow.append(words, toggle);
-    body.append(toggleRow);
     if (job) body.append(job);
     if (view.needsCheck && view.enabled && view.job?.status !== 'running') body.append(el('p', 'gm-notice', `${view.needsCheck} An update will run after the next reply, or choose Check now under More.`));
     else if (view.behind && view.enabled) body.append(el('p', 'gm-hint', 'You went back in the chat, so Grimoire is using its notebook from before that point. Nothing from the removed replies counts.'));
     if (view.reworking && view.enabled) body.append(el('p', 'gm-hint', 'The story changed direction. Grimoire is reworking its plans to fit, and holds older plans back meanwhile. Nothing it already set up is forgotten.'));
+    body.append(renderNow(view, toggle));
     if (view.skipOffer && view.enabled) body.append(renderSkipOffer(view));
-    body.append(renderNow(view), renderSteer(view), ...(view.hasNotebook ? [renderTaste(view)] : []), renderBehind(view), renderSpoilers(view), renderMore(view));
+    body.append(renderSteer(view), ...(view.hasNotebook ? [renderTaste(view)] : []), renderBehind(view), renderSpoilers(view), renderMore(view));
   }
 
   // ----- Settings -----
