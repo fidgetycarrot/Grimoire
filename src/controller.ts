@@ -74,11 +74,12 @@ function playerNotes(value: unknown): PlayerNote[] {
 type Messages = Awaited<ReturnType<SpindleAPI['chat']['getMessages']>>;
 interface Live { state: ChatState; turns: Turn[]; prints: string[]; index: number; /** False when no saved version fits the chat, so the oldest one stands in. */ matched: boolean; version: Version; replies: string[]; values: Record<string, string>; types: Record<string, FieldType>; clock: StoryClock; sources: ClockSources; now: number; /** Story hours, replies so far, and how long steps may wait. */ moment: Moment; text: string }
 
-function validPreferences(value: unknown): Preferences {
+export function validPreferences(value: unknown): Preferences {
   const v = record(value);
   const shape = v.shape === 'conflict' || v.shape === 'kishotenketsu' ? v.shape : 'auto';
   return { tone: ['light', 'balanced', 'dark'].includes(v.tone as string) ? v.tone as Preferences['tone'] : 'balanced', twist: v.twist !== false, shape, lockShape: shape !== 'auto' && v.lockShape === true,
-    size: v.size === 'close' || v.size === 'wide' ? v.size : 'auto' };
+    size: v.size === 'close' || v.size === 'wide' ? v.size : 'auto',
+    ...(typeof v.likes === 'string' && v.likes.trim() ? { likes: v.likes.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim().slice(0, 600) } : {}) };
 }
 /**
  * People the player described in their ideas keep the player's words, exactly.
@@ -874,6 +875,16 @@ export class NotebookController {
       const state = await this.load(chatId);
       if (!state) throw new Error('Write a notebook for this chat first.');
       state.preferences = validPreferences({ ...state.preferences, size });
+      await this.save(state); this.changed();
+      return state.preferences;
+    });
+  }
+  /** What the player says they enjoy. Check-ups plan by it from now on. */
+  async setLikes(chatId: string, likes: unknown) {
+    return this.serial(chatId, async () => {
+      const state = await this.load(chatId);
+      if (!state) throw new Error('Write a notebook for this chat first.');
+      state.preferences = validPreferences({ ...state.preferences, likes: typeof likes === 'string' ? likes : '' });
       await this.save(state); this.changed();
       return state.preferences;
     });

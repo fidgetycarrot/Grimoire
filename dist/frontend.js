@@ -60,7 +60,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.26.1";
+var VERSION = "0.27.0";
 var CHAPTER_WORKING = "Starting a new chapter";
 var CHAPTER_DONE = "New chapter ready";
 
@@ -641,6 +641,29 @@ function setup(ctx) {
     s.append(list, el("p", "gm-hint", "Each fact has one owner. Anything read from your preset is never asked for twice."));
     return s;
   }
+  function renderTaste(view) {
+    const d = details("What you enjoy");
+    const learned = view.notebook?.taste ?? [];
+    d.body.append(el("h4", "", "What Grimoire has noticed"));
+    if (learned.length) {
+      const list = el("ul");
+      for (const line of learned)
+        list.append(el("li", "gm-small", line));
+      d.body.append(list);
+    } else
+      d.body.append(el("p", "gm-small", "Nothing yet. Grimoire works this out as you play."));
+    const box = el("textarea");
+    box.rows = 3;
+    box.maxLength = 600;
+    box.value = view.preferences.likes ?? "";
+    box.placeholder = "For example: slow build, more banter, less fighting, more of Tara";
+    box.addEventListener("change", async () => {
+      await act("likes", { chatId: view.chatId, likes: box.value });
+      notify(box.value.trim() ? "Saved. Grimoire plans by it from the next check-up." : "Cleared.");
+    });
+    d.body.append(labeled("Tell Grimoire yourself (optional)", box, "Leave it empty and Grimoire goes by what it notices. Anything you write here comes first."));
+    return d.root;
+  }
   function renderBehind(view) {
     const d = details("Behind the scenes · no spoilers");
     d.body.append(glancePart(view));
@@ -736,12 +759,6 @@ function setup(ctx) {
       }
       e.append(title, el("p", "gm-small", t.why), steps, ...t.ifIgnored ? [el("p", "gm-meta", `If left alone: ${t.ifIgnored}`)] : [], ...t.closedReason ? [el("p", "gm-meta", `Closed${t.outcome ? ` (${{ won: "went your way", lost: "went against you", faded: "faded out" }[t.outcome]})` : ""}: ${t.closedReason}`)] : [], ...t.scar ? [el("p", "gm-meta", `Still felt: ${t.scar}`)] : []);
       threads.append(e);
-    }
-    if (notebook.taste?.length) {
-      const t = section("What you seem to enjoy"), list = el("ul");
-      for (const line of notebook.taste)
-        list.append(el("li", "gm-small", line));
-      t.append(list);
     }
     if (notebook.summary)
       section("Latest note from the model").append(el("p", "gm-small", notebook.summary));
@@ -890,7 +907,7 @@ function setup(ctx) {
       body.append(el("p", "gm-hint", "The story changed direction. Grimoire is reworking its plans to fit, and holds older plans back meanwhile. Nothing it already set up is forgotten."));
     if (view.skipOffer && view.enabled)
       body.append(renderSkipOffer(view));
-    body.append(renderNow(view), renderSteer(view), renderBehind(view), renderSpoilers(view), renderMore(view));
+    body.append(renderNow(view), renderSteer(view), ...view.hasNotebook ? [renderTaste(view)] : [], renderBehind(view), renderSpoilers(view), renderMore(view));
   }
   function renderSettings() {
     const settings = { ...snapshot?.settings ?? { connectionId: "", backupId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true, intimate: "protect", memories: true } };

@@ -65,3 +65,13 @@ describe('check-ups that list only what changes', () => {
     for (const part of ['at least one win the player can earn', 'one real choice', 'a storyline of their own', 'never invent their past']) expect(create).toContain(part);
   });
 });
+
+describe('what the player says they like', () => {
+  test('is kept with the chat and comes first for the planner', () => {
+    const { validPreferences } = require('../src/controller');
+    expect(validPreferences({ likes: '  slow build  ' }).likes).toBe('slow build');
+    expect('likes' in validPreferences({ likes: '   ' })).toBe(false);
+    const input: any = { notebook: validateNotebook(sampleNotebook()), pace: 'auto', chat: [], trackerText: '', trackerValues: {}, trackerChecks: [], recipe: { fields: [], note: '' }, clockOwner: { day: 'notebook', hour: 'notebook' }, due: [], skipHours: 0, reason: 'test', preferences: prefs({ likes: 'slow build' }), resync: false, held: [], notes: [], part: { elapsed: 0, length: 60 }, replan: false, replies: [], lore: { rules: [], entries: [], index: [], more: 0 }, away: [], places: [] };
+    expect(checkupMessages(input).map((m: any) => m.content).join('\n')).toContain('It comes first: plan by it');
+  });
+});

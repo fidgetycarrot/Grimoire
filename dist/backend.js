@@ -2028,7 +2028,7 @@ function creationMessages(material, preferences, ideas = "", keep = false) {
 You write a private story notebook for an ongoing roleplay chat. It gives the narrator a story of its own: where it is going, why, and how fast. The player must not see it.
 Return {"notebook": ${SHAPE}, "tracker": {"fields": [], "note": ""}${keep ? ', "notes": ["\u2026"]' : ""}${ideas ? ', "playerPeople": []' : ""}}.
 ${CRAFT}
-${LORE(material.lore)}${MEMORY(material.memory)}Tone: ${preferences.tone}. ${twist}${shape}
+${LORE(material.lore)}${MEMORY(material.memory)}Tone: ${preferences.tone}. ${preferences.likes ? '"preferences.likes" is the player telling you what they enjoy, in their own words: plan by it. ' : ""}${twist}${shape}
 ${WORLD(preferences.size)}${ideas ? `
 The player, who co-writes this story, shared ideas for it in "ideas". Build the notebook around them where they fit the card: give them threads, people, beats, or breadcrumbs, paced like everything else, so they arrive in time rather than all at once. They are wishes for where the story can go, not events that already happened. If they describe a person (someone they would like to meet, or someone already in their character's life), make that person, give them a "sheet" that builds on what the player wrote without repeating it, and list them in "playerPeople": [{"person": "their id", "from": "the player's description of them, copied word for word from ideas"}]; their words are kept as they wrote them.${keep ? ` Also return "notes": one to four short standing instructions in plain words that keep these wishes in force, as close to the player's own words as you can, with no spoilers.` : ""}` : ""}
 If the chat already has messages, start from what has happened: record it under events, mark people met, and set the clock to now. A long chat comes with "storySoFar", a record of everything before the messages in "chat"; treat it as part of the chat. Keep events compact: at most about 30 short lines, merging older ones. Threads and people the chat already started come first; plan new ones around them.
@@ -2061,7 +2061,7 @@ ${LORE(input.lore) ? `- ${LORE(input.lore)}` : ""}${MEMORY(input.memory) ? `- ${
 - ${WORLD(input.preferences.size)}${input.preferences.size !== "close" && input.away.length ? ' "away" lists people the player has met who have not been seen for a while: give one or two of them a reason to come back soon, through what they want.' : ""}
 ${input.preferences.size !== "close" ? `- Where the story goes: "places" lists where recent scenes took place. If the story has spent a long stretch in the same place or the same few rooms, let one storyline's next step give the player a reason to go somewhere else. It should grow out of how these people live and what they want: a shift at work, a class, an errand, an appointment or event people have already mentioned, a favor someone asks, trouble that needs them elsewhere. Give it a place and a time, and let the step after it happen there. Set it up ahead where you can (a breadcrumb, a mention a day or two earlier) so it feels like part of their lives rather than something dropped in. Vary the kind of pull, never the same shape twice running and never on a schedule; some stretches stay home, and that is fine. It stays the player's choice: if they don't go, the world goes on without them (ifIgnored).
 ` : ""}- Places: if the story has spent time in a building that has no layout in "buildings" yet, add one (see 3g). Keep every layout, and add rooms the chat has shown; never move rooms the chat has already used.
-- What the player enjoys: keep "taste" current, from how they actually play. Which storylines and people do they go after, which scenes do they stay in and write the most for, what do they skip past or cut short? Short plain lines ("lingers in quiet scenes with Mira", "skips combat", "keeps poking at the ring mystery"). Judge it against what is normal for this chat: something the card delivers all the time anyway (in an erotic card, sex; in a war story, fighting) is not a taste and needs no planning toward, and a long intimate scene says nothing by its length, since those run long by nature. Look for what stands out instead: which people and dynamics they pick, what kind of tension they enjoy around those scenes (the risk, the slow build, the banter), and what they go for outside them. Plan toward it as one ingredient among others: more of what they lean into, less of what they pass over, never the same thing every time.
+- What the player enjoys: ${input.preferences.likes ? '"preferences.likes" is the player telling you what they enjoy, in their own words. It comes first: plan by it, and never let "taste" contradict it. Beyond that, keep' : "keep"} "taste" current, from how they actually play. It is shown to the player, so it holds only things they have seen, never plans or secrets. Which storylines and people do they go after, which scenes do they stay in and write the most for, what do they skip past or cut short? Short plain lines ("lingers in quiet scenes with Mira", "skips combat", "keeps poking at the ring mystery"). Judge it against what is normal for this chat: something the card delivers all the time anyway (in an erotic card, sex; in a war story, fighting) is not a taste and needs no planning toward, and a long intimate scene says nothing by its length, since those run long by nature. Look for what stands out instead: which people and dynamics they pick, what kind of tension they enjoy around those scenes (the risk, the slow build, the banter), and what they go for outside them. Plan toward it as one ingredient among others: more of what they lean into, less of what they pass over, never the same thing every time.
 - Recap: keep "recap" current (see its description). It is shown to the player, so it holds no secrets and no plans.
 - Lies: record new lies that matter in "covers" (see 3f), and keep every one there. Mark one "strained" when someone in the chat starts to doubt it and "exposed" once it comes apart in the chat; an exposed lie never goes back. When a lie has held for a while, plan a step or beat where it needs upkeep.
 - Secrets that came out: once the chat shows the player has learned a hidden truth (or the twist), or it came out where they could see, move it word for word to story.cameOut and out of hiddenTruth (empty twist if it was the twist). From then on it is an established fact: rewrite people's "hint" and "doing", thread hints, and beats so nobody keeps acting as if it were still secret, and plan no more clues or reveal moments for it; build on it instead. A suspicion or a guess is not learning it. Never move anything back out of cameOut.
@@ -3021,7 +3021,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.26.1";
+var VERSION = "0.27.0";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -3108,7 +3108,8 @@ function validPreferences(value) {
     twist: v.twist !== false,
     shape,
     lockShape: shape !== "auto" && v.lockShape === true,
-    size: v.size === "close" || v.size === "wide" ? v.size : "auto"
+    size: v.size === "close" || v.size === "wide" ? v.size : "auto",
+    ...typeof v.likes === "string" && v.likes.trim() ? { likes: v.likes.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "").trim().slice(0, 600) } : {}
   };
 }
 function withOwnWords(notebook, value, ideas) {
@@ -4096,6 +4097,17 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
       return state.preferences;
     });
   }
+  async setLikes(chatId, likes) {
+    return this.serial(chatId, async () => {
+      const state = await this.load(chatId);
+      if (!state)
+        throw new Error("Write a notebook for this chat first.");
+      state.preferences = validPreferences({ ...state.preferences, likes: typeof likes === "string" ? likes : "" });
+      await this.save(state);
+      this.changed();
+      return state.preferences;
+    });
+  }
   async setPace(chatId, pace) {
     if (!PACES.includes(pace))
       throw new Error("Choose auto, quiet, or fast.");
@@ -4449,6 +4461,8 @@ async function handle(controller, action, input) {
       return controller.setShape(string(data.chatId, "Chat"), data.shape, data.lockShape);
     case "size":
       return controller.setSize(string(data.chatId, "Chat"), data.size);
+    case "likes":
+      return controller.setLikes(string(data.chatId, "Chat"), data.likes);
     case "enable":
       return controller.setEnabled(string(data.chatId, "Chat"), data.enabled === true);
     case "pace":

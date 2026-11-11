@@ -316,3 +316,14 @@ describe('how big the world gets', () => {
     expect(h.requests.find(r => r.action === 'size')!.input).toEqual({ chatId: 'chat-1', size: 'close' });
   });
 });
+
+describe('what you enjoy', () => {
+  test('has its own section, outside the spoiler fold, and takes the player\'s own words', async () => {
+    const h = harness(); await tick();
+    expect(h.root.textContent).toContain('What you enjoy');
+    expect(h.root.textContent).toContain('Nothing yet. Grimoire works this out as you play.');
+    const box = Array.from(h.root.querySelectorAll('textarea')).find(t => (t as any).placeholder.includes('slow build')) as unknown as HTMLTextAreaElement;
+    box.value = 'more banter'; box.dispatchEvent(new h.window.Event('change', { bubbles: true }) as any); await tick();
+    expect(h.requests.find(r => r.action === 'likes')!.input).toEqual({ chatId: 'chat-1', likes: 'more banter' });
+  });
+});

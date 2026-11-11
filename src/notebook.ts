@@ -84,7 +84,7 @@ export interface Notebook {
 export type ShapeChoice = Shape | 'auto';
 /** How big the story's world gets: close keeps it to a few places and people; wide keeps adding both; auto lets the card decide. */
 export type StorySize = 'auto' | 'close' | 'wide';
-export interface Preferences { tone: 'light' | 'balanced' | 'dark'; twist: boolean; /** The shape the story starts with; auto lets the model choose. */ shape: ShapeChoice; /** Keep that shape for every part of the story. */ lockShape: boolean; size: StorySize }
+export interface Preferences { tone: 'light' | 'balanced' | 'dark'; twist: boolean; /** The shape the story starts with; auto lets the model choose. */ shape: ShapeChoice; /** Keep that shape for every part of the story. */ lockShape: boolean; size: StorySize; /** What the player says they enjoy, in their own words. Comes before anything Grimoire works out. */ likes?: string }
 export const LIMITS = Object.freeze({ sheets: 6, sheet: 2000, own: 3000, people: 24, threads: 12, steps: 6, beats: 16, seeds: 12, events: 40, truths: 12, covers: 10, buildings: 8, floors: 6, rooms: 14, text: 600, short: 160 });
 
 const ID = /^[a-z0-9][a-z0-9-]{0,40}$/;
