@@ -147,7 +147,11 @@ export function tidyNotebook(value: unknown, previous?: Notebook): unknown {
     const next = beats.find(b => b.id === old.id);
     if (!next) beats.push(structuredClone(old)); else next.status = 'happened';
   }
-  beats = cap(beats, LIMITS.beats, b => (b.status === 'happened' ? 4 : b.status === 'possible' ? 2 : 0));
+  // Finished items are history. In a long chat they would fill the whole list and leave no room for new ones (sixteen
+  // moments that already happened once crowded out every new possible moment), so only the latest few are kept.
+  const retire = <T,>(items: T[], done: (x: T) => boolean, keep: number) => { const finished = items.filter(done), drop = new Set(finished.slice(0, Math.max(0, finished.length - keep))); return items.filter(x => !drop.has(x)); };
+  beats = retire(beats, b => b.status !== 'possible', 6);
+  beats = cap(beats, LIMITS.beats, b => (b.status === 'possible' ? 4 : b.status === 'happened' ? 2 : 0));
 
   // Breadcrumbs: details mentioned now and paid off later. Planted ones stay planted; dropped ones come back.
   const linkable = new Map<string, string>([...threads.map(t => [t.id, t.id] as [string, string]), ...threads.map(t => [slug(t.title), t.id] as [string, string]), ...beats.map(b => [b.id, b.id] as [string, string]), ['turn', 'turn']]);
@@ -162,7 +166,8 @@ export function tidyNotebook(value: unknown, previous?: Notebook): unknown {
     else if (old.status !== 'waiting' && !old.quick && next.status === 'waiting') next.status = old.status;
   }
   const keptSeeds = new Set(previous?.seeds.map(s => s.id));
-  seeds = cap(seeds, LIMITS.seeds, s => (keptSeeds.has(s.id) ? 4 : 0) + (s.status === 'planted' ? 2 : s.status === 'waiting' ? 1 : 0));
+  seeds = retire(seeds, s => s.status === 'paid' || s.status === 'dropped', 4);
+  seeds = cap(seeds, LIMITS.seeds, s => (s.status === 'planted' || s.status === 'echo' ? 6 : s.status === 'waiting' ? 4 : 0) + (keptSeeds.has(s.id) ? 1 : 0));
 
   // Lies that matter: who told them (the player or someone in people) and who was told. Exposed ones stay exposed.
   const teller = (v: unknown) => { const w = slug(v); return ['player', 'user', 'you', 'pc', 'player-character', 'protagonist'].includes(w) ? 'player' : who.get(w) ?? ''; };

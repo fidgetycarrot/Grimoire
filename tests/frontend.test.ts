@@ -297,7 +297,7 @@ describe('your stories', () => {
 describe('requests', () => {
   test('time out instead of hanging, and close cleanly', async () => {
     const rpc = createRpc({ onBackendMessage: () => () => {}, sendToBackend: () => {} }, () => {}, 10);
-    await expect(rpc.request('snapshot')).rejects.toThrow('did not answer');
+    await expect(rpc.request('snapshot')).rejects.toThrow('busy');
     rpc.destroy();
     await expect(rpc.request('snapshot')).rejects.toThrow('closed');
   });

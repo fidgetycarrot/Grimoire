@@ -274,10 +274,11 @@ export function mergeRevision(previous: Notebook, revised: Notebook, now: number
     if (!next) failMerge(`Keep the lie "${cover.id}" (mark it exposed if it came apart).`);
     if (cover.status === 'exposed' && next!.status !== 'exposed') failMerge(`The lie "${cover.id}" already came apart. Keep it exposed.`);
   }
-  for (const beat of previous.beats) if (beat.status === 'happened' && !beat.quick && revised.beats.find(b => b.id === beat.id)?.status !== 'happened') failMerge(`Beat "${beat.id}" already happened. Keep it marked as happened.`);
+  for (const beat of previous.beats) if (beat.status === 'happened' && !beat.quick && revised.beats.some(b => b.id === beat.id && b.status !== 'happened')) failMerge(`Beat "${beat.id}" already happened. Keep it marked as happened.`);
   for (const seed of previous.seeds) {
     const next = revised.seeds.find(s => s.id === seed.id);
-    if (!next) failMerge(`Keep seed "${seed.id}" (mark it dropped if it no longer fits).`);
+    // A breadcrumb that was paid off or dropped is history, and old history is retired to make room.
+    if (!next) { if (seed.status === 'paid' || seed.status === 'dropped') continue; failMerge(`Keep seed "${seed.id}" (mark it dropped if it no longer fits).`); }
     if (seed.status !== 'waiting' && next!.status === 'waiting' && !seed.quick) failMerge(`Seed "${seed.id}" was already planted and can't go back to waiting.`);
   }
   const fresh = withoutTimes(holdStage(previous, holdTurn(previous, revised), moment(now)));

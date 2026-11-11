@@ -60,7 +60,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.27.0";
+var VERSION = "0.27.1";
 var CHAPTER_WORKING = "Starting a new chapter";
 var CHAPTER_DONE = "New chapter ready";
 
@@ -104,7 +104,7 @@ function createRpc(ctx, onChanged, timeoutMs = 45000) {
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
           pending.delete(id);
-          reject(new Error("Lumiverse did not answer in time. Try again."));
+          reject(new Error("Grimoire is busy and hasn’t answered yet. If the notebook is updating, give it a few minutes; what you asked for may already be under way."));
         }, timeoutMs);
         pending.set(id, { resolve: (v) => resolve(v), reject, timer });
         try {

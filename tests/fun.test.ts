@@ -75,3 +75,22 @@ describe('what the player says they like', () => {
     expect(checkupMessages(input).map((m: any) => m.content).join('\n')).toContain('It comes first: plan by it');
   });
 });
+
+describe('room for new moments in a long chat', () => {
+  test('old finished moments and breadcrumbs are retired so new ones fit', () => {
+    const { mergeRevision } = require('../src/notebook');
+    const base: any = sampleNotebook();
+    base.beats = Array.from({ length: 16 }, (_, i) => ({ id: `done-${i}`, text: `Moment ${i}`, purpose: 'p', conditions: '', thread: '', intensity: 'low', status: 'happened' }));
+    base.seeds = Array.from({ length: 12 }, (_, i) => ({ id: `crumb-${i}`, detail: `Detail ${i}`, payoff: 'x', pays: '', status: i < 8 ? 'paid' : 'planted' }));
+    const before = validateNotebook(base);
+    const raw: any = structuredClone(before);
+    raw.beats.push({ id: 'new-one', text: 'A new moment', purpose: 'p', status: 'possible' }, { id: 'new-two', text: 'Another', purpose: 'p', status: 'possible' });
+    raw.seeds.push({ id: 'new-crumb', detail: 'A new detail', payoff: 'y', status: 'waiting' });
+    const after = validateNotebook(tidyNotebook(raw, before));
+    expect(after.beats.filter(b => b.status === 'possible').map(b => b.id)).toEqual(['new-one', 'new-two']);
+    expect(after.beats.filter(b => b.status === 'happened').map(b => b.id)).toEqual(['done-10', 'done-11', 'done-12', 'done-13', 'done-14', 'done-15']);
+    expect(after.seeds.map(s => s.id)).toContain('new-crumb');
+    expect(after.seeds.filter(s => s.status === 'paid')).toHaveLength(4);
+    expect(() => mergeRevision(before, after, 50)).not.toThrow();
+  });
+});

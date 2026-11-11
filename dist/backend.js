@@ -828,12 +828,15 @@ function mergeRevision(previous, revised, now) {
       failMerge(`The lie "${cover.id}" already came apart. Keep it exposed.`);
   }
   for (const beat of previous.beats)
-    if (beat.status === "happened" && !beat.quick && revised.beats.find((b) => b.id === beat.id)?.status !== "happened")
+    if (beat.status === "happened" && !beat.quick && revised.beats.some((b) => b.id === beat.id && b.status !== "happened"))
       failMerge(`Beat "${beat.id}" already happened. Keep it marked as happened.`);
   for (const seed of previous.seeds) {
     const next = revised.seeds.find((s) => s.id === seed.id);
-    if (!next)
+    if (!next) {
+      if (seed.status === "paid" || seed.status === "dropped")
+        continue;
       failMerge(`Keep seed "${seed.id}" (mark it dropped if it no longer fits).`);
+    }
     if (seed.status !== "waiting" && next.status === "waiting" && !seed.quick)
       failMerge(`Seed "${seed.id}" was already planted and can't go back to waiting.`);
   }
@@ -1507,7 +1510,12 @@ function tidyNotebook(value, previous) {
       else
         next.status = "happened";
     }
-  beats = cap(beats, LIMITS.beats, (b) => b.status === "happened" ? 4 : b.status === "possible" ? 2 : 0);
+  const retire = (items, done, keep) => {
+    const finished = items.filter(done), drop = new Set(finished.slice(0, Math.max(0, finished.length - keep)));
+    return items.filter((x) => !drop.has(x));
+  };
+  beats = retire(beats, (b) => b.status !== "possible", 6);
+  beats = cap(beats, LIMITS.beats, (b) => b.status === "possible" ? 4 : b.status === "happened" ? 2 : 0);
   const linkable = new Map([...threads.map((t) => [t.id, t.id]), ...threads.map((t) => [slug(t.title), t.id]), ...beats.map((b) => [b.id, b.id]), ["turn", "turn"]]);
   let seeds = ids(array(input.seeds).map((raw) => {
     const s = record3(raw), detail = plain(s.detail, LIMITS.short) || plain(s.text, LIMITS.short);
@@ -1528,7 +1536,8 @@ function tidyNotebook(value, previous) {
         next.status = old.status;
     }
   const keptSeeds = new Set(previous?.seeds.map((s) => s.id));
-  seeds = cap(seeds, LIMITS.seeds, (s) => (keptSeeds.has(s.id) ? 4 : 0) + (s.status === "planted" ? 2 : s.status === "waiting" ? 1 : 0));
+  seeds = retire(seeds, (s) => s.status === "paid" || s.status === "dropped", 4);
+  seeds = cap(seeds, LIMITS.seeds, (s) => (s.status === "planted" || s.status === "echo" ? 6 : s.status === "waiting" ? 4 : 0) + (keptSeeds.has(s.id) ? 1 : 0));
   const teller = (v) => {
     const w = slug(v);
     return ["player", "user", "you", "pc", "player-character", "protagonist"].includes(w) ? "player" : who.get(w) ?? "";
@@ -3021,7 +3030,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.27.0";
+var VERSION = "0.27.1";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
