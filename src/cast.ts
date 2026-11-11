@@ -1,4 +1,4 @@
-import type { Moment, Notebook, Person, Preferences } from './notebook';
+import { isNewArc, type Moment, type Notebook, type Person, type Preferences } from './notebook';
 
 /**
  * A story's world grows. Small cards (a house, a few people) stay small on
@@ -47,4 +47,33 @@ export function awayPeople(notebook: Notebook, seen: Record<string, number>, pre
     .filter(p => p.status === 'active' && p.met && !present.includes(p) && seen[p.id] !== undefined && reply - seen[p.id] >= after)
     .map(person => ({ person, replies: reply - seen[person.id] }))
     .sort((a, b) => b.replies - a.replies);
+}
+
+/**
+ * A plan runs dry: every possible moment has happened, every secret is out, every lie has held without a wobble.
+ * Nothing else notices, and the story coasts on one plot. A check-up that leaves the plan without fuel is sent
+ * back once, like the other story rules.
+ */
+export function stockProblems(previous: Notebook, revised: Notebook, prefs: Preferences): string[] {
+  const problems: string[] = [];
+  const open = new Set(revised.threads.filter(t => t.status === 'open').map(t => t.id));
+  const possible = revised.beats.filter(b => b.status === 'possible' && (!b.thread || open.has(b.thread))).length;
+  if (possible < 2) problems.push(`The plan has ${possible ? 'only one possible moment' : 'no possible moments'} left. Add two or three new ones in "beats" that grow from what has happened and from what people want now, each with its conditions and purpose.`);
+  if (!revised.story.hiddenTruth.length && prefs.size !== 'close') problems.push('Every secret has come out. Give the story one or two new hidden truths in story.hiddenTruth: things people here are keeping back that grow from what has happened, each with a breadcrumb in "seeds" pointing toward it.');
+  if (prefs.twist && isNewArc(previous, revised) && !revised.story.twist && !revised.arc.turn) problems.push('This new part of the story has no twist planned, and the player allows one. Plan one in story.twist.');
+  const live = revised.covers.filter(c => c.status !== 'exposed');
+  if (live.length >= 5 && !revised.covers.some(c => c.status === 'strained') && !revised.covers.some(c => c.status === 'exposed' && !previous.covers.some(o => o.id === c.id && o.status === 'exposed')))
+    problems.push('Several lies have held for a long time and nobody doubts any of them. Let one start to strain: mark it "strained", and plan the step or possible moment where someone notices something that doesn\'t add up.');
+  return problems;
+}
+
+/**
+ * Whether the narrator takes what Grimoire offers: of the recent replies where the quick check was looking for
+ * something Grimoire had offered (a step that was due, a possible moment, a breadcrumb), how many showed any of it.
+ */
+export function followRate(log: Array<{ reply: number; ok: boolean; answers: Record<string, unknown>; marked: number }>): { offered: number; used: number } | null {
+  const byReply = new Map<number, { answers: Record<string, unknown>; marked: number }>();
+  for (const r of log) if (r.ok) byReply.set(r.reply, r);
+  const asked = [...byReply.values()].filter(r => Object.keys(r.answers).some(k => /^(due|moment|callback)_/.test(k))).slice(-12);
+  return asked.length >= 4 ? { offered: asked.length, used: asked.filter(r => r.marked > 0).length } : null;
 }

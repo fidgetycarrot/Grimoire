@@ -187,6 +187,17 @@ describe('the note in the prompt', () => {
 });
 
 describe('check-ups', () => {
+  test('an answer that lists only what changed updates just that, and keeps the rest', async () => {
+    const calmer = () => { const n: any = sampleNotebook(); n.arc.main = 'stolen-ring'; n.threads[1].steps[0].status = 'shown'; return { notebook: n, tracker: recipe }; };
+    const { h, c } = await ready(host(), model({ create: calmer, checkup: () => ({ changes: { summary: 'Only this changed.', recap: 'You crossed on the ferry.', taste: ['takes the slow road'] }, tracker: null }) }));
+    for (const line of ['The far bank.', 'Rain.', 'Night falls.']) { h.add('user', 'On.'); h.add('assistant', `${line}${tracker('Day 1, 19:00', 'The ferry')}`); }
+    await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+    const view = (await c.view('chat-1'))!;
+    expect(view.recap).toBe('You crossed on the ferry.');
+    expect(view.notebook!.taste).toEqual(['takes the slow road']);
+    expect(view.notebook!.people).toHaveLength(5);
+    expect(view.notebook!.threads).toHaveLength(2);
+  });
   test('run after enough replies, and the update becomes the new version', async () => {
     // The storm has already blown through; the ring is the main storyline, so nothing urgent asks for an early check-up.
     const calmer = () => { const n: any = sampleNotebook(); n.arc.main = 'stolen-ring'; n.threads[1].steps[0].status = 'shown'; return { notebook: n, tracker: recipe }; };

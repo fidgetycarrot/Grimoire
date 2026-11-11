@@ -232,5 +232,7 @@ export function tidyNotebook(value: unknown, previous?: Notebook): unknown {
     arc, people, threads, beats, seeds, covers, buildings, events, clock,
     rhythm: pick(input.rhythm, ['calm', 'rising', 'peak', 'aftermath', 'stalled'] as const, RHYTHM, 'calm'),
     summary: plain(input.summary, LIMITS.short),
+    taste: (Array.isArray(input.taste) ? input.taste.map(x => plain(x, LIMITS.short)).filter(Boolean) : previous?.taste ?? []).slice(0, 6),
+    recap: plain(input.recap, LIMITS.text) || previous?.recap || '',
   };
 }

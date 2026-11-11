@@ -100,5 +100,6 @@ export function applyChanges(base: Notebook, changes: unknown): Record<string, u
     if (part && typeof part === 'object' && !Array.isArray(part)) { out[key] = { ...(out[key] as object), ...(part as object) }; touched = true; }
   }
   if (Array.isArray(c.events) && c.events.length) { out.events = [...(out.events as unknown[]), ...c.events]; touched = true; }
+  for (const key of ['clock', 'rhythm', 'summary', 'recap', 'taste'] as const) if (c[key] !== undefined && c[key] !== null && c[key] !== '') { out[key] = c[key]; touched = true; }
   return touched ? out : null;
 }

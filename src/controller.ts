@@ -4,7 +4,7 @@ import { conversation, fingerprints, newestMatching, covers, planHistory, readab
 import { splitOoc } from './ooc';
 import { askJson, askModel, ModelError, withBackup, type Ask } from './model';
 import { buildNote, liveClock, paceLine, presentPeople, type ClockSources } from './note';
-import { awayPeople, castProblems, noteSeen } from './cast';
+import { awayPeople, castProblems, followRate, noteSeen, stockProblems } from './cast';
 import { layoutLine, whereabouts } from './layout';
 import { dueThreads, fillReplies, isNewArc, keepTimes, mergeRevision, NotebookError, partProgress, stamp, validateNotebook, waitsFor, withoutTimes, type Moment, type Notebook, type Pace, type Preferences } from './notebook';
 import { checkupMessages, creationMessages, digestMessages, talkMessages, type Material } from './prompts';
@@ -130,7 +130,7 @@ const SOFT_RANK = ['A problem was solved too easily', 'A new problem came up', '
 function storyRules(previous: Notebook | null, revised: Notebook, round: number, pace: PaceRules, prefs: Preferences, checkup = false): Notebook {
   if (round === 1) {
     // A check-up that leaves nothing to happen is asked once to open the next part; if it still doesn't, the panel offers a new chapter.
-    const problems = [...paceProblems(previous, revised, pace), ...leadProblems(previous, revised, prefs), ...specificProblems(previous, revised), ...(checkup && previous ? spentProblems(previous, revised) : []), ...(checkup || !previous ? castProblems(previous, revised, prefs) : [])];
+    const problems = [...paceProblems(previous, revised, pace), ...leadProblems(previous, revised, prefs), ...specificProblems(previous, revised), ...(checkup && previous ? spentProblems(previous, revised) : []), ...(checkup || !previous ? castProblems(previous, revised, prefs) : []), ...(checkup && previous ? stockProblems(previous, revised, prefs) : [])];
     if (problems.length) throw new NotebookError(problems.join(' '), 'The update broke a story rule, so it was sent back once.');
   }
   return fixSpecific(fixLead(previous, round === 1 ? revised : fixPace(previous, revised, pace), prefs));
@@ -320,7 +320,7 @@ export class NotebookController {
         checks: live ? state.checks : [], needsCheck: state.needsCheck || (live && !live.matched ? 'The chat changed before the notebook was written.' : ''),
         job: state.job, updatedAt: state.updatedAt, repliesSinceCheck: live ? this.repliesSince(live) : 0, skipHours: state.skipHours, notebook, behind: !!live && live.index !== state.versions.length - 1, earlierParts, quick: state.quick, dueIds: live ? dueThreads(live.version.notebook, live.moment).map(d => d.thread.id) : [],
         glance: live ? glance(live.version.notebook, live.moment) : null, reworking: !!live && this.reworking(state, live),
-        talk: state.talk, notes: state.notes, quickLog: state.quickLog, canUndo: this.undoable(state) !== null, spent: !!notebook && !storyLeft(notebook), memory: state.enabled ? this.memoryView(chatId) : null,
+        talk: state.talk, notes: state.notes, quickLog: state.quickLog, follow: followRate(state.quickLog), recap: notebook?.recap ?? '', canUndo: this.undoable(state) !== null, spent: !!notebook && !storyLeft(notebook), memory: state.enabled ? this.memoryView(chatId) : null,
         skipOffer: live && state.enabled && state.job?.status !== 'running' && !state.skipHours && !state.intimateNow && !this.reworking(state, live) ? skipOffer(live.version.notebook, live.moment, live.clock, state.skipDismissedAt) : null,
       };
     });
@@ -650,7 +650,9 @@ export class NotebookController {
         const result = await askJson(ask, checkupMessages(input), value => {
           round++;
           const output = record(value);
-          let revised = validateNotebook(tidyNotebook(output.notebook, base.notebook));
+          // A check-up lists only what changes (much less to write, so cheaper and faster); a whole notebook is still read.
+          const proposed = output.notebook && typeof output.notebook === 'object' ? output.notebook : applyChanges(base.notebook, output.changes) ?? structuredClone(base.notebook);
+          let revised = validateNotebook(tidyNotebook(proposed, base.notebook));
           // Pacing rules: the first answer that breaks one is sent back; a second gets the plainest fix.
           const rules = { speedUps: Object.fromEntries(Object.entries(record(output.speedUps)).map(([k, v]) => [k, typeof v === 'string' ? v : ''])) };
           revised = storyRules(base.notebook, revised, round, rules, state.preferences, true);

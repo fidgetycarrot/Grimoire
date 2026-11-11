@@ -65,7 +65,7 @@ const INTIMATE = 'Pace: an intimate scene is under way. Let it play out at its o
 const GUIDED = 'The player gave guidance for this reply. It comes first: follow it, and where anything below disagrees, the guidance wins. No new developments this time.';
 const DEEPENING = 'Pace: the scene is deepening. Let it grow through what people say and do; there is no need to escalate.';
 /** Narrators like to fix things for the player at once. Every note pushes back. */
-export const GROUND = 'People hold their ground: pleading, charm, tears, flirting, or a good speech earn no automatic yes, and closeness does not make anyone more generous, patient, or agreeable. Before anyone speaks, know what they are not saying.';
+export const GROUND = 'People hold their ground: pleading, charm, tears, flirting, or a good speech earn no automatic yes, and closeness does not make anyone more generous, patient, or agreeable. Before anyone speaks, know what they are not saying. Hard does not mean joyless: when the player earns something, let it land (people notice, something gets better, there is room to enjoy it), and let people be funny, warm, and at ease when the moment allows.';
 export const PROBLEMS = 'Problems take time. Nothing gets solved in the scene it comes up in: a solution costs something, takes more than one step, and can fail. Nobody produces the money, the answer, the rescue, or the perfect plan out of nowhere, and no one fixes the player\'s trouble for them. Let problems weigh on people and grow until they are dealt with through effort.';
 const OPENING = 'The story is just starting: keep the main storyline in front and moving, and keep side matters small for now.';
 /** Replies a due main-storyline step may wait before the world brings it to the player. */

@@ -166,6 +166,7 @@ export function setup(ctx: SpindleFrontendContext) {
     }
     const pace = el('div', 'gm-stack gm-sub'); pace.append(el('h4', '', 'Pace'), group, el('p', 'gm-hint', PACE_LABELS[view.pace].help));
     const status = el('div', 'gm-sub gm-stack');
+    if (view.recap) status.append(el('h4', '', 'Where you left off'), el('p', 'gm-small', view.recap));
     status.append(el('p', 'gm-small', view.summary || 'No updates yet.'),
       el('p', 'gm-hint', `${view.repliesSinceCheck} ${view.repliesSinceCheck === 1 ? 'reply' : 'replies'} since the last update${view.updatedAt ? ` · saved ${ago(view.updatedAt)}` : ''}`));
     const quick = snapshot?.settings.quick.enabled ? view.quick : undefined;
@@ -314,6 +315,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const s = part('Quick check answers');
     const records = [...(view.quickLog ?? [])].reverse().slice(0, 12);
     if (!records.length) { s.append(el('p', 'gm-small', 'No quick checks yet.')); return s; }
+    if (view.follow) s.append(el('p', 'gm-small', `Is the narrator listening? In ${view.follow.used} of the last ${view.follow.offered} replies where Grimoire offered something, the reply picked some of it up.${view.follow.used * 4 < view.follow.offered ? ' That is low: this preset or writer may be ignoring Grimoire’s note.' : ''}`));
     const pct = (n: number) => `${Math.round(n * 100)}%`;
     for (const r of records) {
       const item = el('div', 'gm-entry');
@@ -394,6 +396,7 @@ export function setup(ctx: SpindleFrontendContext) {
       e.append(title, el('p', 'gm-small', t.why), steps, ...(t.ifIgnored ? [el('p', 'gm-meta', `If left alone: ${t.ifIgnored}`)] : []), ...(t.closedReason ? [el('p', 'gm-meta', `Closed${t.outcome ? ` (${({ won: 'went your way', lost: 'went against you', faded: 'faded out' } as const)[t.outcome]})` : ''}: ${t.closedReason}`)] : []), ...(t.scar ? [el('p', 'gm-meta', `Still felt: ${t.scar}`)] : []));
       threads.append(e);
     }
+    if (notebook.taste?.length) { const t = section('What you seem to enjoy'), list = el('ul'); for (const line of notebook.taste) list.append(el('li', 'gm-small', line)); t.append(list); }
     if (notebook.summary) section('Latest note from the model').append(el('p', 'gm-small', notebook.summary));
     const beats = section('Possible moments'), ul = el('ul');
     for (const b of notebook.beats) { const li = el('li', 'gm-small', b.text); if (b.status !== 'possible') { const c = el('span', 'gm-chip', b.status); if (b.status === 'happened') c.dataset.tone = 'done'; li.append(c); } ul.append(li); }

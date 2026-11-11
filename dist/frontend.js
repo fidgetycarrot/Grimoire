@@ -60,7 +60,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.25.0";
+var VERSION = "0.26.0";
 var CHAPTER_WORKING = "Starting a new chapter";
 var CHAPTER_DONE = "New chapter ready";
 
@@ -354,6 +354,8 @@ function setup(ctx) {
     const pace = el("div", "gm-stack gm-sub");
     pace.append(el("h4", "", "Pace"), group, el("p", "gm-hint", PACE_LABELS[view.pace].help));
     const status = el("div", "gm-sub gm-stack");
+    if (view.recap)
+      status.append(el("h4", "", "Where you left off"), el("p", "gm-small", view.recap));
     status.append(el("p", "gm-small", view.summary || "No updates yet."), el("p", "gm-hint", `${view.repliesSinceCheck} ${view.repliesSinceCheck === 1 ? "reply" : "replies"} since the last update${view.updatedAt ? ` · saved ${ago(view.updatedAt)}` : ""}`));
     const quick = snapshot?.settings.quick.enabled ? view.quick : undefined;
     if (snapshot?.settings.quick.enabled)
@@ -597,6 +599,8 @@ function setup(ctx) {
       s.append(el("p", "gm-small", "No quick checks yet."));
       return s;
     }
+    if (view.follow)
+      s.append(el("p", "gm-small", `Is the narrator listening? In ${view.follow.used} of the last ${view.follow.offered} replies where Grimoire offered something, the reply picked some of it up.${view.follow.used * 4 < view.follow.offered ? " That is low: this preset or writer may be ignoring Grimoire’s note." : ""}`));
     const pct = (n) => `${Math.round(n * 100)}%`;
     for (const r of records) {
       const item = el("div", "gm-entry");
@@ -732,6 +736,12 @@ function setup(ctx) {
       }
       e.append(title, el("p", "gm-small", t.why), steps, ...t.ifIgnored ? [el("p", "gm-meta", `If left alone: ${t.ifIgnored}`)] : [], ...t.closedReason ? [el("p", "gm-meta", `Closed${t.outcome ? ` (${{ won: "went your way", lost: "went against you", faded: "faded out" }[t.outcome]})` : ""}: ${t.closedReason}`)] : [], ...t.scar ? [el("p", "gm-meta", `Still felt: ${t.scar}`)] : []);
       threads.append(e);
+    }
+    if (notebook.taste?.length) {
+      const t = section("What you seem to enjoy"), list = el("ul");
+      for (const line of notebook.taste)
+        list.append(el("li", "gm-small", line));
+      t.append(list);
     }
     if (notebook.summary)
       section("Latest note from the model").append(el("p", "gm-small", notebook.summary));

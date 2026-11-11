@@ -78,6 +78,8 @@ export interface Notebook {
   covers: Cover[];
   buildings: Building[];
   events: string[]; clock: StoryClock; rhythm: Rhythm; summary: string;
+  /** What this player seems to enjoy, read from how they play: what they chase, linger on, and skip. */ taste: string[];
+  /** Where the story stands, in a few plain sentences for the player. No secrets, no plans. */ recap: string;
 }
 export type ShapeChoice = Shape | 'auto';
 /** How big the story's world gets: close keeps it to a few places and people; wide keeps adding both; auto lets the card decide. */
@@ -243,6 +245,8 @@ export function validateNotebook(value: unknown): Notebook {
     events: list(input.events, 'events', LIMITS.events).map((x, i) => text(typeof x === 'string' ? x : record(x).text, `events[${i}]`, LIMITS.text, false)),
     clock: clock(input.clock), rhythm: choice(input.rhythm, ['calm', 'rising', 'peak', 'aftermath', 'stalled'] as const, 'rhythm', 'calm'),
     summary: text(input.summary, 'summary', LIMITS.short),
+    taste: input.taste === undefined ? [] : [...new Set(list(input.taste, 'taste', 6).filter((x): x is string => typeof x === 'string').map(x => x.replace(/\s+/g, ' ').trim().slice(0, LIMITS.short)).filter(Boolean))],
+    recap: input.recap === undefined ? '' : text(input.recap, 'recap', LIMITS.text),
   };
 }
 

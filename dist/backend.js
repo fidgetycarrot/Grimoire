@@ -797,7 +797,9 @@ function validateNotebook(value) {
     events: list(input.events, "events", LIMITS.events).map((x, i) => text(typeof x === "string" ? x : record2(x).text, `events[${i}]`, LIMITS.text, false)),
     clock: clock(input.clock),
     rhythm: choice(input.rhythm, ["calm", "rising", "peak", "aftermath", "stalled"], "rhythm", "calm"),
-    summary: text(input.summary, "summary", LIMITS.short)
+    summary: text(input.summary, "summary", LIMITS.short),
+    taste: input.taste === undefined ? [] : [...new Set(list(input.taste, "taste", 6).filter((x) => typeof x === "string").map((x) => x.replace(/\s+/g, " ").trim().slice(0, LIMITS.short)).filter(Boolean))],
+    recap: input.recap === undefined ? "" : text(input.recap, "recap", LIMITS.text)
   };
 }
 function mergeRevision(previous, revised, now) {
@@ -1069,7 +1071,7 @@ var STAGE = {
 var INTIMATE = "Pace: an intimate scene is under way. Let it play out at its own pace, for as long as the player wants. Nothing from outside interrupts it: planned developments wait until it is over.";
 var GUIDED = "The player gave guidance for this reply. It comes first: follow it, and where anything below disagrees, the guidance wins. No new developments this time.";
 var DEEPENING = "Pace: the scene is deepening. Let it grow through what people say and do; there is no need to escalate.";
-var GROUND = "People hold their ground: pleading, charm, tears, flirting, or a good speech earn no automatic yes, and closeness does not make anyone more generous, patient, or agreeable. Before anyone speaks, know what they are not saying.";
+var GROUND = "People hold their ground: pleading, charm, tears, flirting, or a good speech earn no automatic yes, and closeness does not make anyone more generous, patient, or agreeable. Before anyone speaks, know what they are not saying. Hard does not mean joyless: when the player earns something, let it land (people notice, something gets better, there is room to enjoy it), and let people be funny, warm, and at ease when the moment allows.";
 var PROBLEMS = "Problems take time. Nothing gets solved in the scene it comes up in: a solution costs something, takes more than one step, and can fail. Nobody produces the money, the answer, the rescue, or the perfect plan out of nowhere, and no one fixes the player's trouble for them. Let problems weigh on people and grow until they are dealt with through effort.";
 var OPENING = "The story is just starting: keep the main storyline in front and moving, and keep side matters small for now.";
 var BRING_AFTER = 2;
@@ -1259,6 +1261,29 @@ var awayAfter = (m) => Math.max(10, m.waits?.steady ?? 15);
 function awayPeople(notebook, seen, present, m) {
   const reply = m.reply ?? 0, after = awayAfter(m);
   return notebook.people.filter((p) => p.status === "active" && p.met && !present.includes(p) && seen[p.id] !== undefined && reply - seen[p.id] >= after).map((person) => ({ person, replies: reply - seen[person.id] })).sort((a, b) => b.replies - a.replies);
+}
+function stockProblems(previous, revised, prefs) {
+  const problems = [];
+  const open = new Set(revised.threads.filter((t) => t.status === "open").map((t) => t.id));
+  const possible = revised.beats.filter((b) => b.status === "possible" && (!b.thread || open.has(b.thread))).length;
+  if (possible < 2)
+    problems.push(`The plan has ${possible ? "only one possible moment" : "no possible moments"} left. Add two or three new ones in "beats" that grow from what has happened and from what people want now, each with its conditions and purpose.`);
+  if (!revised.story.hiddenTruth.length && prefs.size !== "close")
+    problems.push('Every secret has come out. Give the story one or two new hidden truths in story.hiddenTruth: things people here are keeping back that grow from what has happened, each with a breadcrumb in "seeds" pointing toward it.');
+  if (prefs.twist && isNewArc(previous, revised) && !revised.story.twist && !revised.arc.turn)
+    problems.push("This new part of the story has no twist planned, and the player allows one. Plan one in story.twist.");
+  const live = revised.covers.filter((c) => c.status !== "exposed");
+  if (live.length >= 5 && !revised.covers.some((c) => c.status === "strained") && !revised.covers.some((c) => c.status === "exposed" && !previous.covers.some((o) => o.id === c.id && o.status === "exposed")))
+    problems.push(`Several lies have held for a long time and nobody doubts any of them. Let one start to strain: mark it "strained", and plan the step or possible moment where someone notices something that doesn't add up.`);
+  return problems;
+}
+function followRate(log) {
+  const byReply = new Map;
+  for (const r of log)
+    if (r.ok)
+      byReply.set(r.reply, r);
+  const asked = [...byReply.values()].filter((r) => Object.keys(r.answers).some((k) => /^(due|moment|callback)_/.test(k))).slice(-12);
+  return asked.length >= 4 ? { offered: asked.length, used: asked.filter((r) => r.marked > 0).length } : null;
 }
 
 // src/layout.ts
@@ -1621,7 +1646,9 @@ function tidyNotebook(value, previous) {
     events,
     clock,
     rhythm: pick(input.rhythm, ["calm", "rising", "peak", "aftermath", "stalled"], RHYTHM2, "calm"),
-    summary: plain(input.summary, LIMITS.short)
+    summary: plain(input.summary, LIMITS.short),
+    taste: (Array.isArray(input.taste) ? input.taste.map((x) => plain(x, LIMITS.short)).filter(Boolean) : previous?.taste ?? []).slice(0, 6),
+    recap: plain(input.recap, LIMITS.text) || previous?.recap || ""
   };
 }
 
@@ -1951,7 +1978,9 @@ var SHAPE = `{
  "events": ["important things that already happened in the chat"],
  "clock": {"day": 1, "hour": null, "label": "how the story describes the time"},
  "rhythm": "calm|rising|peak|aftermath|stalled",
- "summary": "one short spoiler-free line for the player"
+ "summary": "one short spoiler-free line for the player",
+ "taste": ["up to six short lines on what this player seems to enjoy, from how they play"],
+ "recap": "where the story stands now, in two or three plain sentences for the player: what has happened and where things were left. No secrets, no plans, nothing the player has not seen"
 }`;
 var CRAFT = [
   "How to build it:",
@@ -1966,6 +1995,9 @@ var CRAFT = [
   "3e. People hold their ground. Pleading, charm, tears, flirting, or a good speech earn no automatic yes; closeness does not make anyone more generous, patient, or agreeable, and affection never turns anyone into a pushover. Everyone keeps their pride, vices, and own priorities. Most people are hiding or shading something at any moment; honesty is earned. Write people's wants and plans so they can say no.",
   '3f. Lies need upkeep. When the player character or anyone else tells a lie that matters (an excuse, a cover story, a false name, a hidden affair), record it in "covers": who told it ("player", or their id), who was told, what was said, and what it hides. Plan how it comes back, spaced out like everything else: someone asks a follow-up, a detail stops adding up, the lie needs another lie to hold. Mark it "strained" once someone starts to doubt it; it may come apart ("exposed") at a well-paced moment, never all at once, and an exposed lie stays exposed and has consequences. A lie someone else told is a secret: keep it out of hints. Small talk and white lies that nobody will remember do not count.',
   '3g. Keep places straight. For each building the story spends time in (a home, a workplace, a dorm, a ship), record its layout in "buildings": its floors, the rooms on each, and which rooms are beside each other, plain words and no measurements. Base it on the card and the chat, keep it ordinary and plausible for that kind of place (in a two-story house the bedrooms are usually upstairs and the kitchen downstairs), and list in "aliases" the names the chat and its tracker use for the building and its rooms. Once written, a layout changes only when the story changes the building; add rooms as they come up. Only buildings the story actually uses.',
+  "3h. Fun is the point. Hard things make wins matter, but a story that is only hard is a grind. Give each part of the story at least one win the player can earn, plan something lighter after a loss or a long hard stretch (a warm scene, a funny one, a small good thing), and let the tone setting decide the mix: light leans toward warmth and humor, dark keeps the relief rare but real.",
+  "3i. Give each part of the story one real choice: a possible moment where two things the player character wants cannot both be had, and each way costs something and leads somewhere different (say where in ifFollowed and ifIgnored, or in the beat). Never decide it for them, and do not make one way plainly right.",
+  "3j. The player character gets a storyline of their own. If the persona says what they want, fear, owe, or left behind, tie one storyline to it. Build it only from what the persona and the chat state; never invent their past, feelings, or decisions.",
   "4. Plan a supporting cast beyond the card's character so the world is not just the main character; how large depends on the story size below. They have their own lives and are met when they fit.",
   "5. Threads are open problems or opportunities, one problem each: an unrelated subplot is its own thread. Each has a speed (urgent: minutes to hours; steady: a day to several days; slow: a week or more) and two to five steps toward its consequence. Most steps are signs the player could notice; only the last is the consequence itself. afterHours is story time after the previous step (or the thread's start) before the step becomes due: a number of hours like 6, 24, or 72, never a clock time or a date.",
   "5b. The story is open-ended: plan its first arc (the story question and two to four threads); later check-ups open new arcs as these resolve. Pacing is the shape of the arc, not just the next scene. Stagger the threads so they come to a head at different times, with room between them. The main storyline starts now and builds across the part; side storylines begin with small signs and build. Mix speeds: only one storyline may be urgent at a time (urgent means something bad happens within hours if nobody acts: a fire, a deadline, someone hunting you; feelings and relationships are almost never urgent), and at least one slow one. A later emergency can be prepared with a breadcrumb or two, never started early. Keep story time realistic: Grimoire also moves a thread on after a number of replies, so never squeeze story time to keep things moving. If the card fixes an event at a certain time (a show tonight, a deadline), use it, but let only the threads that truly depend on it peak there.",
@@ -2012,7 +2044,9 @@ function checkupMessages(input) {
   return [
     { role: "system", content: `${SAFETY}
 You keep a private story notebook up to date while a roleplay chat goes on. You see the whole notebook and the chat since the last check-up.
-Return {"notebook": ${SHAPE}, "tracker": null or {"fields": [...], "note": ""}, "speedUps": {}}.
+Return {"changes": {...}, "tracker": null or {"fields": [...], "note": ""}, "speedUps": {}}.
+"changes" holds only what is different after this update, in the notebook's own shape: ${SHAPE}
+In "changes": "people", "threads", "beats", "seeds", "covers" and "buildings" list only the items that are new or changed, each one complete (a changed thread includes all of its steps, a changed person all of their fields); anything you leave out stays exactly as it is. "story" and "arc" give only the fields that change (a list such as hiddenTruth is given whole). "events" gives only new events. Give "clock", "rhythm", "summary", "recap" and "taste" whenever they change. Leave everything else out; do not copy unchanged items.
 Rules for the update:
 ${LORE(input.lore) ? `- ${LORE(input.lore)}` : ""}${MEMORY(input.memory) ? `- ${MEMORY(input.memory)}` : ""}${input.notes.length ? NOTES : ""}${input.replan ? REPLAN : ""}${input.resync ? RESYNC(input.held) : ""}${input.part ? `- This part of the story is about ${input.part.elapsed} replies in, of roughly ${input.part.length}. Spread what is left across the rest of it: the climax and the biggest moments belong in the last third, and new storylines should fit the time that is left rather than pile on. If the player picks up the pace (Fast), parts are shorter. If everything resolves early anyway, open the next part as usual.
 ` : ""}- Speed: never make an existing storyline faster, or pull its waiting steps closer together (lower afterHours), unless something the player did made it more pressing; then say what in "speedUps": {"thread-id": "what the player did"}. Only one storyline may be urgent at a time.
@@ -2027,6 +2061,8 @@ ${LORE(input.lore) ? `- ${LORE(input.lore)}` : ""}${MEMORY(input.memory) ? `- ${
 - ${WORLD(input.preferences.size)}${input.preferences.size !== "close" && input.away.length ? ' "away" lists people the player has met who have not been seen for a while: give one or two of them a reason to come back soon, through what they want.' : ""}
 ${input.preferences.size !== "close" ? `- Where the story goes: "places" lists where recent scenes took place. If the story has spent a long stretch in the same place or the same few rooms, let one storyline's next step give the player a reason to go somewhere else. It should grow out of how these people live and what they want: a shift at work, a class, an errand, an appointment or event people have already mentioned, a favor someone asks, trouble that needs them elsewhere. Give it a place and a time, and let the step after it happen there. Set it up ahead where you can (a breadcrumb, a mention a day or two earlier) so it feels like part of their lives rather than something dropped in. Vary the kind of pull, never the same shape twice running and never on a schedule; some stretches stay home, and that is fine. It stays the player's choice: if they don't go, the world goes on without them (ifIgnored).
 ` : ""}- Places: if the story has spent time in a building that has no layout in "buildings" yet, add one (see 3g). Keep every layout, and add rooms the chat has shown; never move rooms the chat has already used.
+- What the player enjoys: keep "taste" current, from how they actually play. Which storylines and people do they go after, which scenes do they stay in and write the most for, what do they skip past or cut short? Short plain lines ("lingers in quiet scenes with Mira", "skips combat", "keeps poking at the ring mystery"). Plan toward it as one ingredient among others: more of what they lean into, less of what they pass over, never the same thing every time.
+- Recap: keep "recap" current (see its description). It is shown to the player, so it holds no secrets and no plans.
 - Lies: record new lies that matter in "covers" (see 3f), and keep every one there. Mark one "strained" when someone in the chat starts to doubt it and "exposed" once it comes apart in the chat; an exposed lie never goes back. When a lie has held for a while, plan a step or beat where it needs upkeep.
 - Secrets that came out: once the chat shows the player has learned a hidden truth (or the twist), or it came out where they could see, move it word for word to story.cameOut and out of hiddenTruth (empty twist if it was the twist). From then on it is an established fact: rewrite people's "hint" and "doing", thread hints, and beats so nobody keeps acting as if it were still secret, and plan no more clues or reveal moments for it; build on it instead. A suspicion or a guess is not learning it. Never move anything back out of cameOut.
 - Sheets: keep each "sheet" true to how the person has actually been in the chat, and add what has changed (what they learned, how they now feel about the player character, what they did). Return a sheet only when it changes; leave it empty to keep it as it is. Someone who has become important gets a sheet; never more than six. Fill in "depth" for anyone who has none.
@@ -2203,6 +2239,11 @@ function applyChanges(base, changes) {
     out.events = [...out.events, ...c.events];
     touched = true;
   }
+  for (const key of ["clock", "rhythm", "summary", "recap", "taste"])
+    if (c[key] !== undefined && c[key] !== null && c[key] !== "") {
+      out[key] = c[key];
+      touched = true;
+    }
   return touched ? out : null;
 }
 
@@ -2980,7 +3021,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.25.0";
+var VERSION = "0.26.0";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -3103,7 +3144,7 @@ var CALM = 3;
 var SOFT_RANK = ["A problem was solved too easily", "A new problem came up", "Something new happened in the story"];
 function storyRules(previous, revised, round, pace, prefs, checkup = false) {
   if (round === 1) {
-    const problems = [...paceProblems(previous, revised, pace), ...leadProblems(previous, revised, prefs), ...specificProblems(previous, revised), ...checkup && previous ? spentProblems(previous, revised) : [], ...checkup || !previous ? castProblems(previous, revised, prefs) : []];
+    const problems = [...paceProblems(previous, revised, pace), ...leadProblems(previous, revised, prefs), ...specificProblems(previous, revised), ...checkup && previous ? spentProblems(previous, revised) : [], ...checkup || !previous ? castProblems(previous, revised, prefs) : [], ...checkup && previous ? stockProblems(previous, revised, prefs) : []];
     if (problems.length)
       throw new NotebookError(problems.join(" "), "The update broke a story rule, so it was sent back once.");
   }
@@ -3353,6 +3394,8 @@ class NotebookController {
         talk: state.talk,
         notes: state.notes,
         quickLog: state.quickLog,
+        follow: followRate(state.quickLog),
+        recap: notebook?.recap ?? "",
         canUndo: this.undoable(state) !== null,
         spent: !!notebook && !storyLeft(notebook),
         memory: state.enabled ? this.memoryView(chatId) : null,
@@ -3784,7 +3827,8 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
         const result = await askJson(ask, checkupMessages(input), (value) => {
           round++;
           const output = record7(value);
-          let revised = validateNotebook(tidyNotebook(output.notebook, base.notebook));
+          const proposed = output.notebook && typeof output.notebook === "object" ? output.notebook : applyChanges(base.notebook, output.changes) ?? structuredClone(base.notebook);
+          let revised = validateNotebook(tidyNotebook(proposed, base.notebook));
           const rules = { speedUps: Object.fromEntries(Object.entries(record7(output.speedUps)).map(([k, v]) => [k, typeof v === "string" ? v : ""])) };
           revised = storyRules(base.notebook, revised, round, rules, state.preferences, true);
           let merged = mergeRevision(base.notebook, revised, live.moment);
