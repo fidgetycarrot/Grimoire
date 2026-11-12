@@ -7,7 +7,7 @@ import type { FieldCheck, Recipe } from './tracker';
 import type { Glance, SkipOffer } from './skip';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.31.3';
+export const VERSION = '0.31.4';
 export const MAX_VERSIONS = 16;
 
 /** One saved state of the notebook and the chat history it describes. */
@@ -38,6 +38,8 @@ export interface ChatState {
   skipDismissedAt: number;
   /** Threads the quick check found no longer fit for now; left out of the note until a check-up decides. */
   held: string[];
+  /** Due steps the quick check found could not believably reach the player in the scene as it stands (a locked or private room, somewhere they could not be). They wait for the scene to open up. */
+  blocked?: string[];
   /** The reply count when the story changed direction; the next check-up reworks the notebook. Null when none is due. */
   resync: number | null;
   /** The quick check's recent answers as plain numbers, for checking how it judges. No story text. */

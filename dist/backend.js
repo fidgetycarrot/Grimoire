@@ -1677,13 +1677,14 @@ function buildNote(input) {
   const lead = due.find((d) => d.thread.id === main?.id && (pace !== "quiet" || d.thread.speed === "urgent"));
   if (lead) {
     const waited = overdue(notebook, lead.thread, now);
-    const holding = quietTime && lead.thread.speed !== "urgent" && !(pace === "auto" && waited >= HOLD_LIMIT);
+    const shut = (input.blocked ?? []).includes(lead.step.id);
+    const holding = shut || quietTime && lead.thread.speed !== "urgent" && !(pace === "auto" && waited >= HOLD_LIMIT);
     const late = !holding && waited >= BRING_AFTER;
-    const when = holding ? "as soon as this moment has settled" : quietTime && lead.thread.speed !== "urgent" ? "now, in this reply or the next, as the scene allows: it has waited long enough" : "now, in this reply or the next";
+    const when = shut ? "once it can believably reach the player: not in this scene as it stands. Do not force it in; let it wait, or let word of it reach them afterward" : holding ? "as soon as this moment has settled" : quietTime && lead.thread.speed !== "urgent" ? "now, in this reply or the next, as the scene allows: it has waited long enough" : "now, in this reply or the next";
     const tie = seeds.ready.find((s) => s.pays === lead.thread.id && !used.has(s.id));
     const tied = notebook.people.filter((p) => p.status === "active" && lead.thread.people.includes(p.id)).map((p) => p.name).slice(0, 3);
     must("What the story does now:");
-    must(`- ${lead.thread.title}: ${fit(lead.step.sign || lead.step.text, 320)} (bring it in ${when}). Why it matters: ${fit(about(lead.thread), 200)}${tie ? ` ${callback(tie)}` : ""}`);
+    must(`- ${lead.thread.title}: ${fit(lead.step.sign || lead.step.text, 320)} (bring it in ${when}). If the scene has moved since this was planned, bring it in the way that fits where the player is now, never through a locked door or into a private moment by force. Why it matters: ${fit(about(lead.thread), 200)}${tie ? ` ${callback(tie)}` : ""}`);
     must("- Bring it in as something the player can act on (a thing in their hands, an offer, a question put to them, someone waiting on their answer), and stop there: what they do with it is theirs.");
     const where = lead.thread.speed === "urgent" || input.size === "close" ? ", or it happens where they are" : ", with a reason to go where it is happening; it only comes to where they are if there is no other way";
     if (late)
@@ -1845,7 +1846,7 @@ function followRate(log) {
   for (const r of log)
     if (r.quiet)
       byReply.delete(r.reply);
-  const dues = (r) => Object.entries(r.answers).filter(([k]) => /^due_/.test(k)).map(([, v]) => typeof v === "number" ? v : 0);
+  const dues = (r) => Object.entries(r.answers).filter(([k]) => /^due_/.test(k) && !(typeof r.answers[k.replace("due_", "reach_")] === "number" && r.answers[k.replace("due_", "reach_")] <= 0.3)).map(([, v]) => typeof v === "number" ? v : 0);
   const asked = [...byReply.values()].filter((r) => dues(r).length).slice(-12);
   return asked.length >= 4 ? { offered: asked.length, used: asked.filter((r) => dues(r).some((v) => v >= 0.7)).length } : null;
 }
@@ -2584,7 +2585,7 @@ var CRAFT = [
   "How to build it:",
   "1. Start from what the card already sets up: its premise, people, and any plot it begins. Build on it; do not replace it.",
   "1a. Grimoire leads the story, so the player can simply play the scene in front of them and be carried along. Every part of the story has one main storyline (arc.main): the thread that carries the story question and that the player is clearly in. It opens at once with an inciting moment that draws the player in, its first waiting step, which arrives with the very next reply. For conflict, that is a job offered, a problem that lands, someone who needs something, something that just happened. For kishotenketsu, it is an invitation or a question worth following: someone new, a change, something unexplained, with no trouble needed. Build it from the card, the lore, and what people want; if the card already begins a plot, that is the main storyline. Give it four to six steps that build across the whole part: the first is the opening moment, later ones raise it, and the last is where the part comes to a head. Make it steady or urgent, never slow. In a conflict part, the main storyline has an opponent: a person or group in the notebook whose want collides with what the player character wants or needs, who has the means to act on it, acts offscreen between scenes, pushes harder when ignored, and does not fold in one scene; list them in its people. Problems in it resist easy fixes: each step makes things harder or costs something before anything gets better. Side storylines are smaller and grow around it. Leading is not deciding for the player: the world brings the story to them, and they choose what to do.",
-  `1b. The player does not want to invent the story; they want to act in it. So every step hands them something to do something about. Write each step's "sign" as what lands in front of the player: a thing they find or are given, an offer or a demand, a question put to them, someone waiting on their answer, a door that is open for now. Not weather or background ("a storm rolls in") but what it asks of them ("the ferryman says the last crossing leaves in ten minutes, and asks if they are coming"). Never write what they do with it, and never a sign that only works if the player thinks of the next move themselves.`,
+  `1b. The player does not want to invent the story; they want to act in it. So every step hands them something to do something about. Write each step's "sign" as what lands in front of the player: a thing they find or are given, an offer or a demand, a question put to them, someone waiting on their answer, a door that is open for now. Not weather or background ("a storm rolls in") but what it asks of them ("the ferryman says the last crossing leaves in ten minutes, and asks if they are coming"). Never write what they do with it, and never a sign that only works if the player thinks of the next move themselves. A step may arrive many replies after you plan it, wherever the player is by then, so do not stage it in a particular room or assume a door is open: say how it finds them (someone comes looking, a summons or message, word that spreads), or what it waits for.`,
   "1b. Some cards are not a person: a narrator, a game master, or a world, or a card left nearly blank so a lorebook can carry the setting. That card is the voice that runs the story, not a character in it: never add it to people or give it wants. Build the cast from the lore, the player's ideas, and the persona's world instead.",
   "2. Decide what is really going on: causes and motives before the chat began. Every thread and beat must follow from these, so the narrator never has to invent reasons on the spot.",
   "3. Give each important person a want and a current plan. They act on it offscreen too.",
@@ -3113,6 +3114,12 @@ function quickQuestions(notebook, now, scene = "") {
       criteria: { true: "The latest reply shows it or its sign.", false: "The latest reply does not show it, or only hints vaguely." }
     };
     marks[key] = { kind: "step", thread: thread.id, step: step.id };
+    questions[`reach_${i + 1}`] = {
+      type: "noul",
+      instructions: `Where the player is now and what is going on there, could this reach them in the next reply in a believable way? It could not if that would mean someone getting through a locked or barred door, walking in on a private moment no one would interrupt, or something turning up where it could not be. A message, a knock, or word arriving can still be believable. Event: ${step.text}${step.sign ? ` Sign: ${step.sign}` : ""}`,
+      criteria: { true: "Yes, it could believably reach them now, in some form.", false: "No, not in the scene as it stands; it would have to wait for the scene to change." }
+    };
+    marks[`reach_${i + 1}`] = { kind: "reach", thread: thread.id, step: step.id };
   });
   notebook.beats.filter((b) => b.status === "possible").slice(0, QUICK.maxBeats).forEach((beat, i) => {
     const key = `moment_${i + 1}`;
@@ -3246,7 +3253,7 @@ function applyQuick(current, plan, result, now, playerMessage = "") {
   let notebook = structuredClone(current);
   let marked = 0, mysteryEnded = false;
   for (const [key, mark] of Object.entries(plan.marks)) {
-    if (mark.kind === "fits" || mark.kind === "truth" || !yes(answers[key]))
+    if (mark.kind === "fits" || mark.kind === "truth" || mark.kind === "reach" || !yes(answers[key]))
       continue;
     if (mark.kind === "clue") {
       const clue = notebook.mystery?.status === "open" ? notebook.mystery.clues.find((c) => c.id === mark.clue) : undefined;
@@ -3323,10 +3330,11 @@ function applyQuick(current, plan, result, now, playerMessage = "") {
     notebook.rhythm = rhythm.choice;
     changed = true;
   }
+  const blocked = Object.entries(plan.marks).flatMap(([key, mark]) => mark.kind === "reach" && answers[key]?.type === "noul" && answers[key].noul <= QUICK.no && !yes(answers[key.replace("reach_", "due_")]) ? [mark.step] : []);
   const held = Object.entries(plan.marks).flatMap(([key, mark]) => mark.kind === "fits" && answers[key]?.type === "noul" && answers[key].noul <= QUICK.no ? [mark.thread] : []);
   const cameOut = Object.entries(plan.marks).some(([key, mark]) => mark.kind === "truth" && yes(answers[key]));
   const problem = yes(answers.new_problem), easyFix = yes(answers.easy_fix);
-  return { notebook, changed, marked, needsCheckup: yes(answers.new_turn) || held.length > 0 || cameOut || problem || easyFix, mysteryEnded, problem, easyFix, revealed: cameOut, rushing: yes(answers.rushing), intimate: yes(answers.intimate), shifted: yes(answers.story_shift), held };
+  return { notebook, changed, marked, blocked, needsCheckup: yes(answers.new_turn) || held.length > 0 || cameOut || problem || easyFix, mysteryEnded, problem, easyFix, revealed: cameOut, rushing: yes(answers.rushing), intimate: yes(answers.intimate), shifted: yes(answers.story_shift), held };
 }
 function quickError(error) {
   const message = error instanceof Error ? error.message : String(error ?? "");
@@ -3688,7 +3696,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.31.3";
+var VERSION = "0.31.4";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -3941,6 +3949,7 @@ class NotebookController {
         trackerTried: saved.trackerTried === true,
         skipDismissedAt: Number(saved.skipDismissedAt) > 0 ? Number(saved.skipDismissedAt) : 0,
         held: Array.isArray(saved.held) ? saved.held.filter((x) => typeof x === "string").slice(0, 12) : [],
+        blocked: Array.isArray(saved.blocked) ? saved.blocked.filter((x) => typeof x === "string").slice(0, 6) : [],
         resync: Number.isInteger(saved.resync) ? Number(saved.resync) : null,
         talk: talkLines(saved.talk),
         notes: playerNotes(saved.notes),
@@ -4924,7 +4933,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
       const intimate = state.intimateNow && settings.intimate === "protect" && live.turns.at(-1)?.role === "user";
       const away = awayPeople(live.version.notebook, state.seen, this.presentNow(live), live.moment).map((a) => a.person);
       const at = whereabouts(live.version.notebook.buildings ?? [], live.values.location, state.building);
-      return buildNote({ intimate, away, layout: at ? layoutLine(at) : undefined, size: state.preferences.size, sinceNewFace: (live.moment.reply ?? 0) - state.newFaceAt, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, location: live.values.location, narrated: this.narrated(live), trackerPresent: this.listed(live), skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map((n) => n.text) });
+      return buildNote({ intimate, blocked: state.blocked ?? [], away, layout: at ? layoutLine(at) : undefined, size: state.preferences.size, sinceNewFace: (live.moment.reply ?? 0) - state.newFaceAt, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, location: live.values.location, narrated: this.narrated(live), trackerPresent: this.listed(live), skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map((n) => n.text) });
     });
   }
   async macro(name, chatId) {
@@ -5139,6 +5148,7 @@ ${live.values.location ?? ""}`);
             this.paceSignal(state, now.moment, 1);
           if (outcome.held.length)
             state.held = [...new Set([...state.held, ...outcome.held])];
+          state.blocked = outcome.blocked;
           if (outcome.shifted) {
             state.resync = now.moment.reply ?? 0;
             extra = "The story changed direction";

@@ -34,7 +34,7 @@ const RHYTHMS: Record<Rhythm, string> = {
 export interface QuickPlan {
   questions: Record<string, DecisionQuestion>;
   /** Question key → what a "yes" marks. */
-  marks: Record<string, { kind: 'step'; thread: string; step: string } | { kind: 'beat'; beat: string } | { kind: 'seed'; seed: string; to: 'planted' | 'paid' } | { kind: 'fits'; thread: string } | { kind: 'truth' } | { kind: 'clue'; clue: string }>;
+  marks: Record<string, { kind: 'step'; thread: string; step: string } | { kind: 'beat'; beat: string } | { kind: 'seed'; seed: string; to: 'planted' | 'paid' } | { kind: 'fits'; thread: string } | { kind: 'truth' } | { kind: 'clue'; clue: string } | { kind: 'reach'; thread: string; step: string }>;
 }
 
 export function quickQuestions(notebook: Notebook, now: number | Moment, /** The latest exchange, to pick which clues to ask about. */ scene = ''): QuickPlan {
@@ -44,6 +44,10 @@ export function quickQuestions(notebook: Notebook, now: number | Moment, /** The
     questions[key] = { type: 'noul', instructions: `In the latest reply, does this happen, or is its sign clearly shown? Event: ${step.text}${step.sign ? ` Sign: ${step.sign}` : ''}`,
       criteria: { true: 'The latest reply shows it or its sign.', false: 'The latest reply does not show it, or only hints vaguely.' } };
     marks[key] = { kind: 'step', thread: thread.id, step: step.id };
+    // Whether it could arrive at all, as things stand. A step planned before the scene moved may no longer have a way in.
+    questions[`reach_${i + 1}`] = { type: 'noul', instructions: `Where the player is now and what is going on there, could this reach them in the next reply in a believable way? It could not if that would mean someone getting through a locked or barred door, walking in on a private moment no one would interrupt, or something turning up where it could not be. A message, a knock, or word arriving can still be believable. Event: ${step.text}${step.sign ? ` Sign: ${step.sign}` : ''}`,
+      criteria: { true: 'Yes, it could believably reach them now, in some form.', false: 'No, not in the scene as it stands; it would have to wait for the scene to change.' } };
+    marks[`reach_${i + 1}`] = { kind: 'reach', thread: thread.id, step: step.id };
   });
   notebook.beats.filter(b => b.status === 'possible').slice(0, QUICK.maxBeats).forEach((beat, i) => {
     const key = `moment_${i + 1}`;
@@ -131,7 +135,7 @@ export function quickState(notebook: Notebook, clock: StoryClock, playerMessage:
 
 const yes = (answer: DecisionAnswer | undefined) => answer?.type === 'noul' && answer.noul >= QUICK.yes;
 
-export interface QuickOutcome { notebook: Notebook; changed: boolean; marked: number; needsCheckup: boolean; /** A new problem came up that no storyline covers. */ problem: boolean; /** A problem was solved too easily. */ easyFix: boolean; /** A secret came out. People's notes were written to keep it, so it can't wait. */ revealed: boolean; /** The reply hurried past things that needed room. */ rushing: boolean; /** The player named the mystery's answer, or it came out some other way: a check-up follows at once. */ mysteryEnded: boolean; /** An intimate scene is under way. */ intimate: boolean; /** The story changed direction: rework the notebook. */ shifted: boolean; /** Threads that clearly no longer fit for now. */ held: string[] }
+export interface QuickOutcome { notebook: Notebook; changed: boolean; marked: number; /** Due steps that could not believably reach the player in this scene. */ blocked: string[]; needsCheckup: boolean; /** A new problem came up that no storyline covers. */ problem: boolean; /** A problem was solved too easily. */ easyFix: boolean; /** A secret came out. People's notes were written to keep it, so it can't wait. */ revealed: boolean; /** The reply hurried past things that needed room. */ rushing: boolean; /** The player named the mystery's answer, or it came out some other way: a check-up follows at once. */ mysteryEnded: boolean; /** An intimate scene is under way. */ intimate: boolean; /** The story changed direction: rework the notebook. */ shifted: boolean; /** Threads that clearly no longer fit for now. */ held: string[] }
 /**
  * Apply answers onto the notebook as it is now (it may have changed while the
  * question was out). Only waiting steps and possible beats can be marked.
@@ -142,7 +146,7 @@ export function applyQuick(current: Notebook, plan: QuickPlan, result: DecisionR
   let notebook = structuredClone(current);
   let marked = 0, mysteryEnded = false;
   for (const [key, mark] of Object.entries(plan.marks)) {
-    if (mark.kind === 'fits' || mark.kind === 'truth' || !yes(answers[key])) continue;
+    if (mark.kind === 'fits' || mark.kind === 'truth' || mark.kind === 'reach' || !yes(answers[key])) continue;
     if (mark.kind === 'clue') {
       const clue = notebook.mystery?.status === 'open' ? notebook.mystery.clues.find(c => c.id === mark.clue) : undefined;
       if (clue?.status === 'hidden') { clue.status = 'found'; if (reply !== undefined) clue.foundAt = reply; clue.quick = true; marked++; }
@@ -176,10 +180,12 @@ export function applyQuick(current: Notebook, plan: QuickPlan, result: DecisionR
   const rhythm = answers.rhythm;
   let changed = marked > 0;
   if (rhythm?.type === 'choice' && rhythm.confidence >= QUICK.rhythm && rhythm.choice in RHYTHMS && rhythm.choice !== notebook.rhythm) { notebook.rhythm = rhythm.choice as Rhythm; changed = true; }
+  // Due steps that could not believably arrive in the scene as it stands, and did not.
+  const blocked = Object.entries(plan.marks).flatMap(([key, mark]) => mark.kind === 'reach' && answers[key]?.type === 'noul' && (answers[key] as { noul: number }).noul <= QUICK.no && !yes(answers[key.replace('reach_', 'due_')]) ? [mark.step] : []);
   const held = Object.entries(plan.marks).flatMap(([key, mark]) => mark.kind === 'fits' && answers[key]?.type === 'noul' && (answers[key] as { noul: number }).noul <= QUICK.no ? [mark.thread] : []);
   const cameOut = Object.entries(plan.marks).some(([key, mark]) => mark.kind === 'truth' && yes(answers[key]));
   const problem = yes(answers.new_problem), easyFix = yes(answers.easy_fix);
-  return { notebook, changed, marked, needsCheckup: yes(answers.new_turn) || held.length > 0 || cameOut || problem || easyFix, mysteryEnded, problem, easyFix, revealed: cameOut, rushing: yes(answers.rushing), intimate: yes(answers.intimate), shifted: yes(answers.story_shift), held };
+  return { notebook, changed, marked, blocked, needsCheckup: yes(answers.new_turn) || held.length > 0 || cameOut || problem || easyFix, mysteryEnded, problem, easyFix, revealed: cameOut, rushing: yes(answers.rushing), intimate: yes(answers.intimate), shifted: yes(answers.story_shift), held };
 }
 
 /** Fixed wording only: provider errors can echo what was sent. */

@@ -415,7 +415,7 @@ describe('the quick check', () => {
     h.add('user', 'I look at the sky.'); h.add('assistant', `<div style="color:red">Shutters bang all along the street.</div>${tracker('Day 1, 18:10', 'The ferry')}`);
     await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
     const sent = h.decisionCalls[0];
-    expect(Object.keys(sent.questions)).toEqual(['due_1', 'moment_1', 'moment_2', 'detail_mentioned', 'fits_1', 'truth_1', 'story_shift', 'rushing', 'intimate', 'new_problem', 'easy_fix', 'rhythm', 'new_turn']);
+    expect(Object.keys(sent.questions)).toEqual(['due_1', 'reach_1', 'moment_1', 'moment_2', 'detail_mentioned', 'fits_1', 'truth_1', 'story_shift', 'rushing', 'intimate', 'new_problem', 'easy_fix', 'rhythm', 'new_turn']);
     expect(sent.questions.due_1.instructions).toContain('Shutters bang');
     expect(sent.state.latestReply).toContain('Shutters bang all along the street.');
     expect(sent.state.latestReply).not.toContain('style');

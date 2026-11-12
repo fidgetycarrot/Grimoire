@@ -81,7 +81,8 @@ export function followRate(log: Array<{ reply: number; ok: boolean; answers: Rec
   const byReply = new Map<number, { answers: Record<string, unknown> }>();
   for (const r of log) if (r.ok) byReply.set(r.reply, r);
   for (const r of log) if (r.quiet) byReply.delete(r.reply);
-  const dues = (r: { answers: Record<string, unknown> }) => Object.entries(r.answers).filter(([k]) => /^due_/.test(k)).map(([, v]) => typeof v === 'number' ? v : 0);
+  // A due step the quick check found could not believably reach the player in that scene is not a miss either.
+  const dues = (r: { answers: Record<string, unknown> }) => Object.entries(r.answers).filter(([k]) => /^due_/.test(k) && !(typeof r.answers[k.replace('due_', 'reach_')] === 'number' && (r.answers[k.replace('due_', 'reach_')] as number) <= 0.3)).map(([, v]) => typeof v === 'number' ? v : 0);
   const asked = [...byReply.values()].filter(r => dues(r).length).slice(-12);
   return asked.length >= 4 ? { offered: asked.length, used: asked.filter(r => dues(r).some(v => v >= 0.7)).length } : null;
 }

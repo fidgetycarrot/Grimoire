@@ -3,6 +3,8 @@ import { fixLead, leadProblems, openArc, shapeFor } from '../src/lead';
 import { buildNote } from '../src/note';
 import { dueThreads, inOpening, stamp, threadMoment, validateNotebook, waitsFor, type Notebook, type Preferences } from '../src/notebook';
 import { sampleNotebook } from './fixtures';
+import { applyQuick, quickQuestions } from '../src/quick';
+import { followRate } from '../src/cast';
 
 const prefs = (p: Partial<Preferences> = {}): Preferences => ({ tone: 'balanced', twist: true, shape: 'auto', lockShape: false, size: 'auto', ...p });
 const waits = waitsFor('medium', 'auto');
@@ -182,3 +184,31 @@ describe('the note never loses what the narrator must do', () => {
     expect(text.split('\n').find(l => l.startsWith('What the story is about'))!.length).toBeLessThan(280);
   });
 });
+
+describe('a planned step with no believable way in', () => {
+  const noul = (p: number) => ({ type: 'noul' as const, noul: p });
+  test('waits for the scene to open up, instead of being pushed through a locked door', () => {
+    const nb = opened();
+    const open = note(nb, 1);
+    expect(open).toContain('(bring it in now, in this reply or the next)');
+    expect(open).toContain('never through a locked door or into a private moment by force');
+    const step = nb.threads.find(t => t.id === nb.arc.main)!.steps.find(s => s.status === 'waiting')!;
+    const shut = note(nb, 1, { blocked: [step.id] });
+    expect(shut).toContain('once it can believably reach the player: not in this scene as it stands. Do not force it in');
+    expect(shut).not.toContain('If this has not reached the player yet, bring it to them');
+  });
+  test('the quick check asks, judges it afresh each reply, and does not count it against the narrator', () => {
+    const nb = opened(), now = { hours: nb.arc.startReply ?? 0, reply: 2, waits };
+    const plan = quickQuestions(nb, now);
+    expect(plan.questions.reach_1.instructions).toContain('locked or barred door');
+    const all = (over: Record<string, unknown>) => ({ model: 'jev', answers: { ...Object.fromEntries(Object.keys(plan.questions).map(k => [k, plan.questions[k].type === 'noul' ? noul(k.startsWith('fits_') ? 0.9 : 0.1) : { type: 'choice', choice: 'calm', confidence: 0.9 }])), ...over } }) as never;
+    const step = (plan.marks.due_1 as { step: string }).step;
+    expect(applyQuick(nb, plan, all({ reach_1: noul(0.05) }), now).blocked).toEqual([step]);
+    expect(applyQuick(nb, plan, all({ reach_1: noul(0.9) }), now).blocked).toEqual([]);
+    expect(applyQuick(nb, plan, all({ reach_1: noul(0.9) }), now).marked).toBe(0);
+    const row = (reply: number, reach: number) => ({ reply, ok: true, marked: 0, answers: { due_1: 0.05, reach_1: reach } });
+    expect(followRate([1, 2, 3, 4, 5].map(n => row(n, 0.1)))).toBeNull();
+    expect(followRate([1, 2, 3, 4, 5].map(n => row(n, 0.8)))).toEqual({ offered: 5, used: 0 });
+  });
+});
+

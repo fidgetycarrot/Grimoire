@@ -107,7 +107,7 @@ export function seedPlan(notebook: Notebook, now: number | Moment): { plant: See
   return { plant, ready, echo };
 }
 
-export interface NoteInput { notebook: Notebook; pace: Pace; clock: StoryClock; now: number | Moment; /** Threads that no longer fit for now. */ held?: string[]; /** The story just changed direction; old plans are being reworked. */ reworking?: boolean; recent: string; /** Where the scene is, from the preset's tracker. */ location?: string; /** The narrator's part of the recent messages, when the caller can tell it apart from the player's. */ narrated?: string; trackerPresent?: string; skipHours?: number; /** True when the time comes from the last check-up, not from a tracker reading of the latest reply. */ clockMayLag?: boolean; /** The player swiped with guidance: the note steps back so it never argues with them. */ guided?: boolean; /** Standing wishes the player pinned. */ notes?: string[]; /** An intimate scene is under way: the story stays out until it ends. */ intimate?: boolean; /** People the player has met who haven't been around for a while, longest away first. */ away?: Person[];
+export interface NoteInput { notebook: Notebook; pace: Pace; clock: StoryClock; now: number | Moment; /** Threads that no longer fit for now. */ held?: string[]; /** Due steps that cannot believably reach the player in the scene as it stands. */ blocked?: string[]; /** The story just changed direction; old plans are being reworked. */ reworking?: boolean; recent: string; /** Where the scene is, from the preset's tracker. */ location?: string; /** The narrator's part of the recent messages, when the caller can tell it apart from the player's. */ narrated?: string; trackerPresent?: string; skipHours?: number; /** True when the time comes from the last check-up, not from a tracker reading of the latest reply. */ clockMayLag?: boolean; /** The player swiped with guidance: the note steps back so it never argues with them. */ guided?: boolean; /** Standing wishes the player pinned. */ notes?: string[]; /** An intimate scene is under way: the story stays out until it ends. */ intimate?: boolean; /** People the player has met who haven't been around for a while, longest away first. */ away?: Person[];
   /** Replies since someone new last turned up in a scene. */ sinceNewFace?: number; /** Where things are in the building the player is in. */ layout?: string; /** How big the world gets; a close story doesn't send the player anywhere. */ size?: StorySize }
 /**
  * The short private note added before a reply. Built by code from the
@@ -185,13 +185,15 @@ export function buildNote(input: NoteInput): string {
     // (a romance, an action run, a raunchy card), the plot would never move. Once the step has waited a while past its
     // turn, it comes in anyway. A quiet pace the player chose still holds it.
     const waited = overdue(notebook, lead.thread, now);
-    const holding = quietTime && lead.thread.speed !== 'urgent' && !(pace === 'auto' && waited >= HOLD_LIMIT);
+    // Planned before the scene moved, and with no believable way in now: it waits for the scene to open up.
+    const shut = (input.blocked ?? []).includes(lead.step.id);
+    const holding = shut || quietTime && lead.thread.speed !== 'urgent' && !(pace === 'auto' && waited >= HOLD_LIMIT);
     const late = !holding && waited >= BRING_AFTER;
-    const when = holding ? 'as soon as this moment has settled' : quietTime && lead.thread.speed !== 'urgent' ? 'now, in this reply or the next, as the scene allows: it has waited long enough' : 'now, in this reply or the next';
+    const when = shut ? 'once it can believably reach the player: not in this scene as it stands. Do not force it in; let it wait, or let word of it reach them afterward' : holding ? 'as soon as this moment has settled' : quietTime && lead.thread.speed !== 'urgent' ? 'now, in this reply or the next, as the scene allows: it has waited long enough' : 'now, in this reply or the next';
     const tie = seeds.ready.find(s => s.pays === lead.thread.id && !used.has(s.id));
     const tied = notebook.people.filter(p => p.status === 'active' && lead.thread.people.includes(p.id)).map(p => p.name).slice(0, 3);
     must('What the story does now:');
-    must(`- ${lead.thread.title}: ${fit(lead.step.sign || lead.step.text, 320)} (bring it in ${when}). Why it matters: ${fit(about(lead.thread), 200)}${tie ? ` ${callback(tie)}` : ''}`);
+    must(`- ${lead.thread.title}: ${fit(lead.step.sign || lead.step.text, 320)} (bring it in ${when}). If the scene has moved since this was planned, bring it in the way that fits where the player is now, never through a locked door or into a private moment by force. Why it matters: ${fit(about(lead.thread), 200)}${tie ? ` ${callback(tie)}` : ''}`);
     // Bringing everything to where the player already is keeps a story in one room. Unless it is urgent or the story is
     // kept close, the player is given a reason to go where it is happening instead.
     // The player acts; they don't invent. A development ends with something in front of them, and their move.
