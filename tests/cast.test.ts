@@ -129,3 +129,11 @@ describe('a name is not an entrance', () => {
   });
 });
 
+describe('something to act on', () => {
+  test('the planner is told to write each step as something that lands in front of the player', () => {
+    const sent = creationMessages({ character: { name: 'Mira', description: '', personality: '', scenario: '', firstMessage: '' }, persona: null, lore: { rules: [], entries: [], index: [], more: 0 } as never, storySoFar: '', chat: [], replies: [], variables: {} }, prefs())[0].content;
+    expect(sent).toContain('every step hands them something to do something about');
+    expect(sent).toContain('"sign": "how it reaches the player, as something they can act on');
+  });
+});
+

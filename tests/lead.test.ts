@@ -82,6 +82,9 @@ describe('the note leads with the main storyline', () => {
     expect(text).toContain('The main storyline is The stolen ring: the owner is starting to look for it.');
     expect(text).toContain('The story is just starting');
     expect(text).toContain('What the story does now:\n- The stolen ring: A shout from the manor on the hill. (bring it in now, in this reply or the next)');
+    // The player acts on the story; they don't have to invent it.
+    expect(text).toContain('Bring it in as something the player can act on');
+    expect(text).toContain('what they do with it is theirs');
     expect(text).not.toContain('Shutters bang');
     expect(text).not.toContain('bring it to them');
   });

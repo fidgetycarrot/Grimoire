@@ -194,6 +194,8 @@ export function buildNote(input: NoteInput): string {
     must(`- ${lead.thread.title}: ${fit(lead.step.sign || lead.step.text, 320)} (bring it in ${when}). Why it matters: ${fit(about(lead.thread), 200)}${tie ? ` ${callback(tie)}` : ''}`);
     // Bringing everything to where the player already is keeps a story in one room. Unless it is urgent or the story is
     // kept close, the player is given a reason to go where it is happening instead.
+    // The player acts; they don't invent. A development ends with something in front of them, and their move.
+    must('- Bring it in as something the player can act on (a thing in their hands, an offer, a question put to them, someone waiting on their answer), and stop there: what they do with it is theirs.');
     const where = lead.thread.speed === 'urgent' || input.size === 'close' ? ', or it happens where they are' : ', with a reason to go where it is happening; it only comes to where they are if there is no other way';
     if (late) must(`- If this has not reached the player yet, bring it to them: someone tied to it seeks them out${tied.length ? ` (${tied.join(', ')})` : ''} or word reaches them${where}. They still choose what to do.`);
   }
