@@ -1292,7 +1292,7 @@ describe('people with depth', () => {
     nb = (await c.view('chat-1'))!.notebook!;
     expect(nb.people.find(p => p.id === 'tamsin')).toMatchObject({ own: expect.stringContaining('retired smuggler'), sheet: expect.stringContaining('river barges') });
     // The narrator gets the full sheet when she's in the scene, and not otherwise.
-    h.add('user', 'I find Tamsin by the nets.'); h.add('assistant', `Tamsin waves.${tracker('Day 1, 18:10', 'The docks')}`);
+    h.add('user', 'I find Tamsin by the nets.'); h.add('assistant', `Tamsin waves.${tracker('Day 1, 18:10', 'The docks').replace('Present: Mira', 'Present: Mira, Tamsin')}`);
     const text = await c.noteFor('chat-1');
     expect(text).toContain('Who they are, in full');
     expect(text).toContain('Tamsin: Tamsin, a retired smuggler');

@@ -201,6 +201,8 @@ describe('the note before each reply', () => {
     expect(presentPeople(nb, 'The ferrywoman nods.').map(p => p.id)).toEqual(['mira']);
     expect(presentPeople(nb, 'A coleslaw stand.').map(p => p.id)).toEqual([]);
     expect(presentPeople(nb, '', 'Oswin, Cole').map(p => p.id)).toEqual(['cole', 'harbor-master']);
+    // A tracker's list wins over names in the prose.
+    expect(presentPeople(nb, 'The ferrywoman talks about Cole.', 'Oswin').map(p => p.id)).toEqual(['harbor-master']);
   });
 });
 

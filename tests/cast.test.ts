@@ -102,3 +102,30 @@ describe('getting out of the house', () => {
     expect(checkupMessages({ ...input, preferences: prefs({ size: 'close' }) }).map((m: any) => m.content).join('\n')).not.toContain('Where the story goes');
   });
 });
+
+describe('a name is not an entrance', () => {
+  const NAMED = 'Named in the chat but not in the scene';
+  const nb = () => { const n = validateNotebook(sampleNotebook()); n.people.find(p => p.id === 'cole')!.sheet = 'A big man with a broken nose.'; return n; };
+  test('someone only the player named is not in the scene: no sheet, and a line saying what they are busy with', () => {
+    const text = note(nb(), { recent: 'Mira looks up.\nI ask if she has seen Cole lately.', narrated: 'Mira looks up.' });
+    expect(text).toContain(NAMED);
+    expect(text).toContain("- Cole: looking for the ring's owner to sell information.");
+    expect(text.slice(text.indexOf('People here'), text.indexOf(NAMED))).not.toContain('Cole');
+    expect(text).not.toContain('A big man with a broken nose');
+  });
+  test('someone the narrator wrote into the scene is here', () => {
+    const text = note(nb(), { recent: 'Cole drops onto the bench beside Mira.\nI nod at Cole.', narrated: 'Cole drops onto the bench beside Mira.' });
+    expect(text).not.toContain(NAMED);
+    expect(text).toContain('A big man with a broken nose');
+  });
+  test('with a tracker, its list decides, even when the narrator talks about someone', () => {
+    const text = note(nb(), { recent: 'Mira says Cole owes her silver.', narrated: 'Mira says Cole owes her silver.', trackerPresent: 'Mira' });
+    expect(text).toContain('- Cole:');
+    expect(text).not.toContain('A big man with a broken nose');
+  });
+  test('guidance from the player is left alone, and nobody is both kept away and offered as a new face', () => {
+    expect(note(nb(), { recent: 'Mira looks up.\nWhere is Cole?', narrated: 'Mira looks up.' })).not.toContain('Someone who could appear if it fits: Cole');
+    expect(note(nb(), { recent: 'Mira looks up.\nWhere is Cole?', narrated: 'Mira looks up.', guided: true })).not.toContain(NAMED);
+  });
+});
+

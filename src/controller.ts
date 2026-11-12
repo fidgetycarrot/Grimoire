@@ -1,6 +1,6 @@
 import type { SpindleAPI, LlmMessageDTO, InterceptorContextDTO, InterceptorResultDTO } from 'lumiverse-spindle-types';
 import { absoluteHours, advanceClock, describeClock, describeDuration, durationHours, type StoryClock } from './clock';
-import { conversation, fingerprints, newestMatching, covers, planHistory, readable, storyReplies, told, type Piece, type Turn } from './history';
+import { conversation, fingerprints, newestMatching, covers, planHistory, readable, spaces, storyReplies, told, type Piece, type Turn } from './history';
 import { splitOoc } from './ooc';
 import { askJson, askModel, ModelError, withBackup, type Ask } from './model';
 import { buildNote, liveClock, paceLine, presentPeople, type ClockSources } from './note';
@@ -299,8 +299,11 @@ export class NotebookController {
     state.recipe = { fields: [...kept, ...extra], note: state.recipe.note || found.note };
     return true;
   }
-  /** Who is in the scene now: named in the last exchange, or listed by the tracker. */
-  private presentNow(live: Live) { return presentPeople(live.version.notebook, live.turns.slice(-2).map(t => t.content).join('\n'), live.values.present); }
+  /** Who is in the scene now: listed by the tracker, or named in the narrator's latest writing. */
+  private narrated(live: Live) { return live.turns.slice(-2).filter(t => t.role === 'assistant').map(t => t.content).join('\n'); }
+  /** The tracker's list of who is present, only when the newest reply carries it: an older list may be out of date. */
+  private listed(live: Live) { const value = live.values.present?.trim(); return value && spaces(live.replies[0] ?? '').includes(value) ? value : undefined; }
+  private presentNow(live: Live) { return presentPeople(live.version.notebook, this.narrated(live), this.listed(live)); }
   private repliesSince(live: Live) { const from = this.fullVersion(live).covered.length, skipped = new Set(live.state.intimate); return live.turns.filter((t, i) => i >= from && t.role === 'assistant' && !t.ooc && !skipped.has(live.prints[i])).length; }
 
   async view(chatId: string | null): Promise<ChatView | null> {
@@ -960,7 +963,7 @@ export class NotebookController {
       const intimate = state.intimateNow && settings.intimate === 'protect' && live.turns.at(-1)?.role === 'user';
       const away = awayPeople(live.version.notebook, state.seen, this.presentNow(live), live.moment).map(a => a.person);
       const at = whereabouts(live.version.notebook.buildings ?? [], live.values.location, state.building);
-      return buildNote({ intimate, away, layout: at ? layoutLine(at) : undefined, size: state.preferences.size, sinceNewFace: (live.moment.reply ?? 0) - state.newFaceAt, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map(n => n.text) });
+      return buildNote({ intimate, away, layout: at ? layoutLine(at) : undefined, size: state.preferences.size, sinceNewFace: (live.moment.reply ?? 0) - state.newFaceAt, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, narrated: this.narrated(live), trackerPresent: this.listed(live), skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map(n => n.text) });
     });
   }
   async macro(name: 'clock' | 'pace', chatId: string | undefined): Promise<string> {

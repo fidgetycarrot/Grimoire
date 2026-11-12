@@ -105,7 +105,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.29.1";
+var VERSION = "0.30.0";
 var CHAPTER_WORKING = "Starting a new chapter";
 var CHAPTER_DONE = "New chapter ready";
 

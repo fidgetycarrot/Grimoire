@@ -66,6 +66,15 @@ describe('the story shape', () => {
 });
 
 describe('the note leads with the main storyline', () => {
+  test('someone the due step involves is not told to stay away when the player names them', () => {
+    const nb = opened();
+    nb.threads[1].steps[0].afterHours = 0.5; nb.threads[1].speed = 'steady';
+    const text = note(nb, 10, { now: { hours: 50, reply: 10, waits }, recent: 'Mira looks up.\nWhere is Cole?', narrated: 'Mira looks up.' });
+    expect(text).toContain('What the story does now:\n- The stolen ring:');
+    expect(text).not.toContain('- Cole:');
+    nb.threads[1].people = ['harbor-master'];
+    expect(note(nb, 10, { now: { hours: 50, reply: 10, waits }, recent: 'Mira looks up.\nWhere is Cole?', narrated: 'Mira looks up.' })).toContain('- Cole:');
+  });
   test('its next step is what the story does now, and side storylines stay small in the opening stretch', () => {
     const nb = opened();
     nb.threads[1].steps[0].afterHours = 0.5; nb.threads[1].speed = 'steady';

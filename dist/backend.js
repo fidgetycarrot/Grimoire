@@ -1044,10 +1044,13 @@ var end = (text) => `${text.trim().replace(/[.!?]+$/, "")}.`;
 function mentioned(person, text) {
   return [person.name, ...person.aliases].filter(words).some((name) => new RegExp(`(?<![\\p{L}\\p{N}])${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`, "iu").test(text));
 }
-function presentPeople(notebook, recent, trackerPresent) {
-  const where = spaces(`${recent}
-${trackerPresent ?? ""}`);
+function presentPeople(notebook, narrated, trackerPresent) {
+  const where = spaces(trackerPresent?.trim() ? trackerPresent : narrated);
   return notebook.people.filter((person) => person.status === "active" && mentioned(person, where));
+}
+function spokenOf(notebook, recent, here) {
+  const text = spaces(recent);
+  return notebook.people.filter((person) => person.status === "active" && !here.includes(person) && mentioned(person, text));
 }
 var PACE = {
   quiet: "Pace: quiet. Let this scene breathe. Do not start new trouble or new threads. Anything already urgent still plays out.",
@@ -1107,7 +1110,7 @@ function buildNote(input) {
     vital.add(text);
     lines.push(text);
   };
-  const present = presentPeople(notebook, input.recent, input.trackerPresent);
+  const present = presentPeople(notebook, input.narrated ?? input.recent, input.trackerPresent);
   const quietTime = pace === "quiet" || pace === "auto" && (notebook.rhythm === "aftermath" || notebook.rhythm === "peak");
   must("Grimoire: private story guidance for the narrator. Never mention, quote, or explain it.");
   lines.push(`${input.clockMayLag ? "Story time at the last check-up" : "Story time"}: ${describeClock(input.clock)}.${input.clockMayLag ? " Time may have moved on since; the chat decides what time it is now." : ""}${input.skipHours ? ` About ${describeDuration(input.skipHours)} have passed since the last message: open with that gap and what changed during it.` : ""}`);
@@ -1206,14 +1209,21 @@ function buildNote(input) {
   }
   if (seeds.plant)
     lines.push(`A small detail to mention in passing, without drawing attention to it: ${end(seeds.plant.detail)}`);
+  const coming = new Set(developments.flatMap((d) => d.thread.people));
+  const named = guided ? [] : spokenOf(notebook, input.recent, present).filter((p) => !coming.has(p.id)).slice(0, 3);
+  if (named.length) {
+    lines.push("Named in the chat but not in the scene. Unless the latest messages already show them here, a name being said does not bring anyone in: they carry on with their own day elsewhere, until the player goes to them or they have a reason of their own to come.");
+    for (const person of named)
+      lines.push(`- ${person.name}: ${end(fit(person.doing || `wants ${person.wants || "something of their own"}`, 160))}`);
+  }
   if (seeds.echo)
     lines.push(`Something that happened elsewhere can reach the player in passing, as news, a rumor, an overheard remark, or a message, only if it fits: ${end(seeds.echo.detail)}`);
-  const unmet = notebook.people.filter((p) => p.status === "active" && !p.met && !present.includes(p));
+  const unmet = notebook.people.filter((p) => p.status === "active" && !p.met && !present.includes(p) && !named.includes(p));
   const roomForFaces = !quiet && pace !== "quiet" && (!quietTime && (notebook.rhythm === "calm" || notebook.rhythm === "stalled" || pace === "fast") || pace === "auto" && notebook.rhythm !== "aftermath" && (input.sinceNewFace ?? 0) >= NEW_FACE_GAP);
   const newcomer = roomForFaces ? unmet.find((p) => main?.people.includes(p.id)) ?? (opening ? undefined : unmet[0]) : undefined;
   if (newcomer && lines.length < 16)
     lines.push(`Someone who could appear if it fits: ${newcomer.name}${newcomer.role ? `, ${newcomer.role}` : ""}. Wants ${newcomer.wants || "something of their own"}.`);
-  const back = !newcomer && roomForFaces ? input.away?.[0] : undefined;
+  const back = !newcomer && roomForFaces ? input.away?.find((p) => !named.includes(p)) : undefined;
   if (back && lines.length < 16)
     lines.push(`Someone the player hasn't seen in a while could cross their path again, if it fits naturally (a run-in, a message, a visit), for reasons of their own: ${back.name}${back.role ? `, ${back.role}` : ""}. Wants ${back.wants || "something of their own"}.`);
   const told = guided ? [] : (notebook.covers ?? []).filter((c) => c.by === "player" && c.status !== "exposed" && c.told.some((id) => present.some((p) => p.id === id))).slice(0, 2);
@@ -3051,7 +3061,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.29.1";
+var VERSION = "0.30.0";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -3377,9 +3387,16 @@ class NotebookController {
     state.recipe = { fields: [...kept, ...extra], note: state.recipe.note || found.note };
     return true;
   }
+  narrated(live) {
+    return live.turns.slice(-2).filter((t) => t.role === "assistant").map((t) => t.content).join(`
+`);
+  }
+  listed(live) {
+    const value = live.values.present?.trim();
+    return value && spaces(live.replies[0] ?? "").includes(value) ? value : undefined;
+  }
   presentNow(live) {
-    return presentPeople(live.version.notebook, live.turns.slice(-2).map((t) => t.content).join(`
-`), live.values.present);
+    return presentPeople(live.version.notebook, this.narrated(live), this.listed(live));
   }
   repliesSince(live) {
     const from = this.fullVersion(live).covered.length, skipped = new Set(live.state.intimate);
@@ -4226,7 +4243,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
       const intimate = state.intimateNow && settings.intimate === "protect" && live.turns.at(-1)?.role === "user";
       const away = awayPeople(live.version.notebook, state.seen, this.presentNow(live), live.moment).map((a) => a.person);
       const at = whereabouts(live.version.notebook.buildings ?? [], live.values.location, state.building);
-      return buildNote({ intimate, away, layout: at ? layoutLine(at) : undefined, size: state.preferences.size, sinceNewFace: (live.moment.reply ?? 0) - state.newFaceAt, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, trackerPresent: live.values.present, skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map((n) => n.text) });
+      return buildNote({ intimate, away, layout: at ? layoutLine(at) : undefined, size: state.preferences.size, sinceNewFace: (live.moment.reply ?? 0) - state.newFaceAt, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, narrated: this.narrated(live), trackerPresent: this.listed(live), skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map((n) => n.text) });
     });
   }
   async macro(name, chatId) {

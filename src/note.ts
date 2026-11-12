@@ -32,10 +32,18 @@ const end = (text: string) => `${text.trim().replace(/[.!?]+$/, '')}.`;
 function mentioned(person: Person, text: string): boolean {
   return [person.name, ...person.aliases].filter(words).some(name => new RegExp(`(?<![\\p{L}\\p{N}])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`, 'iu').test(text));
 }
-/** People in the scene: named by the tracker or in the last couple of messages. */
-export function presentPeople(notebook: Notebook, recent: string, trackerPresent?: string): Person[] {
-  const where = spaces(`${recent}\n${trackerPresent ?? ''}`);
+/**
+ * People in the scene. The preset's tracker says who is present when it has such a line; without one, it is whoever
+ * the narrator's own recent writing names. The player saying a name does not put that person in the room.
+ */
+export function presentPeople(notebook: Notebook, narrated: string, trackerPresent?: string): Person[] {
+  const where = spaces(trackerPresent?.trim() ? trackerPresent : narrated);
   return notebook.people.filter(person => person.status === 'active' && mentioned(person, where));
+}
+/** People named in the last couple of messages who are not in the scene. */
+export function spokenOf(notebook: Notebook, recent: string, here: Person[]): Person[] {
+  const text = spaces(recent);
+  return notebook.people.filter(person => person.status === 'active' && !here.includes(person) && mentioned(person, text));
 }
 
 const PACE: Record<Pace, string> = {
@@ -98,7 +106,7 @@ export function seedPlan(notebook: Notebook, now: number | Moment): { plant: See
   return { plant, ready, echo };
 }
 
-export interface NoteInput { notebook: Notebook; pace: Pace; clock: StoryClock; now: number | Moment; /** Threads that no longer fit for now. */ held?: string[]; /** The story just changed direction; old plans are being reworked. */ reworking?: boolean; recent: string; trackerPresent?: string; skipHours?: number; /** True when the time comes from the last check-up, not from a tracker reading of the latest reply. */ clockMayLag?: boolean; /** The player swiped with guidance: the note steps back so it never argues with them. */ guided?: boolean; /** Standing wishes the player pinned. */ notes?: string[]; /** An intimate scene is under way: the story stays out until it ends. */ intimate?: boolean; /** People the player has met who haven't been around for a while, longest away first. */ away?: Person[];
+export interface NoteInput { notebook: Notebook; pace: Pace; clock: StoryClock; now: number | Moment; /** Threads that no longer fit for now. */ held?: string[]; /** The story just changed direction; old plans are being reworked. */ reworking?: boolean; recent: string; /** The narrator's part of the recent messages, when the caller can tell it apart from the player's. */ narrated?: string; trackerPresent?: string; skipHours?: number; /** True when the time comes from the last check-up, not from a tracker reading of the latest reply. */ clockMayLag?: boolean; /** The player swiped with guidance: the note steps back so it never argues with them. */ guided?: boolean; /** Standing wishes the player pinned. */ notes?: string[]; /** An intimate scene is under way: the story stays out until it ends. */ intimate?: boolean; /** People the player has met who haven't been around for a while, longest away first. */ away?: Person[];
   /** Replies since someone new last turned up in a scene. */ sinceNewFace?: number; /** Where things are in the building the player is in. */ layout?: string; /** How big the world gets; a close story doesn't send the player anywhere. */ size?: StorySize }
 /**
  * The short private note added before a reply. Built by code from the
@@ -122,7 +130,7 @@ const ROOM = 3600;
 export function buildNote(input: NoteInput): string {
   const { notebook, pace, now } = input, lines: string[] = [], vital = new Set<string>();
   const must = (text: string) => { vital.add(text); lines.push(text); };
-  const present = presentPeople(notebook, input.recent, input.trackerPresent);
+  const present = presentPeople(notebook, input.narrated ?? input.recent, input.trackerPresent);
   const quietTime = pace === 'quiet' || (pace === 'auto' && (notebook.rhythm === 'aftermath' || notebook.rhythm === 'peak'));
   must('Grimoire: private story guidance for the narrator. Never mention, quote, or explain it.');
   lines.push(`${input.clockMayLag ? 'Story time at the last check-up' : 'Story time'}: ${describeClock(input.clock)}.${input.clockMayLag ? ' Time may have moved on since; the chat decides what time it is now.' : ''}${input.skipHours ? ` About ${describeDuration(input.skipHours)} have passed since the last message: open with that gap and what changed during it.` : ''}`);
@@ -223,9 +231,16 @@ export function buildNote(input: NoteInput): string {
   if (loose) { const line = callback(loose); lines.push(`If it fits, now is a good time to ${line.charAt(0).toLowerCase()}${line.slice(1)}`); }
   // One new detail to plant, as part of the scene. What it means stays hidden until it pays off.
   if (seeds.plant) lines.push(`A small detail to mention in passing, without drawing attention to it: ${end(seeds.plant.detail)}`);
+  // People who were only talked about: a name being said is not an entrance. Anyone a planned step brings in is left out.
+  const coming = new Set(developments.flatMap(d => d.thread.people));
+  const named = guided ? [] : spokenOf(notebook, input.recent, present).filter(p => !coming.has(p.id)).slice(0, 3);
+  if (named.length) {
+    lines.push('Named in the chat but not in the scene. Unless the latest messages already show them here, a name being said does not bring anyone in: they carry on with their own day elsewhere, until the player goes to them or they have a reason of their own to come.');
+    for (const person of named) lines.push(`- ${person.name}: ${end(fit(person.doing || `wants ${person.wants || 'something of their own'}`, 160))}`);
+  }
   if (seeds.echo) lines.push(`Something that happened elsewhere can reach the player in passing, as news, a rumor, an overheard remark, or a message, only if it fits: ${end(seeds.echo.detail)}`);
   // Someone not met yet, so the world is not just the main cast.
-  const unmet = notebook.people.filter(p => p.status === 'active' && !p.met && !present.includes(p));
+  const unmet = notebook.people.filter(p => p.status === 'active' && !p.met && !present.includes(p) && !named.includes(p));
   // New and returning faces come in calm stretches. A story that is one big moment after another never has one, so
   // once nobody new has turned up for a long while, anything but the aftermath of a big moment will do.
   const roomForFaces = !quiet && pace !== 'quiet' && ((!quietTime && (notebook.rhythm === 'calm' || notebook.rhythm === 'stalled' || pace === 'fast'))
@@ -233,7 +248,7 @@ export function buildNote(input: NoteInput): string {
   const newcomer = roomForFaces ? unmet.find(p => main?.people.includes(p.id)) ?? (opening ? undefined : unmet[0]) : undefined;
   if (newcomer && lines.length < 16) lines.push(`Someone who could appear if it fits: ${newcomer.name}${newcomer.role ? `, ${newcomer.role}` : ''}. Wants ${newcomer.wants || 'something of their own'}.`);
   // Someone met a while ago comes back, so the cast recurs instead of being met once and forgotten.
-  const back = !newcomer && roomForFaces ? input.away?.[0] : undefined;
+  const back = !newcomer && roomForFaces ? input.away?.find(p => !named.includes(p)) : undefined;
   if (back && lines.length < 16) lines.push(`Someone the player hasn't seen in a while could cross their path again, if it fits naturally (a run-in, a message, a visit), for reasons of their own: ${back.name}${back.role ? `, ${back.role}` : ''}. Wants ${back.wants || 'something of their own'}.`);
   // Lies the player character told someone in this scene: they remember what they were told.
   const told = guided ? [] : (notebook.covers ?? []).filter(c => c.by === 'player' && c.status !== 'exposed' && c.told.some(id => present.some(p => p.id === id))).slice(0, 2);
