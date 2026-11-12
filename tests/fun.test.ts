@@ -27,12 +27,14 @@ describe('a plan that runs dry', () => {
 });
 
 describe('is the narrator listening', () => {
-  const r = (reply: number, marked: number, keys: string[] = ['due_1']) => ({ reply, ok: true, marked, answers: Object.fromEntries(keys.map(k => [k, 0.5])) });
-  test('counts replies where something was offered, and how many picked it up', () => {
+  const r = (reply: number, shown: number, keys: string[] = ['due_1']) => ({ reply, ok: true, marked: shown ? 1 : 0, answers: Object.fromEntries(keys.map(k => [k, k.startsWith('due_') && shown ? 0.9 : 0.1])) });
+  test('counts replies told to bring in a due step, and how many did', () => {
     expect(followRate([r(1, 0), r(2, 1), r(3, 0)])).toBeNull();
     expect(followRate([r(1, 0), r(2, 1), r(3, 0), r(4, 2), r(5, 0, ['rushing'])])).toEqual({ offered: 4, used: 2 });
     // A swiped reply counts once, by its last check.
     expect(followRate([r(1, 0), r(1, 1), r(2, 0), r(3, 0), r(4, 0)])).toEqual({ offered: 4, used: 1 });
+    // Optional moments left out are not a miss: only due steps count.
+    expect(followRate([1, 2, 3, 4, 5].map(n => r(n, 0, ['moment_1', 'detail_mentioned'])))).toBeNull();
   });
 });
 

@@ -336,7 +336,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const s = part('Quick check answers');
     const records = [...(view.quickLog ?? [])].reverse().slice(0, 12);
     if (!records.length) { s.append(el('p', 'gm-small', 'No quick checks yet.')); return s; }
-    if (view.follow) s.append(el('p', 'gm-small', `Is the narrator listening? In ${view.follow.used} of the last ${view.follow.offered} replies where Grimoire offered something, the reply picked some of it up.${view.follow.used * 4 < view.follow.offered ? ' That is low: this preset or writer may be ignoring Grimoire’s note.' : ''}`));
+    if (view.follow) s.append(el('p', 'gm-small', `Is the narrator listening? In ${view.follow.used} of the last ${view.follow.offered} replies where Grimoire asked for something to happen now, it happened.${view.follow.used * 4 < view.follow.offered ? ' That is low: this preset or writer may be ignoring Grimoire’s note.' : ''}`));
     const pct = (n: number) => `${Math.round(n * 100)}%`;
     for (const r of records) {
       const item = el('div', 'gm-entry');

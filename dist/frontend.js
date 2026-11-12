@@ -105,7 +105,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.31.2";
+var VERSION = "0.31.3";
 var CHAPTER_WORKING = "Starting a new chapter";
 var CHAPTER_DONE = "New chapter ready";
 
@@ -673,7 +673,7 @@ function setup(ctx) {
       return s;
     }
     if (view.follow)
-      s.append(el("p", "gm-small", `Is the narrator listening? In ${view.follow.used} of the last ${view.follow.offered} replies where Grimoire offered something, the reply picked some of it up.${view.follow.used * 4 < view.follow.offered ? " That is low: this preset or writer may be ignoring Grimoire’s note." : ""}`));
+      s.append(el("p", "gm-small", `Is the narrator listening? In ${view.follow.used} of the last ${view.follow.offered} replies where Grimoire asked for something to happen now, it happened.${view.follow.used * 4 < view.follow.offered ? " That is low: this preset or writer may be ignoring Grimoire’s note." : ""}`));
     const pct = (n) => `${Math.round(n * 100)}%`;
     for (const r of records) {
       const item = el("div", "gm-entry");

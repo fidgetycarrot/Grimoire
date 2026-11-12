@@ -1845,8 +1845,9 @@ function followRate(log) {
   for (const r of log)
     if (r.quiet)
       byReply.delete(r.reply);
-  const asked = [...byReply.values()].filter((r) => Object.keys(r.answers).some((k) => /^(due|moment|callback)_/.test(k))).slice(-12);
-  return asked.length >= 4 ? { offered: asked.length, used: asked.filter((r) => r.marked > 0).length } : null;
+  const dues = (r) => Object.entries(r.answers).filter(([k]) => /^due_/.test(k)).map(([, v]) => typeof v === "number" ? v : 0);
+  const asked = [...byReply.values()].filter((r) => dues(r).length).slice(-12);
+  return asked.length >= 4 ? { offered: asked.length, used: asked.filter((r) => dues(r).some((v) => v >= 0.7)).length } : null;
 }
 
 // src/layout.ts
@@ -3687,7 +3688,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.31.2";
+var VERSION = "0.31.3";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };

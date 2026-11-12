@@ -138,7 +138,7 @@ describe('something to act on', () => {
 });
 
 describe('is the narrator listening', () => {
-  const row = (reply: number, marked: number, quiet = false) => ({ reply, ok: true, answers: { moment_1: 0.1 }, marked, ...(quiet ? { quiet: true } : {}) });
+  const row = (reply: number, marked: number, quiet = false) => ({ reply, ok: true, answers: { due_1: marked ? 0.9 : 0.1 }, marked, ...(quiet ? { quiet: true } : {}) });
   test('replies written while an intimate scene was protected do not count against the narrator', () => {
     const log = [row(2, 1), row(3, 0), ...[4, 5, 7, 8, 9, 10].map(r => row(r, 0, true)), row(6, 1)];
     expect(followRate(log)).toBeNull();
