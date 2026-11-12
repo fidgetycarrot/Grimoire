@@ -3,6 +3,7 @@
 Read "Who it is for" in README.md before changing anything. In short:
 
 - Grimoire is for roleplayers who play the scene in front of them and don't want to manage the whole story.
+- "Passive" means the player doesn't want to invent or direct the story. It does not mean they do nothing: they react, choose, and act in the scene. Grimoire and the narrator supply what happens and where it is going (the glowing orb in the chest); the player decides what to do with it. Never design as if the player won't act, never decide their actions for them, and make what they do matter afterward.
 - It is a roleplaying tool that strives to feel like a good story. Its priorities, in order:
   1. Fun. Play should be enjoyable; a scene may go somewhere sooner than a novel would.
   2. A cohesive story, close behind: threads that pay off, breadcrumbs that come back, people who keep wanting things, a world that makes sense.
