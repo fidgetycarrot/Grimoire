@@ -1,5 +1,6 @@
 import { absoluteHours, readTime } from './clock';
 import { LIMITS, STAGES, type Notebook, type Room, type Shape } from './notebook';
+import { tidyMystery } from './mystery';
 
 /**
  * Tidy a notebook as a model wrote it, before the strict checks.
@@ -230,6 +231,7 @@ export function tidyNotebook(value: unknown, previous?: Notebook): unknown {
   const cameOut: Array<{ text: string }> = [];
   for (const item of array(story.cameOut)) { const t = plain(typeof item === 'string' ? item : record(item).text); if (t && cameOut.length < LIMITS.truths && !cameOut.some(r => r.text.toLowerCase() === t.toLowerCase())) cameOut.push({ text: t }); }
   const hiddenTruth = array(story.hiddenTruth).map(x => plain(x)).filter(t => t && !cameOut.some(r => r.text.toLowerCase() === t.toLowerCase())).slice(0, LIMITS.truths);
+  const mystery = tidyMystery(input.mystery, who, new Map([...threadIds].map(id => [id, id] as [string, string]).concat([...byTitle])), previous?.mystery);
   return {
     version: 1,
     story: { question, stakes: plain(story.stakes), direction: plain(story.direction),
@@ -239,5 +241,6 @@ export function tidyNotebook(value: unknown, previous?: Notebook): unknown {
     summary: plain(input.summary, LIMITS.short),
     taste: (Array.isArray(input.taste) ? input.taste.map(x => plain(x, LIMITS.short)).filter(Boolean) : previous?.taste ?? []).slice(0, 6),
     recap: plain(input.recap, LIMITS.text) || previous?.recap || '',
+    ...(mystery ? { mystery } : {}),
   };
 }

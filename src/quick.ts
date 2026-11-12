@@ -2,6 +2,7 @@ import type { DecisionAnswer, DecisionQuestion, DecisionResult } from 'lumiverse
 import { describeClock, type StoryClock } from './clock';
 import { dueThreads, type Moment, type Notebook, type Rhythm } from './notebook';
 import { seedPlan } from './note';
+import { cluesToCheck, settleMystery } from './mystery';
 
 /**
  * The quick check: after each reply, a decision model answers a few
@@ -13,6 +14,9 @@ import { seedPlan } from './note';
  * - What is the scene's rhythm now? Auto pace follows it.
  * - Did something happen that the notebook does not cover? Then a full
  *   check-up runs now instead of waiting.
+ * - With a mystery: did the player find a clue, and did they name an answer?
+ *   A guess is judged here, against the locked answer, so the very next reply
+ *   can treat it as right or wrong.
  *
  * The answers are probabilities. Only confident ones change anything, and they
  * only ever move the story forward: nothing is un-marked here.
@@ -30,10 +34,10 @@ const RHYTHMS: Record<Rhythm, string> = {
 export interface QuickPlan {
   questions: Record<string, DecisionQuestion>;
   /** Question key → what a "yes" marks. */
-  marks: Record<string, { kind: 'step'; thread: string; step: string } | { kind: 'beat'; beat: string } | { kind: 'seed'; seed: string; to: 'planted' | 'paid' } | { kind: 'fits'; thread: string } | { kind: 'truth' }>;
+  marks: Record<string, { kind: 'step'; thread: string; step: string } | { kind: 'beat'; beat: string } | { kind: 'seed'; seed: string; to: 'planted' | 'paid' } | { kind: 'fits'; thread: string } | { kind: 'truth' } | { kind: 'clue'; clue: string }>;
 }
 
-export function quickQuestions(notebook: Notebook, now: number | Moment): QuickPlan {
+export function quickQuestions(notebook: Notebook, now: number | Moment, /** The latest exchange, to pick which clues to ask about. */ scene = ''): QuickPlan {
   const questions: Record<string, DecisionQuestion> = {}, marks: QuickPlan['marks'] = {};
   dueThreads(notebook, now).forEach(({ thread, step }, i) => {
     const key = `due_${i + 1}`;
@@ -81,6 +85,22 @@ export function quickQuestions(notebook: Notebook, now: number | Moment): QuickP
       criteria: { true: 'The player now knows it, or it plainly came out in front of them.', false: 'It stays hidden, or is only hinted at.' } };
     marks[key] = { kind: 'truth' };
   });
+  // The mystery: clues the reply may have shown, and whether the player named an answer.
+  const mystery = notebook.mystery;
+  if (mystery?.status === 'open') {
+    cluesToCheck(mystery, scene, notebook.people, typeof now === 'number' ? { hours: now } : now).forEach((clue, i) => {
+      const key = `clue_${i + 1}`;
+      questions[key] = { type: 'noul', instructions: `In the latest reply, does the player see, hear, or get told this? ${clue.text}`,
+        criteria: { true: 'Yes: it is shown or said to the player in the latest reply, plainly enough that they now know it.', false: 'No, or it is only vaguely hinted at.' } };
+      marks[key] = { kind: 'clue', clue: clue.id };
+    });
+    questions.theory = { type: 'noul', instructions: `In the player's message, does the player's character put an answer to this question to someone, out loud or by acting on it: accusing or confronting a person, telling someone what they believe really happened, reporting it? Private thoughts, wondering, asking questions, and listing suspects do not count. Question: ${mystery.question}`,
+      criteria: { true: 'Yes, the player states an answer or makes an accusation.', false: 'No answer is stated.' } };
+    questions.theory_right = { type: 'noul', instructions: `The true answer is: ${mystery.answer} Does the player's message name that same answer, in substance (the same person or the same cause)? If the player's message names no answer, or names someone or something else, the answer is no.`,
+      criteria: { true: 'The player named the true answer.', false: 'The player named something else, or nothing.' } };
+    questions.mystery_out = { type: 'noul', instructions: `Does the latest reply reveal or confirm this to the player as a fact? Suspicion, hints, and accusations do not count. ${mystery.answer}`,
+      criteria: { true: 'The reply states or confirms it as fact, where the player can see.', false: 'It stays unknown or unconfirmed.' } };
+  }
   questions.story_shift = { type: 'noul', instructions: 'Did the latest exchange take the story somewhere the story notes no longer fit: the player left the setting for good, walked away from the main situation, or changed what they are after?',
     criteria: { true: 'Yes, the story has changed direction and the notes need reworking.', false: 'No, the story is still on the same ground, even if something new happened.' } };
   questions.rushing = { type: 'noul', instructions: 'Did the latest reply rush the story: wrap up a problem, jump ahead, or move straight to the next big thing faster than the scene allowed, instead of letting it play out?',
@@ -111,19 +131,22 @@ export function quickState(notebook: Notebook, clock: StoryClock, playerMessage:
 
 const yes = (answer: DecisionAnswer | undefined) => answer?.type === 'noul' && answer.noul >= QUICK.yes;
 
-export interface QuickOutcome { notebook: Notebook; changed: boolean; marked: number; needsCheckup: boolean; /** A new problem came up that no storyline covers. */ problem: boolean; /** A problem was solved too easily. */ easyFix: boolean; /** A secret came out. People's notes were written to keep it, so it can't wait. */ revealed: boolean; /** The reply hurried past things that needed room. */ rushing: boolean; /** An intimate scene is under way. */ intimate: boolean; /** The story changed direction: rework the notebook. */ shifted: boolean; /** Threads that clearly no longer fit for now. */ held: string[] }
+export interface QuickOutcome { notebook: Notebook; changed: boolean; marked: number; needsCheckup: boolean; /** A new problem came up that no storyline covers. */ problem: boolean; /** A problem was solved too easily. */ easyFix: boolean; /** A secret came out. People's notes were written to keep it, so it can't wait. */ revealed: boolean; /** The reply hurried past things that needed room. */ rushing: boolean; /** The player named the mystery's answer, or it came out some other way: a check-up follows at once. */ mysteryEnded: boolean; /** An intimate scene is under way. */ intimate: boolean; /** The story changed direction: rework the notebook. */ shifted: boolean; /** Threads that clearly no longer fit for now. */ held: string[] }
 /**
  * Apply answers onto the notebook as it is now (it may have changed while the
  * question was out). Only waiting steps and possible beats can be marked.
  */
-export function applyQuick(current: Notebook, plan: QuickPlan, result: DecisionResult, now: number | Moment): QuickOutcome {
+export function applyQuick(current: Notebook, plan: QuickPlan, result: DecisionResult, now: number | Moment, /** What the player wrote, kept as their guess when they name an answer. */ playerMessage = ''): QuickOutcome {
   const hours = typeof now === 'number' ? now : now.hours, reply = typeof now === 'number' ? undefined : now.reply;
   const answers = result.answers as Record<string, DecisionAnswer>;
-  const notebook = structuredClone(current);
-  let marked = 0;
+  let notebook = structuredClone(current);
+  let marked = 0, mysteryEnded = false;
   for (const [key, mark] of Object.entries(plan.marks)) {
     if (mark.kind === 'fits' || mark.kind === 'truth' || !yes(answers[key])) continue;
-    if (mark.kind === 'step') {
+    if (mark.kind === 'clue') {
+      const clue = notebook.mystery?.status === 'open' ? notebook.mystery.clues.find(c => c.id === mark.clue) : undefined;
+      if (clue?.status === 'hidden') { clue.status = 'found'; if (reply !== undefined) clue.foundAt = reply; clue.quick = true; marked++; }
+    } else if (mark.kind === 'step') {
       const step = notebook.threads.find(t => t.id === mark.thread)?.steps.find(s => s.id === mark.step);
       if (step?.status === 'waiting') { step.status = 'shown'; step.at = hours; if (reply !== undefined) step.atReply = reply; step.quick = true; marked++; }
     } else if (mark.kind === 'seed') {
@@ -135,13 +158,28 @@ export function applyQuick(current: Notebook, plan: QuickPlan, result: DecisionR
       if (beat?.status === 'possible') { beat.status = 'happened'; beat.quick = true; marked++; }
     }
   }
+  // A guess is judged against the locked answer. Unsure answers count as a part-right guess, never as solved.
+  const mystery = notebook.mystery;
+  if (mystery?.status === 'open') {
+    const right = answers.theory_right, score = right?.type === 'noul' ? right.noul : 0.5;
+    const said = playerMessage.replace(/\s+/g, ' ').trim().slice(0, 300);
+    // A swipe or a regenerated reply judges the same message again: the guess is counted once.
+    const again = mystery.theories.some(t => t.text === said);
+    if (yes(answers.theory) && said && !again) {
+      const verdict = score >= QUICK.yes ? 'right' as const : score <= QUICK.no ? 'wrong' as const : 'partly' as const;
+      mystery.theories = [...mystery.theories, { text: said, verdict, ...(reply !== undefined ? { atReply: reply } : {}), quick: true as const }].slice(-8);
+      if (verdict === 'right') { mystery.status = 'solved'; if (reply !== undefined) mystery.endReply = reply; mysteryEnded = true; }
+      marked++;
+    } else if (yes(answers.mystery_out)) { mystery.status = 'revealed'; if (reply !== undefined) mystery.endReply = reply; mysteryEnded = true; marked++; }
+    if (mysteryEnded) notebook = settleMystery(notebook);
+  }
   const rhythm = answers.rhythm;
   let changed = marked > 0;
   if (rhythm?.type === 'choice' && rhythm.confidence >= QUICK.rhythm && rhythm.choice in RHYTHMS && rhythm.choice !== notebook.rhythm) { notebook.rhythm = rhythm.choice as Rhythm; changed = true; }
   const held = Object.entries(plan.marks).flatMap(([key, mark]) => mark.kind === 'fits' && answers[key]?.type === 'noul' && (answers[key] as { noul: number }).noul <= QUICK.no ? [mark.thread] : []);
   const cameOut = Object.entries(plan.marks).some(([key, mark]) => mark.kind === 'truth' && yes(answers[key]));
   const problem = yes(answers.new_problem), easyFix = yes(answers.easy_fix);
-  return { notebook, changed, marked, needsCheckup: yes(answers.new_turn) || held.length > 0 || cameOut || problem || easyFix, problem, easyFix, revealed: cameOut, rushing: yes(answers.rushing), intimate: yes(answers.intimate), shifted: yes(answers.story_shift), held };
+  return { notebook, changed, marked, needsCheckup: yes(answers.new_turn) || held.length > 0 || cameOut || problem || easyFix, mysteryEnded, problem, easyFix, revealed: cameOut, rushing: yes(answers.rushing), intimate: yes(answers.intimate), shifted: yes(answers.story_shift), held };
 }
 
 /** Fixed wording only: provider errors can echo what was sent. */

@@ -1,4 +1,5 @@
 import type { Notebook } from './notebook';
+import { overlayMystery } from './mystery';
 import type { TalkLine } from './types';
 
 /**
@@ -62,6 +63,7 @@ export function describeChanges(before: Notebook, after: Notebook): string[] {
   if (before.story.question !== after.story.question || before.story.direction !== after.story.direction || before.story.stakes !== after.story.stakes) out.push('Changed where the story is heading');
   if (!same(before.story.hiddenTruth, after.story.hiddenTruth) || before.story.twist !== after.story.twist || before.arc.turn !== after.arc.turn || before.story.cameOut.length !== after.story.cameOut.length) out.push('Changed what is really going on');
   if (before.arc.shape !== after.arc.shape) out.push('Changed the shape of this part of the story');
+  if (after.mystery && (!before.mystery || before.mystery.question !== after.mystery.question)) out.push('Added a mystery');
   return out;
 }
 
@@ -101,5 +103,7 @@ export function applyChanges(base: Notebook, changes: unknown): Record<string, u
   }
   if (Array.isArray(c.events) && c.events.length) { out.events = [...(out.events as unknown[]), ...c.events]; touched = true; }
   for (const key of ['clock', 'rhythm', 'summary', 'recap', 'taste'] as const) if (c[key] !== undefined && c[key] !== null && c[key] !== '') { out[key] = c[key]; touched = true; }
+  // A mystery: clues found, guesses judged, or (when the player asked for one) the whole thing.
+  if (c.mystery && typeof c.mystery === 'object' && !Array.isArray(c.mystery)) { out.mystery = overlayMystery(base.mystery?.status === 'open' ? base.mystery : undefined, c.mystery); touched = true; }
   return touched ? out : null;
 }

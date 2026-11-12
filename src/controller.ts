@@ -9,7 +9,8 @@ import { layoutLine, whereabouts } from './layout';
 import { dueThreads, fillReplies, isNewArc, keepTimes, mergeRevision, NotebookError, partProgress, stamp, validateNotebook, waitsFor, withoutTimes, type Moment, type Notebook, type Pace, type Preferences } from './notebook';
 import { checkupMessages, creationMessages, digestMessages, talkMessages, type Material } from './prompts';
 import { applyChanges, describeChanges, openExchange } from './talk';
-import { checkPush, launchPush, PUSH_KINDS, secretsLeft, type PushKind } from './push';
+import { checkPush, launchMystery, launchPush, PUSH_KINDS, secretsLeft, type PushKind } from './push';
+import { leakProblems, lockMystery, scrubLeaks, mysteryPlayable, mysteryProblems, mysteryView, settleMystery } from './mystery';
 import { earlySteps, fixPace, paceProblems, type PaceRules } from './pacing';
 import { fixLead, fixSpecific, leadProblems, openArc, specificProblems, spentProblems, storyLeft } from './lead';
 import { LORE_ROOM, NO_LORE, pickLore, toEntry, type Lore, type LoreEntry, type LoreRoom } from './lore';
@@ -29,10 +30,13 @@ const PACES: Pace[] = ['auto', 'quiet', 'fast'];
 const TALK_REASON = 'Changed after you talked to Grimoire';
 const PUSH_REASON = 'You asked to get things moving';
 const CHAPTER_REASON = 'You started a new chapter';
-const PUSH_LABELS: Record<PushKind, string> = { person: 'Get things moving: someone makes a move', secret: 'Get things moving: a secret starts to surface', consequence: 'Get things moving: something catches up with me', surprise: 'Get things moving: surprise me', chapter: 'Start a new chapter' };
+const MYSTERY_REASON = 'You added a mystery';
+const MYSTERY_THIN = 'The model could not write a solid enough mystery, so nothing was added. Try again, or pick a stronger model for Grimoire.';
+const PUSH_LABELS: Record<PushKind, string> = { person: 'Get things moving: someone makes a move', secret: 'Get things moving: a secret starts to surface', consequence: 'Get things moving: something catches up with me', surprise: 'Get things moving: surprise me', chapter: 'Start a new chapter', mystery: 'Add a mystery' };
 /** Fixed words, never the model's: a push must not give away what it is. */
 function pushReply(kind: PushKind, skip: number): string {
   if (kind === 'chapter') return `A new chapter is set. It starts with the next reply${skip ? `, about ${describeDuration(skip)} later` : ''}.`;
+  if (kind === 'mystery') return 'A mystery has been added. Its first sign turns up in the next reply or two. From here on, the answer is fixed.';
   return 'Something is in motion. Watch for it over the next few replies.';
 }
 function talkLines(value: unknown): TalkLine[] {
@@ -62,6 +66,8 @@ function quickLog(value: unknown): QuickRecord[] {
 export function quickRecord(reply: number, result: DecisionResult | null, outcome: { marked: number; needsCheckup: boolean; shifted: boolean; held: string[] } | null): QuickRecord {
   const answers: QuickRecord['answers'] = {};
   for (const [key, a] of Object.entries((result?.answers ?? {}) as Record<string, { type: string; noul?: number; choice?: string; confidence?: number }>)) {
+    // Whether a guess at the mystery was right is the story's to tell, not the log's.
+    if (key === 'theory_right' || key === 'mystery_out') continue;
     if (a?.type === 'noul' && typeof a.noul === 'number') answers[key] = Math.round(a.noul * 100) / 100;
     else if (a?.type === 'choice' && typeof a.choice === 'string') answers[key] = { choice: a.choice, confidence: Math.round((a.confidence ?? 0) * 100) / 100 };
   }
@@ -78,7 +84,7 @@ export function validPreferences(value: unknown): Preferences {
   const v = record(value);
   const shape = v.shape === 'conflict' || v.shape === 'kishotenketsu' ? v.shape : 'auto';
   return { tone: ['light', 'balanced', 'dark'].includes(v.tone as string) ? v.tone as Preferences['tone'] : 'balanced', twist: v.twist !== false, shape, lockShape: shape !== 'auto' && v.lockShape === true,
-    size: v.size === 'close' || v.size === 'wide' ? v.size : 'auto',
+    size: v.size === 'close' || v.size === 'wide' ? v.size : 'auto', ...(v.mystery === true ? { mystery: true } : {}),
     ...(typeof v.likes === 'string' && v.likes.trim() ? { likes: v.likes.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim().slice(0, 600) } : {}) };
 }
 /**
@@ -129,12 +135,29 @@ const CALM = 3;
 const SOFT_RANK = ['A problem was solved too easily', 'A new problem came up', 'Something new happened in the story'];
 
 function storyRules(previous: Notebook | null, revised: Notebook, round: number, pace: PaceRules, prefs: Preferences, checkup = false): Notebook {
+  // A first notebook is a mystery only when the player asked for one; then it has to be a sound one.
+  if (!previous) revised = firstMystery(revised, prefs, round);
   if (round === 1) {
     // A check-up that leaves nothing to happen is asked once to open the next part; if it still doesn't, the panel offers a new chapter.
-    const problems = [...paceProblems(previous, revised, pace), ...leadProblems(previous, revised, prefs), ...specificProblems(previous, revised), ...(checkup && previous ? spentProblems(previous, revised) : []), ...(checkup || !previous ? castProblems(previous, revised, prefs) : []), ...(checkup && previous ? stockProblems(previous, revised, prefs) : [])];
+    const problems = [...paceProblems(previous, revised, pace), ...leadProblems(previous, revised, prefs), ...specificProblems(previous, revised), ...(checkup && previous ? spentProblems(previous, revised) : []), ...(checkup || !previous ? castProblems(previous, revised, prefs) : []), ...(checkup && previous ? stockProblems(previous, revised, prefs) : []),
+      ...(!previous && prefs.mystery ? mysteryProblems(revised) : []),
+      // An open mystery: the answer must not have drifted into anything the narrator sees.
+      ...(previous?.mystery?.status === 'open' ? leakProblems({ ...revised, mystery: previous.mystery }) : [])];
     if (problems.length) throw new NotebookError(problems.join(' '), 'The update broke a story rule, so it was sent back once.');
   }
-  return fixSpecific(fixLead(previous, round === 1 ? revised : fixPace(previous, revised, pace), prefs));
+  const fixed = fixSpecific(fixLead(previous, round === 1 ? revised : fixPace(previous, revised, pace), prefs));
+  // Asked once already: what still reads as the mystery's answer is taken out by hand, so it never reaches the narrator.
+  const guard = previous?.mystery?.status === 'open' ? previous.mystery : !previous ? fixed.mystery : undefined;
+  return guard && round > 1 ? (({ mystery: _m, ...rest }) => ({ ...rest, ...(fixed.mystery ? { mystery: fixed.mystery } : {}) }))(scrubLeaks({ ...fixed, mystery: guard }, previous)) : fixed;
+}
+/** The mystery in a first notebook: none unless asked for; asked for, it starts clean, rides the main storyline if it names no thread, and must be playable. */
+function firstMystery(revised: Notebook, prefs: Preferences, round: number): Notebook {
+  const { mystery: given, ...rest } = revised;
+  if (!prefs.mystery) return rest;
+  const fresh = lockMystery(undefined, given, true);
+  const out: Notebook = fresh ? settleMystery({ ...rest, mystery: { ...fresh, thread: fresh.thread || rest.arc.main } }) : rest;
+  if (round > 1 && !mysteryPlayable(out)) throw new NotebookError('The mystery is still not complete.', MYSTERY_THIN);
+  return out;
 }
 /**
  * Keep the base version, the newest full update, and the most recent ones.
@@ -324,7 +347,7 @@ export class NotebookController {
         checks: live ? state.checks : [], needsCheck: state.needsCheck || (live && !live.matched ? 'The chat changed before the notebook was written.' : ''),
         job: state.job, updatedAt: state.updatedAt, repliesSinceCheck: live ? this.repliesSince(live) : 0, skipHours: state.skipHours, notebook, behind: !!live && live.index !== state.versions.length - 1, earlierParts, quick: state.quick, dueIds: live ? dueThreads(live.version.notebook, live.moment).map(d => d.thread.id) : [],
         glance: live ? glance(live.version.notebook, live.moment) : null, reworking: !!live && this.reworking(state, live),
-        talk: state.talk, notes: state.notes, quickLog: state.quickLog, follow: followRate(state.quickLog), recap: notebook?.recap ?? '', canUndo: this.undoable(state) !== null, spent: !!notebook && !storyLeft(notebook), memory: state.enabled ? this.memoryView(chatId) : null,
+        talk: state.talk, notes: state.notes, quickLog: state.quickLog, follow: followRate(state.quickLog), recap: notebook?.recap ?? '', mystery: mysteryView(notebook?.mystery), canUndo: this.undoable(state) !== null, spent: !!notebook && !storyLeft(notebook), memory: state.enabled ? this.memoryView(chatId) : null,
         skipOffer: live && state.enabled && state.job?.status !== 'running' && !state.skipHours && !state.intimateNow && !this.reworking(state, live) ? skipOffer(live.version.notebook, live.moment, live.clock, state.skipDismissedAt) : null,
       };
     });
@@ -720,6 +743,18 @@ export class NotebookController {
     }
     return this.startTalk(chatId, PUSH_LABELS[kind as PushKind], false, kind as PushKind);
   }
+  /**
+   * Add a mystery to a story that is already under way. Once added it stays: its answer is fixed, and it ends
+   * only by being solved or by coming out on its own.
+   */
+  async addMystery(chatId: string, aboutInput: unknown = ''): Promise<Job> {
+    const about = typeof aboutInput === 'string' ? aboutInput.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 300) : '';
+    const state = await this.serial(chatId, () => this.load(chatId));
+    const notebook = state?.versions.at(-1)?.notebook;
+    if (!notebook) throw new Error('Write a notebook for this chat first.');
+    if (notebook.mystery?.status === 'open') throw new Error('This story already has a mystery. It stays until it is solved.');
+    return this.startTalk(chatId, about ? `${PUSH_LABELS.mystery}: ${about}` : PUSH_LABELS.mystery, false, 'mystery');
+  }
   private startTalk(chatId: string, message: string, keep: boolean, push: PushKind | null): Promise<Job> {
     return this.serial(chatId, async () => {
       const state = await this.load(chatId);
@@ -729,7 +764,7 @@ export class NotebookController {
       const live = await this.live(state, await this.api.chat.getMessages(chatId));
       if (!live) throw new Error('Write a notebook for this chat first.');
       state.talk = [...state.talk, { from: 'you' as const, text: message, at: Date.now(), ...(keep ? { keep: true as const } : {}) }].slice(-TALK_LIMITS.lines);
-      const { job, signal } = this.startJob(state, 'talk', push === 'chapter' ? CHAPTER_WORKING : push ? 'Grimoire is setting something in motion' : 'Grimoire is thinking');
+      const { job, signal } = this.startJob(state, 'talk', push === 'chapter' ? CHAPTER_WORKING : push === 'mystery' ? 'Grimoire is writing a mystery' : push ? 'Grimoire is setting something in motion' : 'Grimoire is thinking');
       await this.save(state); this.changed();
       const base = live.version, read = live.prints.slice();
       // A button press is its own request, not part of a conversation.
@@ -754,12 +789,25 @@ export class NotebookController {
             const reply = kind ? pushReply(kind, 0) : plainBlock(output.reply, 600);
             if (!reply) throw new NotebookError('"reply" is empty. Answer the player in one or two short sentences.');
             // Only what changes, laid over the notebook; a whole notebook still works.
-            const proposed = asked ? null : applyChanges(base.notebook, output.changes) ?? (output.notebook && typeof output.notebook === 'object' ? output.notebook : null);
-            if (kind && !proposed) throw new NotebookError('Return "changes" and "push".');
+            // A mystery may come back beside the changes instead of inside them.
+            const changes = kind === 'mystery' && output.mystery && !record(output.changes).mystery ? { ...record(output.changes), mystery: output.mystery } : output.changes;
+            const proposed = asked ? null : applyChanges(base.notebook, changes) ?? (output.notebook && typeof output.notebook === 'object' ? output.notebook : null);
+            if (kind && !proposed) throw new NotebookError(kind === 'mystery' ? 'Return "changes" with "mystery", its thread, and any new people.' : 'Return "changes" and "push".');
             let notebook: Notebook | null = null, skip = 0, moment = live.moment, clock = live.clock;
             if (proposed) {
               let revised = validateNotebook(tidyNotebook(proposed, base.notebook));
-              if (kind) revised = launchPush(revised, checkPush(base.notebook, revised, output.push, kind, round > 1));
+              if (kind === 'mystery') {
+                // Only the player adds a mystery, and only a sound one: a thin one is refused rather than run.
+                const fresh = lockMystery(undefined, revised.mystery, true);
+                // No thread named: the one written for it is the new one.
+                if (fresh) revised = { ...revised, mystery: { ...fresh, thread: fresh.thread || revised.threads.find(t => t.status === 'open' && !base.notebook.threads.some(o => o.id === t.id))?.id || '' } };
+                const problems = mysteryProblems(revised);
+                if (round === 1 && problems.length) throw new NotebookError(problems.join(' '), 'The mystery was not solid enough yet, so it was sent back once.');
+                if (!mysteryPlayable(revised)) throw new NotebookError(problems.join(' ') || 'The mystery is not complete.', MYSTERY_THIN);
+                // Still giving the answer away somewhere the narrator can see: taken out by hand.
+                if (round > 1) revised = scrubLeaks(revised, base.notebook);
+                revised = launchMystery(revised);
+              } else if (kind) revised = launchPush(revised, checkPush(base.notebook, revised, output.push, kind, round > 1));
               revised = storyRules(base.notebook, revised, round, { playerAsked: true }, state.preferences);
               // A new chapter may open after a jump in time. Only the parts of the clock Grimoire owns move; the narrator is told.
               if (kind === 'chapter') skip = Math.min(720, Math.max(0, Math.round(Number(output.skipHours) || 0)));
@@ -768,7 +816,7 @@ export class NotebookController {
                 clock = { day: live.sources.day === 'tracker' ? live.clock.day : moved.day, hour: live.sources.hour === 'tracker' ? live.clock.hour : moved.hour, label: '' };
                 moment = { ...live.moment, hours: absoluteHours(clock) };
               }
-              notebook = { ...mergeRevision(base.notebook, revised, moment), ...(skip ? { clock } : {}) };
+              notebook = { ...mergeRevision(base.notebook, revised, moment, { newMystery: kind === 'mystery' }), ...(skip ? { clock } : {}) };
               if (isNewArc(base.notebook, notebook)) notebook = openArc(notebook, 'chapter');
             }
             return { reply: kind ? pushReply(kind, skip) : reply, asked, notebook, kind, skip, note: !asked && pinning ? plain(output.note, TALK_LIMITS.note) : '' };
@@ -786,7 +834,7 @@ export class NotebookController {
               if (changes.length || result.kind) {
                 const at = Date.now();
                 const kept = current.versions.filter((v, i) => i === 0 || covers(v.covered, read));
-                current.versions = prune([...kept, { notebook: result.notebook, covered: read, at, reason: result.kind === 'chapter' ? CHAPTER_REASON : result.kind ? PUSH_REASON : TALK_REASON, ...(live.values.location ? { location: live.values.location } : {}) }]);
+                current.versions = prune([...kept, { notebook: result.notebook, covered: read, at, reason: result.kind === 'chapter' ? CHAPTER_REASON : result.kind === 'mystery' ? MYSTERY_REASON : result.kind ? PUSH_REASON : TALK_REASON, ...(live.values.location ? { location: live.values.location } : {}) }]);
                 line.versionAt = at;
                 if (result.skip) { current.skipHours = (current.skipHours || 0) + result.skip; current.skipTurn = live.turns.length; line.skipHours = result.skip; }
               }
@@ -963,7 +1011,7 @@ export class NotebookController {
       const intimate = state.intimateNow && settings.intimate === 'protect' && live.turns.at(-1)?.role === 'user';
       const away = awayPeople(live.version.notebook, state.seen, this.presentNow(live), live.moment).map(a => a.person);
       const at = whereabouts(live.version.notebook.buildings ?? [], live.values.location, state.building);
-      return buildNote({ intimate, away, layout: at ? layoutLine(at) : undefined, size: state.preferences.size, sinceNewFace: (live.moment.reply ?? 0) - state.newFaceAt, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, narrated: this.narrated(live), trackerPresent: this.listed(live), skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map(n => n.text) });
+      return buildNote({ intimate, away, layout: at ? layoutLine(at) : undefined, size: state.preferences.size, sinceNewFace: (live.moment.reply ?? 0) - state.newFaceAt, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, location: live.values.location, narrated: this.narrated(live), trackerPresent: this.listed(live), skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map(n => n.text) });
     });
   }
   async macro(name: 'clock' | 'pace', chatId: string | undefined): Promise<string> {
@@ -1100,13 +1148,14 @@ export class NotebookController {
   private runQuick(chatId: string, live: Live, settings: Settings) {
     this.quickRunning.add(chatId);
     const task = (async () => {
-      const plan = quickQuestions(live.version.notebook, live.moment);
       const reply = live.turns.at(-1)!, player = [...live.turns].reverse().find(t => t.role === 'user');
+      const said = readable(splitOoc(player?.content ?? '').story, 2000);
+      const plan = quickQuestions(live.version.notebook, live.moment, `${said}\n${readable(reply.content, 8000)}\n${live.values.location ?? ''}`);
       let result: DecisionResult | null = null, error = '';
       try {
         result = await this.api.decisions.evaluate({
           ...(settings.quick.connectionId ? { connection_id: settings.quick.connectionId } : {}), ...(settings.quick.model ? { model: settings.quick.model } : {}),
-          state: quickState(live.version.notebook, live.clock, readable(splitOoc(player?.content ?? '').story, 2000), readable(reply.content, 8000)), questions: plan.questions,
+          state: quickState(live.version.notebook, live.clock, said, readable(reply.content, 8000)), questions: plan.questions,
           ...(this.userId ? { userId: this.userId } : {}),
         }, { signal: AbortSignal.timeout(35_000) });
       } catch (e) { error = quickError(e); }
@@ -1122,14 +1171,15 @@ export class NotebookController {
         if (!result && state.intimateNow && settings.intimate === 'protect') { const judged = live.prints.at(-1); if (judged && !state.intimate.includes(judged)) { state.intimate = [...state.intimate, judged].slice(-300); now = (await this.live(state, messages))!; } }
         // The reply it judged must still be in the chat. A swipe or edit meanwhile means the answers are about a reply that is gone.
         if (result && covers(live.prints, now.prints)) {
-          outcome = applyQuick(now.version.notebook, plan, result, now.moment);
+          outcome = applyQuick(now.version.notebook, plan, result, now.moment, said);
           if (outcome.changed) {
             state.versions.push({ notebook: outcome.notebook, covered: live.prints, at: Date.now(), reason: 'Quick check', quick: true, ...(now.values.location ? { location: now.values.location } : {}) });
             state.versions = prune(state.versions);
             now = (await this.live(state, messages))!;
           }
           // A secret coming out can't wait. Anything else the quick check noticed waits its turn (see decide).
-          if (outcome.revealed) extra = 'A secret came out';
+          if (outcome.mysteryEnded) extra = 'The mystery was answered';
+          else if (outcome.revealed) extra = 'A secret came out';
           else if (outcome.needsCheckup) soft = outcome.easyFix ? 'A problem was solved too easily' : outcome.problem ? 'A new problem came up' : 'Something new happened in the story';
           // An intimate scene: its replies don't count toward storyline waits, and hurrying is the scene's own business.
           // When the player lets the story carry on through these scenes, they count like any other reply.

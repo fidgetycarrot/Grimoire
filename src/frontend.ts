@@ -121,10 +121,13 @@ export function setup(ctx: SpindleFrontendContext) {
     const keepIdeas = el('input'); keepIdeas.type = 'checkbox'; keepIdeas.style.width = 'auto';
     const keepRow = el('label', 'gm-row gm-small'); keepRow.append(keepIdeas, document.createTextNode('Keep these as lasting notes'));
     grid.append(labeled('Anything you’d like in this story? (optional)', ideas, 'Grimoire builds the story around your ideas and paces them in over time. It won’t tell you how. Describe someone you’d like to meet and they keep your words.'), keepRow);
+    const mystery = el('input'); mystery.type = 'checkbox'; mystery.checked = !!view.preferences.mystery; mystery.style.width = 'auto';
+    const mysteryRow = el('label', 'gm-row gm-small'); mysteryRow.append(mystery, document.createTextNode('Make it a mystery I can solve'));
+    grid.append(mysteryRow, el('p', 'gm-hint', 'Grimoire decides the answer now and never changes it. The narrator is not told, so it can’t give it away or agree with a wrong guess. You can also add one later.'));
     const noConnection = !snapshot?.settings.connectionId;
     const parts = view.earlierParts ?? 0;
     const write = button('Write the notebook', async () => {
-      await act('create', { chatId: view.chatId, preferences: { tone: tone.value, twist: twist.checked, shape: shape.value, lockShape: lock.checked, size: size.value }, ideas: ideas.value.trim(), keepIdeas: keepIdeas.checked });
+      await act('create', { chatId: view.chatId, preferences: { tone: tone.value, twist: twist.checked, shape: shape.value, lockShape: lock.checked, size: size.value, mystery: mystery.checked }, ideas: ideas.value.trim(), keepIdeas: keepIdeas.checked });
       notify(parts ? `Reading the chat, then writing the notebook. This uses ${parts + 1} model requests and can take a few minutes.` : 'Writing the notebook. This uses one model request and can take a minute.');
     }, 'primary');
     write.classList.add('gm-wide'); write.disabled = noConnection || view.job?.status === 'running';
@@ -306,7 +309,7 @@ export function setup(ctx: SpindleFrontendContext) {
       labeled('How big the world gets', size, 'Grow naturally: new people and places now and then, and people you’ve met come back. A big world: more of both, more often. Keep it close: the story stays with the places and people it has.'), el('div', 'gm-sub'), remove);
     return d.root;
   }
-  const QUICK_WORDS: Array<[RegExp, string]> = [[/^due_/, 'Planned development shown'], [/^moment_/, 'Possible moment happened'], [/^detail_mentioned$/, 'Breadcrumb mentioned'], [/^echo_heard$/, 'Echo heard'], [/^callback_/, 'Breadcrumb paid off'], [/^fits_/, 'Storyline still fits'], [/^truth_/, 'Secret came out'], [/^story_shift$/, 'Change of direction'], [/^rushing$/, 'Rushing'], [/^intimate$/, 'Intimate scene'], [/^new_turn$/, 'Something new'], [/^new_problem$/, 'New problem'], [/^easy_fix$/, 'Solved too easily']];
+  const QUICK_WORDS: Array<[RegExp, string]> = [[/^due_/, 'Planned development shown'], [/^moment_/, 'Possible moment happened'], [/^detail_mentioned$/, 'Breadcrumb mentioned'], [/^echo_heard$/, 'Echo heard'], [/^callback_/, 'Breadcrumb paid off'], [/^fits_/, 'Storyline still fits'], [/^truth_/, 'Secret came out'], [/^clue_/, 'Clue found'], [/^theory$/, 'You named an answer'], [/^story_shift$/, 'Change of direction'], [/^rushing$/, 'Rushing'], [/^intimate$/, 'Intimate scene'], [/^new_turn$/, 'Something new'], [/^new_problem$/, 'New problem'], [/^easy_fix$/, 'Solved too easily']];
   const RHYTHM_WORDS: Record<string, string> = { calm: 'calm', rising: 'building', peak: 'big moment', aftermath: 'aftermath', stalled: 'stalled' };
   const STAGE_WORDS: Record<string, string> = { setup: 'setup', rising: 'rising action', climax: 'climax', resolution: 'resolution', ki: 'introduction', sho: 'development', ten: 'the turn', ketsu: 'bringing it together' };
   const part = (title: string) => { const s = el('section', 'gm-stack gm-part'); s.append(el('h4', '', title)); return s; };
@@ -363,6 +366,27 @@ export function setup(ctx: SpindleFrontendContext) {
     return s;
   }
   /** What the player enjoys: what Grimoire has worked out from how they play, and what they choose to tell it. Closed until opened. */
+  /** The mystery, as the player may see it: the question and the clues they have found. Never the answer. */
+  function renderMystery(view: ChatView) {
+    const m = view.mystery, open = m?.status === 'open';
+    const d = details('Mystery', open ? `${m!.found.length} ${m!.found.length === 1 ? 'clue' : 'clues'} found` : m ? 'Finished' : 'Add one to this story', open);
+    if (m) {
+      d.body.append(el('h4', '', open ? 'The mystery' : m.status === 'solved' ? 'Solved. You worked it out.' : 'It came out before you named the answer.'), el('p', '', m.question));
+      d.body.append(el('h4', '', 'Clues you have found'));
+      if (m.found.length) { const list = el('ul'); for (const clue of m.found) list.append(el('li', 'gm-small', clue)); d.body.append(list); }
+      else d.body.append(el('p', 'gm-small', 'None yet. They turn up as you play: look around, ask people, pay attention.'));
+      if (open) d.body.append(el('p', 'gm-hint', 'The answer was fixed when the mystery was written, and the narrator is not told it. When you think you know, say so in the story. A mystery stays until it ends.'));
+      if (open && !snapshot?.settings.quick.enabled) d.body.append(el('p', 'gm-notice', 'The quick check is off, so clues and guesses are only counted at check-ups, a few replies late. Turn it on in Settings for a mystery.'));
+    }
+    if (!open) {
+      const about = el('input'); about.type = 'text'; about.maxLength = 300; about.placeholder = 'For example: something goes missing at the Spire';
+      const add = button(m ? 'Add another mystery' : 'Add a mystery', async () => { await act('mystery', { chatId: view.chatId, about: about.value.trim() }); notify('Writing a mystery. One model request; it can take a minute or two.'); }, 'primary');
+      add.disabled = !snapshot?.settings.connectionId || view.job?.status === 'running';
+      if (!m) d.body.append(el('p', 'gm-small', 'Grimoire hides a real puzzle in this story, built from what has already happened. It decides the answer once and keeps it from the narrator, so the answer can’t slip out or bend to a guess.'));
+      d.body.append(labeled('What should it be about? (optional)', about, 'Leave it empty and Grimoire picks something that fits.'), add, el('p', 'gm-hint', 'Once added, a mystery can’t be turned off. It ends when you solve it, or when the truth comes out on its own.'));
+    }
+    return d.root;
+  }
   function renderTaste(view: ChatView) {
     const d = details('What you enjoy', 'What Grimoire has noticed, and what you tell it');
     const learned = view.notebook?.taste ?? [];
@@ -411,6 +435,15 @@ export function setup(ctx: SpindleFrontendContext) {
     if (notebook.story.direction) about.append(el('p', 'gm-meta', `Could end: ${notebook.story.direction}`));
     if (notebook.story.hiddenTruth.length || notebook.story.twist) { const s = section('What is really going on'), ul = el('ul'); for (const t of notebook.story.hiddenTruth) ul.append(el('li', '', t)); if (notebook.story.twist) ul.append(el('li', '', `Twist: ${notebook.story.twist}`)); s.append(ul); }
     if (notebook.story.cameOut?.length) { const s = section('What has come out'), ul = el('ul'); for (const r of notebook.story.cameOut) ul.append(el('li', '', `${r.text}${r.atReply !== undefined ? ` (reply ${r.atReply})` : ''}`)); s.append(ul); }
+    if (notebook.mystery) {
+      const m = notebook.mystery, s = section(`The mystery${m.status === 'open' ? '' : m.status === 'solved' ? ' (solved)' : ' (came out)'}`), who = (id: string) => notebook.people.find(p => p.id === id)?.name ?? id;
+      s.append(el('p', '', m.question), el('p', '', `Answer: ${m.answer}`), ...(m.how ? [el('p', 'gm-meta', `How: ${m.how}`)] : []), ...(m.why ? [el('p', 'gm-meta', `Why: ${m.why}`)] : []), ...(m.ifUnsolved ? [el('p', 'gm-meta', `If never solved: ${m.ifUnsolved}`)] : []));
+      for (const x of m.suspects) { const e = el('div', 'gm-entry'), name = el('p'); name.append(el('strong', '', who(x.person))); if (x.person === m.culprit) name.append(el('span', 'gm-chip', 'behind it')); e.append(name, el('p', 'gm-small', `Says: ${x.says}`), el('p', 'gm-meta', `Really: ${x.did}`)); s.append(e); }
+      const clues = el('ul');
+      for (const c of m.clues) { const li = el('li', 'gm-small', `${c.text} `); li.append(el('span', 'gm-chip', c.status === 'found' ? 'found' : 'hidden'), ...(c.points === 'false' ? [el('span', 'gm-chip', 'false trail')] : []), el('p', 'gm-meta', `Shows: ${c.means}${c.where ? ` · Found: ${c.where}` : ''}`)); clues.append(li); }
+      s.append(clues);
+      if (m.theories.length) { const ul = el('ul'); for (const t of m.theories) ul.append(el('li', 'gm-small', `Your guess (${t.verdict === 'right' ? 'right' : t.verdict === 'partly' ? 'part right' : 'not right'}): ${t.text}`)); s.append(ul); }
+    }
     const STAGE_WORDS: Record<string, string> = { setup: 'Setup', rising: 'Rising action', climax: 'Climax', resolution: 'Resolution', ki: 'Introduction', sho: 'Development', ten: 'The turn', ketsu: 'Bringing it together' };
     const arc = section('Shape of this part');
     arc.append(el('p', '', `${notebook.arc.shape === 'kishotenketsu' ? 'Kishōtenketsu' : 'Conflict'}: ${STAGE_WORDS[notebook.arc.stage] ?? notebook.arc.stage}`));
@@ -490,7 +523,7 @@ export function setup(ctx: SpindleFrontendContext) {
     if (view.reworking && view.enabled) body.append(el('p', 'gm-hint', 'The story changed direction. Grimoire is reworking its plans to fit, and holds older plans back meanwhile. Nothing it already set up is forgotten.'));
     body.append(renderNow(view, toggle));
     if (view.skipOffer && view.enabled) body.append(renderSkipOffer(view));
-    body.append(renderSteer(view), ...(view.hasNotebook ? [renderTaste(view)] : []), renderBehind(view), renderSpoilers(view), renderMore(view));
+    body.append(renderSteer(view), ...(view.hasNotebook ? [renderMystery(view), renderTaste(view)] : []), renderBehind(view), renderSpoilers(view), renderMore(view));
   }
 
   // ----- Settings -----

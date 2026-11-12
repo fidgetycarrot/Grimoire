@@ -1,4 +1,5 @@
 import { absoluteHours, type StoryClock } from './clock';
+import { carryMysteryTimes, lockMystery, settleMystery, stampMystery, validateMystery, withoutMysteryTimes, type Mystery } from './mystery';
 
 /**
  * The notebook: the story behind the chat. Written by a model, checked here.
@@ -80,11 +81,12 @@ export interface Notebook {
   events: string[]; clock: StoryClock; rhythm: Rhythm; summary: string;
   /** What this player seems to enjoy, read from how they play: what they chase, linger on, and skip. */ taste: string[];
   /** Where the story stands, in a few plain sentences for the player. No secrets, no plans. */ recap: string;
+  /** A mystery the player can solve. Its answer is locked once written, and kept from the narrator while it is open. */ mystery?: Mystery;
 }
 export type ShapeChoice = Shape | 'auto';
 /** How big the story's world gets: close keeps it to a few places and people; wide keeps adding both; auto lets the card decide. */
 export type StorySize = 'auto' | 'close' | 'wide';
-export interface Preferences { tone: 'light' | 'balanced' | 'dark'; twist: boolean; /** The shape the story starts with; auto lets the model choose. */ shape: ShapeChoice; /** Keep that shape for every part of the story. */ lockShape: boolean; size: StorySize; /** What the player says they enjoy, in their own words. Comes before anything Grimoire works out. */ likes?: string }
+export interface Preferences { tone: 'light' | 'balanced' | 'dark'; twist: boolean; /** The shape the story starts with; auto lets the model choose. */ shape: ShapeChoice; /** Keep that shape for every part of the story. */ lockShape: boolean; size: StorySize; /** What the player says they enjoy, in their own words. Comes before anything Grimoire works out. */ likes?: string; /** Write the story as a mystery the player can solve. */ mystery?: boolean }
 export const LIMITS = Object.freeze({ sheets: 6, sheet: 2000, own: 3000, people: 24, threads: 12, steps: 6, beats: 16, seeds: 12, events: 40, truths: 12, covers: 10, buildings: 8, floors: 6, rooms: 14, text: 600, short: 160 });
 
 const ID = /^[a-z0-9][a-z0-9-]{0,40}$/;
@@ -247,6 +249,7 @@ export function validateNotebook(value: unknown): Notebook {
     summary: text(input.summary, 'summary', LIMITS.short),
     taste: input.taste === undefined ? [] : [...new Set(list(input.taste, 'taste', 6).filter((x): x is string => typeof x === 'string').map(x => x.replace(/\s+/g, ' ').trim().slice(0, LIMITS.short)).filter(Boolean))],
     recap: input.recap === undefined ? '' : text(input.recap, 'recap', LIMITS.text),
+    ...(input.mystery ? { mystery: validateMystery(input.mystery, personIds, threadIds) } : {}),
   };
 }
 
@@ -257,7 +260,7 @@ export function validateNotebook(value: unknown): Notebook {
  * (they can be marked gone or closed, with a reason), and something that
  * already happened can't un-happen. Code keeps the times it recorded.
  */
-export function mergeRevision(previous: Notebook, revised: Notebook, now: number | Moment): Notebook {
+export function mergeRevision(previous: Notebook, revised: Notebook, now: number | Moment, options: { /** The player asked for a mystery: one may be added. */ newMystery?: boolean } = {}): Notebook {
   for (const person of previous.people) if (!revised.people.some(p => p.id === person.id)) failMerge(`Keep ${person.name} in the notebook (mark them gone if they have left the story).`);
   for (const thread of previous.threads) {
     const next = revised.threads.find(t => t.id === thread.id);
@@ -287,19 +290,21 @@ export function mergeRevision(previous: Notebook, revised: Notebook, now: number
   // Something that came out can't go back to being secret.
   const lost = previous.story.cameOut.filter(r => !fresh.story.cameOut.some(x => sameText(x.text, r.text)));
   const story = { ...fresh.story, cameOut: carryRevealed(previous, [...fresh.story.cameOut, ...lost.map(({ text }) => ({ text }))]) };
-  return stamp({ ...fresh, story, arc: carryArc(previous, fresh.arc), seeds: carrySeedTimes(previous, fresh.seeds), threads: fresh.threads.map(thread => {
+  // The mystery's answer is locked: an update can find clues and judge guesses, never change what is true.
+  const { mystery: _given, ...rest } = fresh, mystery = lockMystery(previous.mystery, revised.mystery, options.newMystery === true);
+  return settleMystery(stamp({ ...rest, ...(mystery ? { mystery } : {}), story, arc: carryArc(previous, fresh.arc), seeds: carrySeedTimes(previous, fresh.seeds), threads: fresh.threads.map(thread => {
     const old = previous.threads.find(t => t.id === thread.id);
     return { ...thread, ...(old?.startAt !== undefined ? { startAt: old.startAt } : {}), ...(old?.startReply !== undefined ? { startReply: old.startReply } : {}), steps: thread.steps.map(step => {
       const before = old?.steps.find(s => s.id === step.id);
       if (step.status === 'waiting') return before?.now && before.status === 'waiting' && step.afterHours === 0 ? { ...step, now: true as const } : step;
       return { ...step, ...(before?.at !== undefined ? { at: before.at } : {}), ...(before?.atReply !== undefined ? { atReply: before.atReply } : {}) };
     }) };
-  }) }, now);
+  }) }, now));
 }
 /** For edits made by the player: anything may change, but recorded times stay with their ids. */
 export function keepTimes(previous: Notebook, edited: Notebook, now: number | Moment): Notebook {
-  const fresh = withoutTimes(edited);
-  return stamp({ ...fresh, story: { ...fresh.story, cameOut: carryRevealed(previous, fresh.story.cameOut) }, arc: carryArc(previous, fresh.arc), seeds: carrySeedTimes(previous, fresh.seeds), threads: fresh.threads.map(thread => {
+  const { mystery: _m, ...fresh } = withoutTimes(edited), mystery = carryMysteryTimes(previous.mystery, edited.mystery);
+  return stamp({ ...fresh, ...(mystery ? { mystery } : {}), story: { ...fresh.story, cameOut: carryRevealed(previous, fresh.story.cameOut) }, arc: carryArc(previous, fresh.arc), seeds: carrySeedTimes(previous, fresh.seeds), threads: fresh.threads.map(thread => {
     const old = previous.threads.find(t => t.id === thread.id);
     return { ...thread, ...(old?.startAt !== undefined ? { startAt: old.startAt } : {}), ...(old?.startReply !== undefined ? { startReply: old.startReply } : {}), steps: thread.steps.map(step => {
       const before = old?.steps.find(s => s.id === step.id);
@@ -311,7 +316,7 @@ export function keepTimes(previous: Notebook, edited: Notebook, now: number | Mo
 export function withoutTimes(notebook: Notebook): Notebook {
   // Quick-check flags go too: a check-up or an edit has the final say.
   const { startReply: _arcStart, opening: _opening, ...arc } = notebook.arc;
-  return { ...notebook, arc, story: { ...notebook.story, cameOut: notebook.story.cameOut.map(({ text }) => ({ text })) }, seeds: notebook.seeds.map(({ plantedAt: _p, paidAt: _q, echoAt: _e, quick: _k, ...seed }) => seed), beats: notebook.beats.map(({ quick: _k, ...beat }) => beat),
+  return { ...notebook, ...(notebook.mystery ? { mystery: withoutMysteryTimes(notebook.mystery) } : {}), arc, story: { ...notebook.story, cameOut: notebook.story.cameOut.map(({ text }) => ({ text })) }, seeds: notebook.seeds.map(({ plantedAt: _p, paidAt: _q, echoAt: _e, quick: _k, ...seed }) => seed), beats: notebook.beats.map(({ quick: _k, ...beat }) => beat),
     threads: notebook.threads.map(({ startAt: _start, startReply: _reply, ...thread }) => ({ ...thread, steps: thread.steps.map(({ at: _at, atReply: _atReply, quick: _k, ...step }) => step) })) };
 }
 /** Fill in code-owned times: when a thread began, when a step happened. */
@@ -321,7 +326,7 @@ export function stamp(notebook: Notebook, now: number | Moment): Notebook {
     ...((seed.status === 'planted' || seed.status === 'paid') && seed.plantedAt === undefined ? { plantedAt: reply } : {}), ...(seed.status === 'paid' && seed.paidAt === undefined ? { paidAt: reply } : {}),
     ...(seed.status === 'echo' && seed.echoAt === undefined ? { echoAt: reply } : {}) }));
   const story = reply === undefined ? notebook.story : { ...notebook.story, cameOut: notebook.story.cameOut.map(r => r.atReply === undefined ? { ...r, atReply: reply } : r) };
-  return { ...notebook, story, ...(reply !== undefined && notebook.arc.startReply === undefined ? { arc: { ...notebook.arc, startReply: reply } } : {}), seeds, threads: notebook.threads.map(thread => ({ ...thread, startAt: thread.startAt ?? m.hours,
+  return { ...notebook, ...(notebook.mystery ? { mystery: stampMystery(notebook.mystery, m) } : {}), story, ...(reply !== undefined && notebook.arc.startReply === undefined ? { arc: { ...notebook.arc, startReply: reply } } : {}), seeds, threads: notebook.threads.map(thread => ({ ...thread, startAt: thread.startAt ?? m.hours,
     ...(thread.startReply === undefined && reply !== undefined ? { startReply: reply } : {}),
     steps: thread.steps.map(step => step.status === 'waiting' ? step : { ...step, at: step.at ?? m.hours, ...(step.atReply === undefined && reply !== undefined ? { atReply: reply } : {}) }) })) };
 }

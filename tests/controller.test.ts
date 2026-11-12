@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { SpindleAPI } from 'lumiverse-spindle-types';
 import { NotebookController } from '../src/controller';
 import { ModelError, type Message } from '../src/model';
-import { fakeEmbed, sampleNotebook } from './fixtures';
+import { fakeEmbed, MYSTERY_ANSWER, rawMystery, sampleNotebook } from './fixtures';
 
 const tracker = (time: string, place: string) => `\n<status>\nTime: ${time}\nLocation: ${place}\nPresent: Mira\n</status>`;
 const recipe = { fields: [
@@ -1436,5 +1436,133 @@ describe('Lumiverse memory in the plan and the note', () => {
     const { m, c } = await ready();
     expect(m.calls[0].input.memory).toEqual({ moments: [], people: [], ties: [], arc: '' });
     expect((await c.view('chat-1'))!.memory).toBeNull();
+  });
+});
+
+describe('a mystery', () => {
+  const noul = (p: number) => ({ type: 'noul', noul: p });
+  const decide = (over: (input: any) => Record<string, unknown> = () => ({})) => (input: any) => ({ model: 'jev', answers: {
+    ...Object.fromEntries(Object.keys(input.questions).map(k => [k, input.questions[k].type === 'noul' ? noul(k.startsWith('fits_') ? 0.9 : 0.1) : { type: 'choice', choice: 'calm', probabilities: { calm: 0.9 }, confidence: 0.9 }])), ...over(input) } });
+  /** What a model returns when asked to add a mystery: the mystery, and a thread to carry it. */
+  const adds = (mystery: any = rawMystery()) => () => ({ reply: '', changes: {
+    mystery: { ...mystery, thread: 'chapel-silver' },
+    threads: [{ id: 'chapel-silver', title: 'The chapel silver', speed: 'urgent', why: 'Hale took it to pay a debt.', hint: 'The chapel silver is gone and nobody admits to anything.', people: ['brother-hale', 'cole', 'wren'], status: 'open',
+      steps: [{ id: 'found-missing', text: 'The silver is found missing.', sign: 'Wren runs out of the chapel, white-faced: the altar is bare.', afterHours: 4, status: 'waiting' }, { id: 'blame', text: 'Talk in town turns on a stranger.', sign: 'People go quiet when the player walks in.', afterHours: 24, status: 'waiting' }, { id: 'search', text: 'The harbor master orders bags searched at the ferry.', sign: 'A line at the landing, and raised voices.', afterHours: 24, status: 'waiting' }] }],
+  } });
+  async function withQuick(talk: (input: any) => unknown, over?: (input: any) => Record<string, unknown>, checkup: (input: any) => unknown = input => ({ notebook: input.notebook, tracker: null })) {
+    const h = host({ decide: decide(over) });
+    h.add('assistant', `The ferry bell rings.${tracker('Day 1, 18:00', 'The ferry')}`);
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 30, quick: { enabled: true, connectionId: '', model: '' } }, {});
+    const m = model({ create: created, checkup, talk });
+    const c = new NotebookController(h.api, undefined, () => {}, m.ask);
+    await c.create('chat-1', {}); await c.waitForJobs();
+    return { h, m, c };
+  }
+  const SECRETS = [MYSTERY_ANSWER, 'He carried it out in the alms sack', 'He owes money upriver', 'Took the silver and hid it', 'The silver is hidden there', 'pawnbroker', 'Hale took it to pay a debt'];
+
+  test('added to a story under way: the planner is told how, the first sign comes now, and the narrator never gets the answer', async () => {
+    const { m, c } = await withQuick(adds());
+    expect((await c.view('chat-1'))!.mystery).toBeNull();
+    await c.addMystery('chat-1', 'something goes missing from the chapel'); await c.waitForJobs();
+    const sent = m.calls.find(x => x.task === 'grimoire-talk-v1')!;
+    expect(sent.input.push).toBe('mystery');
+    expect(sent.input.exchange.at(-1).text).toBe('Add a mystery: something goes missing from the chapel');
+    expect(sent.messages[0].content).toContain('How to write a mystery the player can really solve');
+    expect(sent.messages[0].content).toContain('Fair play');
+    const view = (await c.view('chat-1'))!;
+    expect(view.mystery).toEqual({ question: 'Who took the chapel silver?', status: 'open', found: [] });
+    expect(view.talk.at(-1)!.text).toContain('A mystery has been added');
+    expect(view.talk.at(-1)!.changes).toContain('Added a mystery');
+    expect(view.notebook!.mystery!.thread).toBe('chapel-silver');
+    // It opens at once, but does not race: the thread is not left urgent.
+    const thread = view.notebook!.threads.find(t => t.id === 'chapel-silver')!;
+    expect(thread.speed).toBe('steady'); expect(thread.steps[0]).toMatchObject({ afterHours: 0, now: true });
+    const note = await c.noteFor('chat-1');
+    expect(note).toContain('A mystery runs through this story: Who took the chapel silver?');
+    expect(note).toContain('Wren runs out of the chapel, white-faced');
+    for (const secret of SECRETS) expect(note).not.toContain(secret);
+    // Once on, it stays: a second one is refused, and it cannot be undone from the talk.
+    await expect(c.addMystery('chat-1')).rejects.toThrow('already has a mystery');
+    await expect(c.undoTalk('chat-1')).rejects.toThrow();
+    expect((await c.view('chat-1'))!.mystery!.status).toBe('open');
+  });
+  test('a thin mystery is sent back once, and refused if it is still thin', async () => {
+    let asks = 0;
+    const { m, c } = await withQuick(() => { asks++; return adds({ ...rawMystery(), clues: rawMystery().clues.slice(0, 2) })(); });
+    await c.addMystery('chat-1'); await c.waitForJobs();
+    expect(asks).toBe(2);
+    expect(m.calls.filter(x => x.task === 'grimoire-talk-v1')[1].messages.at(-1)!.content).toContain('at least 6 clues');
+    const view = (await c.view('chat-1'))!;
+    expect(view.mystery).toBeNull();
+    expect(JSON.stringify(view.job)).toContain('could not write a solid enough mystery');
+  });
+  test('a check-up can find clues and judge guesses, but cannot rewrite the answer', async () => {
+    const tamper = () => ({ changes: { mystery: { answer: 'Cole did it.', culprit: 'cole', clues: [{ id: 'alms-sack', status: 'found' }, { id: 'wet-hem', means: 'Cole borrowed the robe.' }], theories: [{ text: 'It was Wren.', verdict: 'wrong' }] }, summary: 'Updated.' }, tracker: null });
+    const { m, c } = await withQuick(adds(), undefined, tamper);
+    await c.addMystery('chat-1'); await c.waitForJobs();
+    await c.checkup('chat-1', 'You asked'); await c.waitForJobs();
+    const checkup = m.calls.filter(x => x.task === 'grimoire-checkup-v1').at(-1)!;
+    expect(checkup.messages[0].content).toContain('whose answer is locked');
+    const mystery = (await c.view('chat-1'))!.notebook!.mystery!;
+    expect(mystery.answer).toBe(MYSTERY_ANSWER); expect(mystery.culprit).toBe('brother-hale');
+    expect(mystery.clues.find(x => x.id === 'wet-hem')!.means).toBe('He was down at the landing after prayer.');
+    expect(mystery.clues.find(x => x.id === 'alms-sack')!.status).toBe('found');
+    expect(mystery.theories.map(t => t.verdict)).toEqual(['wrong']);
+    expect((await c.view('chat-1'))!.mystery!.found).toEqual(['The alms sack is missing from its hook.']);
+  });
+  test('a check-up that writes the answer where the narrator can see it is sent back, then cleaned by hand', async () => {
+    const leaky = (input: any) => { const storm = structuredClone(input.notebook.threads.find((t: any) => t.id === 'storm')); storm.steps.push({ id: 'hale-seen', text: 'Brother Hale is seen carrying the alms sack down to the landing after evening prayer.', sign: '', afterHours: 3, status: 'waiting' }); return { changes: { threads: [storm], summary: 'Updated.' }, tracker: null }; };
+    const { m, c } = await withQuick(adds(), undefined, leaky);
+    await c.addMystery('chat-1'); await c.waitForJobs();
+    await c.checkup('chat-1', 'You asked'); await c.waitForJobs();
+    const checkups = m.calls.filter(x => x.task === 'grimoire-checkup-v1');
+    expect(checkups.length).toBe(2);
+    expect(checkups[1].messages.at(-1)!.content).toContain('its answer seems to have reached places the narrator can see');
+    const view = (await c.view('chat-1'))!;
+    expect(view.notebook!.summary).toBe('Updated.');
+    expect(view.notebook!.threads.find(t => t.id === 'storm')!.steps.some(s => s.id === 'hale-seen')).toBe(false);
+  });
+  test('a wrong guess is not confirmed; the right one solves it, and only then does the narrator get the answer', async () => {
+    let guess: 'none' | 'wrong' | 'right' = 'none';
+    const { h, c } = await withQuick(adds(), () => guess === 'none' ? {} : { theory: noul(0.95), theory_right: noul(guess === 'right' ? 0.92 : 0.04) });
+    await c.addMystery('chat-1'); await c.waitForJobs();
+    guess = 'wrong';
+    h.add('user', 'Wren. It was you, wasn\'t it?'); h.add('assistant', `Wren goes very still.${tracker('Day 1, 18:10', 'The chapel')}`);
+    await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+    let view = (await c.view('chat-1'))!;
+    expect(view.mystery!.status).toBe('open');
+    expect(view.notebook!.mystery!.theories.at(-1)).toMatchObject({ verdict: 'wrong', text: 'Wren. It was you, wasn\'t it?' });
+    let note = await c.noteFor('chat-1');
+    expect(note).toContain('it is not right. Nobody tells them so outright');
+    for (const secret of SECRETS) expect(note).not.toContain(secret);
+    // The log outside the spoiler fold never says whether a guess was right.
+    expect(JSON.stringify(view.quickLog)).not.toContain('theory_right');
+    expect(h.decisionCalls.at(-1).questions.theory_right.instructions).toContain(MYSTERY_ANSWER);
+    guess = 'right';
+    h.add('user', 'No. Brother Hale. You carried it out in the alms sack and hid it under the landing.'); h.add('assistant', `Brother Hale's hands stop moving.${tracker('Day 1, 18:20', 'The chapel')}`);
+    await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+    view = (await c.view('chat-1'))!;
+    expect(view.mystery!.status).toBe('solved');
+    expect(view.notebook!.story.cameOut.map(r => r.text)).toContain(MYSTERY_ANSWER);
+    note = await c.noteFor('chat-1');
+    expect(note).toContain('The player has solved the mystery'); expect(note).toContain(MYSTERY_ANSWER);
+    // Finished: another may be added now.
+    await expect(c.addMystery('chat-1')).resolves.toBeDefined(); await c.waitForJobs();
+  });
+  test('a first notebook is a mystery only when the player asks for one', async () => {
+    const withIt = () => { const n: any = sampleNotebook(); n.mystery = rawMystery(); return { notebook: n, tracker: recipe }; };
+    const plain = await ready(host(), model({ create: withIt }));
+    expect((await plain.c.view('chat-1'))!.mystery).toBeNull();
+    expect(plain.m.calls[0].messages[0].content).not.toContain('How to write a mystery');
+    const h = host(); h.add('assistant', `The ferry bell rings.${tracker('Day 1, 18:00', 'The ferry')}`);
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 3 }, {});
+    const m = model({ create: withIt }), c = new NotebookController(h.api, undefined, () => {}, m.ask);
+    await c.create('chat-1', { mystery: true }); await c.waitForJobs();
+    expect(m.calls[0].messages[0].content).toContain('The player asked for a mystery');
+    expect(m.calls[0].messages[0].content).toContain('"mystery": {"question"');
+    const view = (await c.view('chat-1'))!;
+    expect(view.mystery).toMatchObject({ question: 'Who took the chapel silver?', status: 'open' });
+    expect(view.preferences.mystery).toBe(true);
+    for (const secret of SECRETS) expect(await c.noteFor('chat-1')).not.toContain(secret);
   });
 });

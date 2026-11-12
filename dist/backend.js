@@ -799,10 +799,11 @@ function validateNotebook(value) {
     rhythm: choice(input.rhythm, ["calm", "rising", "peak", "aftermath", "stalled"], "rhythm", "calm"),
     summary: text(input.summary, "summary", LIMITS.short),
     taste: input.taste === undefined ? [] : [...new Set(list(input.taste, "taste", 6).filter((x) => typeof x === "string").map((x) => x.replace(/\s+/g, " ").trim().slice(0, LIMITS.short)).filter(Boolean))],
-    recap: input.recap === undefined ? "" : text(input.recap, "recap", LIMITS.text)
+    recap: input.recap === undefined ? "" : text(input.recap, "recap", LIMITS.text),
+    ...input.mystery ? { mystery: validateMystery(input.mystery, personIds, threadIds) } : {}
   };
 }
-function mergeRevision(previous, revised, now) {
+function mergeRevision(previous, revised, now, options = {}) {
   for (const person of previous.people)
     if (!revised.people.some((p) => p.id === person.id))
       failMerge(`Keep ${person.name} in the notebook (mark them gone if they have left the story).`);
@@ -844,7 +845,8 @@ function mergeRevision(previous, revised, now) {
   fresh.people = fresh.people.map((p) => ({ ...p, own: previous.people.find((x) => x.id === p.id)?.own ?? "" }));
   const lost = previous.story.cameOut.filter((r) => !fresh.story.cameOut.some((x) => sameText(x.text, r.text)));
   const story = { ...fresh.story, cameOut: carryRevealed(previous, [...fresh.story.cameOut, ...lost.map(({ text }) => ({ text }))]) };
-  return stamp({ ...fresh, story, arc: carryArc(previous, fresh.arc), seeds: carrySeedTimes(previous, fresh.seeds), threads: fresh.threads.map((thread) => {
+  const { mystery: _given, ...rest } = fresh, mystery = lockMystery(previous.mystery, revised.mystery, options.newMystery === true);
+  return settleMystery(stamp({ ...rest, ...mystery ? { mystery } : {}, story, arc: carryArc(previous, fresh.arc), seeds: carrySeedTimes(previous, fresh.seeds), threads: fresh.threads.map((thread) => {
     const old = previous.threads.find((t) => t.id === thread.id);
     return { ...thread, ...old?.startAt !== undefined ? { startAt: old.startAt } : {}, ...old?.startReply !== undefined ? { startReply: old.startReply } : {}, steps: thread.steps.map((step) => {
       const before = old?.steps.find((s) => s.id === step.id);
@@ -852,11 +854,11 @@ function mergeRevision(previous, revised, now) {
         return before?.now && before.status === "waiting" && step.afterHours === 0 ? { ...step, now: true } : step;
       return { ...step, ...before?.at !== undefined ? { at: before.at } : {}, ...before?.atReply !== undefined ? { atReply: before.atReply } : {} };
     }) };
-  }) }, now);
+  }) }, now));
 }
 function keepTimes(previous, edited, now) {
-  const fresh = withoutTimes(edited);
-  return stamp({ ...fresh, story: { ...fresh.story, cameOut: carryRevealed(previous, fresh.story.cameOut) }, arc: carryArc(previous, fresh.arc), seeds: carrySeedTimes(previous, fresh.seeds), threads: fresh.threads.map((thread) => {
+  const { mystery: _m, ...fresh } = withoutTimes(edited), mystery = carryMysteryTimes(previous.mystery, edited.mystery);
+  return stamp({ ...fresh, ...mystery ? { mystery } : {}, story: { ...fresh.story, cameOut: carryRevealed(previous, fresh.story.cameOut) }, arc: carryArc(previous, fresh.arc), seeds: carrySeedTimes(previous, fresh.seeds), threads: fresh.threads.map((thread) => {
     const old = previous.threads.find((t) => t.id === thread.id);
     return { ...thread, ...old?.startAt !== undefined ? { startAt: old.startAt } : {}, ...old?.startReply !== undefined ? { startReply: old.startReply } : {}, steps: thread.steps.map((step) => {
       const before = old?.steps.find((s) => s.id === step.id);
@@ -868,6 +870,7 @@ function withoutTimes(notebook) {
   const { startReply: _arcStart, opening: _opening, ...arc } = notebook.arc;
   return {
     ...notebook,
+    ...notebook.mystery ? { mystery: withoutMysteryTimes(notebook.mystery) } : {},
     arc,
     story: { ...notebook.story, cameOut: notebook.story.cameOut.map(({ text }) => ({ text })) },
     seeds: notebook.seeds.map(({ plantedAt: _p, paidAt: _q, echoAt: _e, quick: _k, ...seed }) => seed),
@@ -884,7 +887,7 @@ function stamp(notebook, now) {
     ...seed.status === "echo" && seed.echoAt === undefined ? { echoAt: reply } : {}
   }));
   const story = reply === undefined ? notebook.story : { ...notebook.story, cameOut: notebook.story.cameOut.map((r) => r.atReply === undefined ? { ...r, atReply: reply } : r) };
-  return { ...notebook, story, ...reply !== undefined && notebook.arc.startReply === undefined ? { arc: { ...notebook.arc, startReply: reply } } : {}, seeds, threads: notebook.threads.map((thread) => ({
+  return { ...notebook, ...notebook.mystery ? { mystery: stampMystery(notebook.mystery, m) } : {}, story, ...reply !== undefined && notebook.arc.startReply === undefined ? { arc: { ...notebook.arc, startReply: reply } } : {}, seeds, threads: notebook.threads.map((thread) => ({
     ...thread,
     startAt: thread.startAt ?? m.hours,
     ...thread.startReply === undefined && reply !== undefined ? { startReply: reply } : {},
@@ -1010,6 +1013,520 @@ function dueThreads(notebook, now) {
   });
 }
 
+// src/mystery.ts
+var MYSTERY = Object.freeze({ clues: 12, minClues: 6, minTrue: 4, minFalse: 1, suspects: 6, minSuspects: 3, theories: 8, spacing: 3, aftermath: 8 });
+var record3 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
+var array = (v) => Array.isArray(v) ? v : v === undefined || v === null || v === "" ? [] : [v];
+var plain = (v, max = 600) => (typeof v === "string" ? v : typeof v === "number" ? String(v) : "").replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+var slug = (v) => plain(v, 80).toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+var same = (a, b) => a.trim().toLowerCase() === b.trim().toLowerCase();
+var VERDICT = { right: "right", correct: "right", true: "right", solved: "right", partly: "partly", partial: "partly", partially: "partly", close: "partly", wrong: "wrong", incorrect: "wrong", false: "wrong" };
+function overlayMystery(base, changes) {
+  if (!base)
+    return changes;
+  const c = record3(changes), out = structuredClone(base);
+  const clues = [...base.clues];
+  for (const item of array(c.clues)) {
+    const raw = record3(item), id = slug(raw.id), at = clues.findIndex((x) => x.id === id);
+    if (at >= 0)
+      clues[at] = { ...clues[at], ...raw, id };
+    else
+      clues.push(raw);
+  }
+  out.clues = clues;
+  const suspects = [...base.suspects];
+  for (const item of array(c.suspects)) {
+    const raw = record3(item), at = suspects.findIndex((x) => x.person === slug(raw.person));
+    if (at >= 0)
+      suspects[at] = { ...suspects[at], ...raw, person: suspects[at].person };
+    else
+      suspects.push(raw);
+  }
+  out.suspects = suspects;
+  out.theories = [...base.theories, ...array(c.theories)];
+  for (const key of ["status", "fix"])
+    if (c[key] !== undefined && c[key] !== null)
+      out[key] = c[key];
+  return out;
+}
+function tidyMystery(value, who, threads, previous) {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return previous ? structuredClone(previous) : undefined;
+  const input = record3(value), truth = record3(input.truth);
+  const person = (v) => who.get(slug(v)) ?? "";
+  const seen = new Set;
+  const clues = array(input.clues).map((raw) => {
+    const c = record3(raw), text = plain(c.text ?? c.detail, 300);
+    let id = slug(c.id) || slug(text).slice(0, 30) || "clue";
+    for (let n = 2;seen.has(id); n++)
+      id = `${id.replace(/-\d+$/, "")}-${n}`;
+    seen.add(id);
+    const points = /false|red|herring|mislead|decoy/i.test(plain(c.points, 40)) ? "false" : "truth";
+    return {
+      id,
+      text,
+      where: plain(c.where, 200),
+      people: [...new Set(array(c.people).map(person).filter(Boolean))].slice(0, 4),
+      means: plain(c.means, 400),
+      points,
+      status: /^(found|seen|known|discovered|shown|revealed)$/i.test(plain(c.status, 40)) ? "found" : "hidden"
+    };
+  }).filter((c) => c.text);
+  const taken = new Set;
+  const suspects = array(input.suspects).map((raw) => {
+    const s = record3(raw);
+    return { person: person(s.person ?? s.id ?? s.name), motive: plain(s.motive, 300), says: plain(s.says, 400), tell: plain(s.tell, 300), did: plain(s.did, 500) };
+  }).filter((s) => s.person && !taken.has(s.person) && !!taken.add(s.person));
+  const theories = array(input.theories).map((raw) => {
+    const t = typeof raw === "string" ? { text: raw } : record3(raw), verdict = VERDICT[plain(t.verdict, 20).toLowerCase()];
+    return verdict ? { text: plain(t.text, 300), verdict, ...typeof t.atReply === "number" ? { atReply: t.atReply } : {}, ...t.quick === true ? { quick: true } : {} } : null;
+  }).filter((t) => !!t && !!t.text);
+  const word = plain(input.status, 20).toLowerCase();
+  const answer = plain(input.answer ?? truth.answer ?? input.solution, 600);
+  if (!answer && !plain(input.question, 300))
+    return previous ? structuredClone(previous) : undefined;
+  return {
+    question: plain(input.question, 300),
+    answer,
+    culprit: person(input.culprit ?? truth.who ?? truth.culprit),
+    how: plain(input.how ?? truth.how, 500),
+    why: plain(input.why ?? truth.why, 500),
+    ifUnsolved: plain(input.ifUnsolved, 400),
+    thread: threads.get(slug(input.thread)) ?? previous?.thread ?? "",
+    suspects: suspects.slice(0, MYSTERY.suspects),
+    clues: clues.slice(0, MYSTERY.clues + 4),
+    theories,
+    status: word === "solved" ? "solved" : /reveal|came|out|failed|lost|closed|ended/.test(word) ? "revealed" : "open",
+    fix: plain(input.fix, 400),
+    ...typeof input.startReply === "number" ? { startReply: input.startReply } : {},
+    ...typeof input.endReply === "number" ? { endReply: input.endReply } : {}
+  };
+}
+function validateMystery(value, personIds, threadIds) {
+  if (value === undefined || value === null)
+    return;
+  const m = record3(value), fail = (message) => {
+    throw new NotebookError(message);
+  };
+  const text = (v, path, max, required = false) => {
+    if (v === undefined || v === null)
+      v = "";
+    if (typeof v !== "string")
+      fail(`mystery.${path} must be text.`);
+    const out = v.trim();
+    if (out.length > max)
+      fail(`mystery.${path} must be at most ${max} characters.`);
+    if (required && !out)
+      fail(`mystery.${path} must not be empty.`);
+    return out;
+  };
+  const count = (v) => typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 1e7 ? v : undefined;
+  const ids = new Set;
+  const clues = array(m.clues).slice(0, MYSTERY.clues + 4).map((raw, i) => {
+    const c = record3(raw), id = typeof c.id === "string" && /^[a-z0-9][a-z0-9-]{0,40}$/.test(c.id) ? c.id : fail(`mystery.clues[${i}].id must be a short lowercase id.`);
+    if (ids.has(id))
+      fail(`mystery.clues has two clues with the id "${id}".`);
+    ids.add(id);
+    return {
+      id,
+      text: text(c.text, `clues[${i}].text`, 300, true),
+      where: text(c.where, `clues[${i}].where`, 200),
+      people: array(c.people).filter((p) => typeof p === "string" && personIds.has(p)).slice(0, 4),
+      means: text(c.means, `clues[${i}].means`, 400),
+      points: c.points === "false" ? "false" : "truth",
+      status: c.status === "found" ? "found" : "hidden",
+      ...count(c.foundAt) !== undefined ? { foundAt: count(c.foundAt) } : {},
+      ...c.quick === true ? { quick: true } : {}
+    };
+  });
+  const suspects = array(m.suspects).slice(0, MYSTERY.suspects).map((raw, i) => {
+    const s = record3(raw);
+    if (typeof s.person !== "string" || !personIds.has(s.person))
+      return null;
+    return { person: s.person, motive: text(s.motive, `suspects[${i}].motive`, 300), says: text(s.says, `suspects[${i}].says`, 400), tell: text(s.tell, `suspects[${i}].tell`, 300), did: text(s.did, `suspects[${i}].did`, 500) };
+  }).filter((s) => !!s);
+  const theories = array(m.theories).slice(-MYSTERY.theories).map((raw, i) => {
+    const t = record3(raw);
+    return {
+      text: text(t.text, `theories[${i}].text`, 300, true),
+      verdict: t.verdict === "right" || t.verdict === "partly" ? t.verdict : "wrong",
+      ...count(t.atReply) !== undefined ? { atReply: count(t.atReply) } : {},
+      ...t.quick === true ? { quick: true } : {}
+    };
+  });
+  return {
+    question: text(m.question, "question", 300, true),
+    answer: text(m.answer, "answer", 600, true),
+    culprit: typeof m.culprit === "string" && personIds.has(m.culprit) ? m.culprit : "",
+    how: text(m.how, "how", 500),
+    why: text(m.why, "why", 500),
+    ifUnsolved: text(m.ifUnsolved, "ifUnsolved", 400),
+    thread: typeof m.thread === "string" && threadIds.has(m.thread) ? m.thread : "",
+    suspects,
+    clues,
+    theories,
+    status: m.status === "solved" || m.status === "revealed" ? m.status : "open",
+    fix: text(m.fix, "fix", 400),
+    ...count(m.startReply) !== undefined ? { startReply: count(m.startReply) } : {},
+    ...count(m.endReply) !== undefined ? { endReply: count(m.endReply) } : {}
+  };
+}
+function mysteryProblems(notebook) {
+  const m = notebook.mystery, out = [];
+  if (!m)
+    return ['Return "mystery": the question, its full answer, the suspects, and the clues, as described.'];
+  const real = m.clues.filter((c) => c.points === "truth"), decoys = m.clues.filter((c) => c.points === "false");
+  if (m.answer.length < 30 || !m.how || !m.why)
+    out.push('mystery: write the full answer in "answer" (one or two sentences), and fill in "how" and "why". Decide it completely before anything else.');
+  if (m.culprit && !m.suspects.some((s) => s.person === m.culprit))
+    out.push('mystery.suspects must include the person named in "culprit".');
+  const culprit = notebook.people.find((p) => p.id === m.culprit);
+  if (culprit && culprit.status !== "active")
+    out.push("mystery.culprit must be someone active in the story, whom the player has met or can meet soon.");
+  if (m.suspects.length < MYSTERY.minSuspects)
+    out.push(`mystery.suspects needs at least ${MYSTERY.minSuspects} people from "people" (use their ids), each with "motive", "says", "tell", and "did". The innocent ones have something else to hide.`);
+  for (const s of m.suspects)
+    if (!s.says || !s.did || !s.motive) {
+      out.push('Every suspect needs "motive" (why the player might suspect them), "says" (their side, as they tell it), and "did" (what they really did and know).');
+      break;
+    }
+  if (m.clues.length < MYSTERY.minClues || real.length < MYSTERY.minTrue)
+    out.push(`mystery.clues needs at least ${MYSTERY.minClues} clues, at least ${MYSTERY.minTrue} of them true ("points": "truth"). Together the true clues must be enough to reach the answer by reasoning.`);
+  if (decoys.length < MYSTERY.minFalse)
+    out.push('mystery.clues needs at least one false trail ("points": "false") with an innocent explanation in "means".');
+  if (decoys.length > real.length)
+    out.push("mystery.clues has more false trails than true clues. The true clues must carry the mystery.");
+  if (m.clues.some((c) => !c.means || !c.where && !c.people.length))
+    out.push('Every clue needs "means" (what it really shows) and either "where" (the place or situation it is found in) or "people" (who can tell it).');
+  if (m.clues.some((c) => same(c.text, c.means) || same(c.text, m.answer)))
+    out.push(`A clue's "text" is only what is seen, heard, or said. What it shows goes in "means"; the two must differ, and no clue states the answer.`);
+  const spots = new Set(m.clues.map((c) => c.people[0] ?? c.where.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 3).slice(0, 2).join(" ")));
+  if (m.clues.length >= MYSTERY.minClues && spots.size < 3)
+    out.push("Spread the clues over at least three different places or people.");
+  const thread = notebook.threads.find((t) => t.id === m.thread);
+  if (!thread)
+    out.push("mystery.thread must be the id of the thread that carries the mystery.");
+  else {
+    if (thread.status !== "open" || thread.steps.filter((s) => s.status === "waiting").length < 2)
+      out.push(`The mystery's thread "${thread.id}" must be open with at least two waiting steps: things that happen while it is unsolved (another incident, pressure on someone, a deadline).`);
+    if (!thread.hint)
+      out.push(`The mystery's thread "${thread.id}" needs a narrator-safe "hint" that gives nothing away.`);
+  }
+  if (!m.ifUnsolved)
+    out.push("mystery.ifUnsolved: say how the answer comes out by itself, at a cost, if the player never works it out.");
+  const where = mysteryLeaks(notebook);
+  if (where.length)
+    out.push(`The answer must live only in "mystery". These seem to give it away: ${where.join("; ")}. Rewrite them as what would be seen from outside; they can reach the narrator or be surfaced early.`);
+  return out;
+}
+function mysteryPlayable(notebook) {
+  const m = notebook.mystery;
+  return !!m && m.answer.length >= 20 && m.clues.filter((c) => c.points === "truth" && c.means).length >= 3 && m.suspects.length >= 2 && !!notebook.threads.find((t) => t.id === m.thread);
+}
+var STOP = new Set(["with", "from", "that", "this", "near", "when", "where", "into", "their", "them", "they", "have", "someone", "something", "about", "after", "before", "while", "there", "under", "over", "took", "take", "then", "what", "were", "been", "will", "would", "could", "because", "which", "only", "also", "really", "himself", "herself", "itself", "other", "another", "during", "night", "really"]);
+var tokens = (text) => text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 4 && !STOP.has(w));
+function leakTest(notebook) {
+  const m = notebook.mystery;
+  if (!m || m.status !== "open" || m.answer.length < 20)
+    return null;
+  const culprit = notebook.people.find((p) => p.id === m.culprit);
+  const names = culprit ? [culprit.name, ...culprit.aliases].map((n) => n.toLowerCase()).filter((n) => n.length >= 3) : [];
+  const open = new Set([...tokens(m.question), ...names.flatMap(tokens)]);
+  const key = new Set(tokens(`${m.answer} ${m.how} ${m.why}`).filter((w) => !open.has(w)));
+  const score = (text) => new Set(tokens(text).filter((w) => key.has(w))).size;
+  return (text, own = false) => {
+    if (!text)
+      return false;
+    const low = text.toLowerCase();
+    if (low.includes(m.answer.toLowerCase()))
+      return true;
+    const named = names.some((n) => low.includes(n));
+    return own ? score(text) >= 4 : named && score(text) >= 3 || score(text) >= 5;
+  };
+}
+function mysteryLeaks(notebook) {
+  const hit = leakTest(notebook), m = notebook.mystery;
+  if (!hit || !m)
+    return [];
+  const out = [];
+  if (notebook.story.hiddenTruth.some((t) => hit(t)))
+    out.push("story.hiddenTruth");
+  if (hit(notebook.story.twist) || hit(notebook.arc.turn))
+    out.push("the twist");
+  if (hit(notebook.recap) || hit(notebook.summary))
+    out.push("recap and summary");
+  for (const t of notebook.threads)
+    if (t.status !== "closed" && (hit(t.hint) || t.steps.some((s) => s.status === "waiting" && (hit(s.text) || hit(s.sign)))))
+      out.push(`the hint and waiting steps of thread "${t.id}"`);
+  if (notebook.beats.some((b) => b.status === "possible" && (hit(b.text) || hit(b.purpose))))
+    out.push("possible beats");
+  if (notebook.seeds.some((s) => (s.status === "waiting" || s.status === "planted") && (hit(s.detail) || hit(s.payoff))))
+    out.push("seeds");
+  for (const p of notebook.people)
+    if (p.status === "active" && [p.hint, p.doing, p.sheet, p.depth].some((f) => hit(f, p.id === m.culprit)))
+      out.push(`the hint, doing, depth, or sheet of "${p.id}"`);
+  return [...new Set(out)].slice(0, 6);
+}
+function scrubLeaks(revised, previous) {
+  const hit = leakTest(revised), m = revised.mystery;
+  if (!hit || !m)
+    return revised;
+  const out = structuredClone(revised);
+  out.story.hiddenTruth = out.story.hiddenTruth.filter((t) => !hit(t));
+  if (hit(out.story.twist))
+    out.story.twist = "";
+  if (hit(out.arc.turn))
+    out.arc.turn = previous && !hit(previous.arc.turn) ? previous.arc.turn : "";
+  if (hit(out.recap))
+    out.recap = previous && !hit(previous.recap) ? previous.recap : "";
+  if (hit(out.summary))
+    out.summary = "";
+  for (const t of out.threads) {
+    if (t.status === "closed")
+      continue;
+    const old = previous?.threads.find((x) => x.id === t.id);
+    if (hit(t.hint))
+      t.hint = old && !hit(old.hint) ? old.hint : t.id === m.thread ? m.question : "";
+    t.steps = t.steps.flatMap((step) => {
+      if (step.status !== "waiting" || !(hit(step.text) || hit(step.sign)))
+        return [step];
+      const before = old?.steps.find((x) => x.id === step.id);
+      if (before)
+        return [hit(before.text) || hit(before.sign) ? { ...step, text: "Something about this shifts.", sign: "" } : { ...step, text: before.text, sign: before.sign }];
+      return [];
+    });
+  }
+  for (const b of out.beats)
+    if (b.status === "possible" && (hit(b.text) || hit(b.purpose)))
+      b.status = "dropped";
+  for (const seed of out.seeds)
+    if ((seed.status === "waiting" || seed.status === "planted") && (hit(seed.detail) || hit(seed.payoff)))
+      seed.status = "dropped";
+  for (const p of out.people) {
+    if (p.status !== "active")
+      continue;
+    const own = p.id === m.culprit, old = previous?.people.find((x) => x.id === p.id);
+    for (const field of ["hint", "doing", "sheet", "depth"])
+      if (hit(p[field], own))
+        p[field] = old && !hit(old[field], own) ? old[field] : "";
+  }
+  return out;
+}
+function leakProblems(notebook) {
+  const where = mysteryLeaks(notebook);
+  return where.length ? [`The mystery is still open, and its answer seems to have reached places the narrator can see: ${where.join("; ")}. Rewrite those so they give nothing away: what would be seen from outside, not what is really going on. The answer lives only in "mystery".`] : [];
+}
+function withoutMysteryTimes(m) {
+  if (!m)
+    return;
+  const { startReply: _s, endReply: _e, ...rest } = m;
+  return { ...rest, clues: m.clues.map(({ foundAt: _f, quick: _q, ...c }) => c), theories: m.theories.map(({ atReply: _a, quick: _q, ...t }) => t) };
+}
+function carryMysteryTimes(previous, edited) {
+  if (!edited)
+    return;
+  const bare = withoutMysteryTimes(edited);
+  if (!previous)
+    return bare;
+  return {
+    ...bare,
+    ...previous.startReply !== undefined ? { startReply: previous.startReply } : {},
+    ...previous.endReply !== undefined && bare.status !== "open" ? { endReply: previous.endReply } : {},
+    clues: bare.clues.map((c) => {
+      const old = previous.clues.find((x) => x.id === c.id);
+      return c.status === "found" && old?.foundAt !== undefined ? { ...c, foundAt: old.foundAt } : c;
+    }),
+    theories: bare.theories.map((t) => {
+      const old = previous.theories.find((x) => same(x.text, t.text));
+      return old?.atReply !== undefined ? { ...t, atReply: old.atReply } : t;
+    })
+  };
+}
+function stampMystery(m, now) {
+  if (!m || now.reply === undefined)
+    return m;
+  const reply = now.reply;
+  return {
+    ...m,
+    startReply: m.startReply ?? reply,
+    ...m.status !== "open" && m.endReply === undefined ? { endReply: reply } : {},
+    clues: m.clues.map((c) => c.status === "found" && c.foundAt === undefined ? { ...c, foundAt: reply } : c),
+    theories: m.theories.map((t) => t.atReply === undefined ? { ...t, atReply: reply } : t)
+  };
+}
+function lockMystery(previous, revised, fresh = false) {
+  if (!previous || fresh && previous.status !== "open" && revised && !same(revised.question, previous.question)) {
+    if (!fresh || !revised)
+      return previous;
+    return { ...withoutMysteryTimes(revised), status: "open", theories: [], clues: revised.clues.slice(0, MYSTERY.clues) };
+  }
+  if (!revised)
+    return previous;
+  const clues = previous.clues.map((old) => {
+    const next = revised.clues.find((c) => c.id === old.id);
+    if (!next)
+      return old;
+    const found = old.status === "found" || next.status === "found";
+    const { quick: _quick, ...kept } = old;
+    return { ...kept, where: next.where || old.where, people: next.people.length ? next.people : old.people, status: found ? "found" : "hidden" };
+  });
+  if (previous.status === "open")
+    for (const clue of revised.clues) {
+      if (clues.length >= MYSTERY.clues || clues.some((c) => c.id === clue.id || same(c.text, clue.text)) || !clue.means)
+        continue;
+      if (clue.points === "false" && clues.filter((c) => c.points === "false").length >= clues.filter((c) => c.points === "truth").length - 1)
+        continue;
+      const { foundAt: _f, ...rest } = clue;
+      clues.push(rest);
+    }
+  const suspects = previous.suspects.map((old) => {
+    const next = revised.suspects.find((s) => s.person === old.person);
+    return next ? { ...old, motive: next.motive || old.motive, says: next.says || old.says, tell: next.tell || old.tell } : old;
+  });
+  for (const s of revised.suspects)
+    if (previous.status === "open" && suspects.length < MYSTERY.suspects && !suspects.some((x) => x.person === s.person) && s.did)
+      suspects.push(s);
+  const theories = [...previous.theories];
+  for (const t of revised.theories)
+    if (!theories.some((x) => same(x.text, t.text)))
+      theories.push(t);
+  const status = previous.status !== "open" ? previous.status : revised.status;
+  return { ...previous, clues, suspects, theories: theories.slice(-MYSTERY.theories), status, fix: status === "open" ? revised.fix : "" };
+}
+function settleMystery(notebook) {
+  const m = notebook.mystery;
+  if (!m)
+    return notebook;
+  if (m.status === "open") {
+    const thread = notebook.threads.find((t) => t.id === m.thread);
+    if (!thread || thread.status === "open" && thread.hint)
+      return notebook;
+    return { ...notebook, threads: notebook.threads.map((t) => t.id !== m.thread ? t : { ...t, status: "open", closedReason: "", hint: t.hint || m.question }) };
+  }
+  const told = notebook.story.cameOut.some((r) => same(r.text, m.answer));
+  return told ? notebook : { ...notebook, story: { ...notebook.story, hiddenTruth: notebook.story.hiddenTruth.filter((t) => !same(t, m.answer)), cameOut: [...notebook.story.cameOut, { text: m.answer }].slice(-12) } };
+}
+var words = (text) => new Set(text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 3 && !["with", "from", "that", "this", "near", "room", "when", "where", "into", "their", "them", "they", "have", "someone", "something", "about", "after", "before", "while", "there"].includes(w)));
+var shared = (a, b) => {
+  const x = words(a), y = words(b);
+  return [...x].filter((w) => y.has(w)).length;
+};
+var overlap = (a, b) => shared(a, b) > 0;
+var lastProgress = (m) => Math.max(m.startReply ?? 0, ...m.clues.map((c) => c.foundAt ?? 0), ...m.theories.map((t) => t.atReply ?? 0));
+var clueGap = (now) => Math.max(6, Math.round((now.waits?.steady ?? 15) * 0.6));
+function clueNow(m, present, place, now) {
+  if (m.status !== "open")
+    return null;
+  const hidden = m.clues.filter((c) => c.status === "hidden");
+  if (!hidden.length)
+    return null;
+  const fit = (c) => (c.people.some((p) => present.includes(p)) ? 2 : 0) + (place ? shared(c.where, place) : 0);
+  const near = [...hidden].sort((a, b) => fit(b) - fit(a)).find((c) => fit(c) > 0);
+  if (now.reply === undefined)
+    return near ? { clue: near, near: true } : null;
+  const since = now.reply - lastProgress(m);
+  if (near && since >= MYSTERY.spacing)
+    return { clue: near, near: true };
+  const gap = clueGap(now);
+  if (since < gap)
+    return null;
+  const order = [...hidden.filter((c) => c.points === "truth"), ...hidden.filter((c) => c.points === "false")];
+  return { clue: order[Math.floor((since - gap) / 4) % order.length], near: false };
+}
+function runsOut(m, now) {
+  if (m.status !== "open" || now.reply === undefined || m.startReply === undefined)
+    return false;
+  const steady = now.waits?.steady ?? 15, slow = now.waits?.slow ?? 40;
+  const allFound = m.clues.filter((c) => c.points === "truth").every((c) => c.status === "found");
+  return allFound && now.reply - lastProgress(m) >= steady * 2 || now.reply - m.startReply >= slow * 4 && now.reply - lastProgress(m) >= steady;
+}
+var end = (text) => `${text.trim().replace(/[.!?]+$/, "")}.`;
+var asked = (text) => /[.!?]$/.test(text.trim()) ? text.trim() : `${text.trim()}.`;
+var clip = (text, max) => {
+  const t = text.trim();
+  return t.length <= max ? t : `${t.slice(0, max).replace(/\s+\S*$/, "")}\u2026`;
+};
+function mysteryNote(notebook, present, place, now, quiet) {
+  const m = notebook.mystery, out = { vital: [], lines: [], suspects: [] };
+  if (!m)
+    return out;
+  const reply = now.reply;
+  if (m.status !== "open") {
+    if (reply !== undefined && m.endReply !== undefined && reply - m.endReply > MYSTERY.aftermath)
+      return out;
+    const truth = `${end(m.answer)}${m.how ? ` How: ${end(m.how)}` : ""}${m.why ? ` Why: ${end(m.why)}` : ""}`;
+    out.vital.push(m.status === "solved" ? `The player has solved the mystery (${clip(m.question, 160)}). They are right, and now it comes out: ${truth} Let it play out through what people do and say (proof that can't be denied, someone breaking, a confession), over this reply and the next few rather than in one line, and let it land as the player's win.` : `The mystery's answer has come out (${clip(m.question, 160)}): ${truth} From here on this is established; keep everything consistent with it, and let people react to it.`);
+    return out;
+  }
+  out.vital.push(`A mystery runs through this story: ${asked(clip(m.question, 220))} Its answer is kept from you so that it cannot slip out. Do not decide it, hint at who or what is behind it, or let anyone confess, be caught in the act, or confirm a guess. Do not make up evidence, witnesses, or new facts about it: only the clues given in these notes exist. If the player names an answer or accuses someone, nobody confirms or denies it in this reply: people react, and the moment hangs.`);
+  if (m.fix)
+    out.vital.push(`Something said earlier does not fit this mystery. Set it straight, without drawing attention to it: ${end(clip(m.fix, 300))}`);
+  if (runsOut(m, now) && !quiet) {
+    out.vital.push(`This mystery has run its course without being solved, and now comes out by itself${m.ifUnsolved ? `: ${end(clip(m.ifUnsolved, 300))}` : "."} The answer, which you may now show: ${end(m.answer)}${m.how ? ` How: ${end(m.how)}` : ""}${m.why ? ` Why: ${end(m.why)}` : ""} Let it cost something, and let the player see what they missed.`);
+    return out;
+  }
+  const last = m.theories.at(-1);
+  if (last && reply !== undefined && last.atReply !== undefined && reply - last.atReply <= 2) {
+    out.vital.push(last.verdict === "partly" ? "The player has just named an answer to the mystery, and has part of it. Nobody confirms which part. Those who know more show it without meaning to (a flinch, a silence, a denial that comes too fast), and the question stays open." : "The player has just named an answer to the mystery, and it is not right. Nobody tells them so outright. It falls short the way a wrong guess does: whoever they accused, if they are here, reacts as a person wrongly accused would, and what the player already knows still does not quite fit. Do not offer the real answer or point toward it.");
+  }
+  for (const person of present) {
+    const s = m.suspects.find((x) => x.person === person.id);
+    if (s?.says)
+      out.suspects.push(`- About the mystery, ${person.name} says: ${end(clip(s.says, 220))}${s.tell ? ` When pressed: ${end(clip(s.tell, 160))}` : ""}`);
+  }
+  const found = m.clues.filter((c) => c.status === "found").sort((a, b) => (a.foundAt ?? 0) - (b.foundAt ?? 0)).slice(-6);
+  if (found.length)
+    out.lines.push(`What the player has found out about the mystery so far (these are facts; keep them true, and do not explain what they mean): ${found.map((c) => end(clip(c.text, 130))).join(" ")}`);
+  if (quiet)
+    return out;
+  const offer = clueNow(m, present.map((p) => p.id), place, now);
+  if (offer) {
+    const holder = notebook.people.find((p) => offer.clue.people.includes(p.id) && p.status === "active");
+    out.vital.push(offer.near ? `A clue is within reach in this scene${offer.clue.where ? ` (${clip(offer.clue.where, 120)})` : ""}. If the player looks, asks, or pays attention, let them come across it; if they do nothing, let it catch their eye in passing. Show only what is seen or said, and do not explain what it means: ${end(clip(offer.clue.text, 300))}` : `The mystery has been quiet for a while. Let this clue reach the player where they are, by a route that fits (${holder ? `${holder.name} mentions it or lets it slip, ` : ""}something turns up, they notice it on the way). Show only what is seen or said, and do not explain what it means: ${end(clip(offer.clue.text, 300))}`);
+  } else if (reply !== undefined && m.clues.filter((c) => c.points === "truth").every((c) => c.status === "found") && (reply - lastProgress(m)) % 6 === 2) {
+    out.lines.push("The player now has what they need to work out the mystery. If the moment allows, give them an opening to say what they think: someone asks them outright, or a quiet moment invites it. Do not suggest an answer.");
+  }
+  return out;
+}
+function cluesToCheck(m, scene, people, now, max = 5) {
+  if (m.status !== "open")
+    return [];
+  const hidden = m.clues.filter((c) => c.status === "hidden");
+  const text = scene.toLowerCase();
+  const named = (c) => c.people.some((id) => {
+    const p = people.find((x) => x.id === id);
+    return !!p && [p.name, ...p.aliases].some((n) => n.length >= 3 && text.includes(n.toLowerCase()));
+  });
+  const offered = clueNow(m, people.filter((p) => [p.name, ...p.aliases].some((n) => n.length >= 3 && text.includes(n.toLowerCase()))).map((p) => p.id), scene, now)?.clue.id;
+  const score = (c) => (c.id === offered ? 4 : 0) + (named(c) ? 2 : 0) + (overlap(c.where, scene) ? 1 : 0) + (overlap(c.text, scene) ? 2 : 0);
+  return [...hidden].sort((a, b) => score(b) - score(a)).slice(0, max);
+}
+function mysteryView(m) {
+  return m ? { question: m.question, status: m.status, found: m.clues.filter((c) => c.status === "found").sort((a, b) => (a.foundAt ?? 0) - (b.foundAt ?? 0)).map((c) => c.text) } : null;
+}
+var MYSTERY_SHAPE = `"mystery": {"question": "the mystery as the player meets it, in one sentence that gives nothing away", "answer": "the full solution, in one or two sentences", "culprit": "the id of the person behind it, or empty if no single person is", "how": "how it was done or came about", "why": "why",
+ "ifUnsolved": "how the answer comes out by itself, at a cost, if the player never works it out", "thread": "the id of the thread that carries the mystery",
+ "suspects": [{"person": "an id from people", "motive": "why the player might suspect them (narrator-safe)", "says": "their side of it, as they tell it; may be a lie (narrator-safe)", "tell": "how they act when pressed, as outward behaviour only, never what they hide (narrator-safe)", "did": "what they really did, saw, and know (hidden)"}],
+ "clues": [{"id": "torn-ledger", "text": "exactly what the player sees, hears, or is told: plain facts, no interpretation (narrator-safe)", "where": "the place, thing, or situation it is found in (narrator-safe)", "people": ["ids of people who hold it or can tell it"], "means": "what it really shows (hidden)", "points": "truth|false", "status": "hidden|found"}],
+ "theories": [], "status": "open", "fix": ""}`;
+var MYSTERY_RULES = `How to write a mystery the player can really solve:
+- Decide the whole answer first: who or what, how, and why. Everything else is built backwards from it. It must fit everything already established in the card, the lorebook, and the chat, and contradict nothing that has happened. Scale it to this story and its tone: it need not be a murder. A theft, a disappearance, sabotage, a hidden identity, who is sending the letters, what really happened that night all work.
+- Fair play. The true clues, taken together, must be enough to reach the answer by reasoning, with no guessing. No single clue gives it away. Whoever is behind it is someone the player has already met or will meet early, never a stranger brought in at the end. Nothing in the answer may rest on a fact the player has no way to learn. Nothing supernatural or convenient unless this world's established rules allow it and a clue shows it.
+- The narrator never sees the answer. It sees only each clue's "text" and "where", and each suspect's "says" and "tell", so those must be safe: "text" is only what is seen, heard, or said, with no interpretation, and "tell" is outward behaviour only. What a clue shows goes in "means"; what someone really did goes in "did".
+- Clues: six to ten. At least four true ones ("points": "truth"), of different kinds: a thing, something a person says, how someone behaves, a time that doesn't add up, something that should be there and is not. One to three false trails ("points": "false"), each with an innocent explanation in "means" that the player can also discover. Spread them over different places and people, so the player has to move and talk to people.
+- Suspects: three to five people from "people", the one behind it among them. Each has a believable motive, and each has something to hide, so the innocent ones lie too, about something else. The guilty one's "says" is a lie that at least one true clue contradicts.
+- Keep the answer only in "mystery". Not in story.hiddenTruth or twist, which can be surfaced early. Not in any thread hint, step, sign, beat, seed, recap, or summary, and not in anyone's "hint", "doing", "voice", "depth", or "sheet", which the narrator sees: for the one behind it, "doing" is what they appear to be doing.
+- The mystery's thread: its waiting steps are things that happen while it stays unsolved, which the narrator can show without knowing the answer: another incident, pressure on a suspect, a deadline, a cost of delay. Its "hint" gives nothing away. The player is never told what to conclude.
+- "ifUnsolved": how it comes out by itself in the end, at a cost, if the player never works it out.`;
+var MYSTERY_KEEP = `- The mystery: "mystery" holds a mystery whose answer is locked. You cannot change its question, answer, culprit, how, why, what any existing clue says or means, or what any suspect really did; anything you return for those is ignored. In "changes" return "mystery" only with what moved: {"clues": [{"id": "an existing clue id", "status": "found"}], "theories": [{"text": "the answer the player stated", "verdict": "right|partly|wrong"}], "status": "open|solved|revealed", "fix": ""}.
+  - Mark a clue "found" once the chat shows the player has seen or been told what its "text" says. A clue never goes back to hidden.
+  - If the player has stated an answer or accused someone in the chat, add it to "theories" and judge it against the locked answer: right (the same person or cause), partly, or wrong. If it is right, set "status" to "solved". If the answer plainly came out in the chat another way, set "status" to "revealed". Never set either otherwise.
+  - New clues: if the story has moved to new places or people and the remaining clues can no longer be reached, add a few (in full, with a new id) that fit the locked answer. You may also update where an existing clue can be found ("where", "people") when the story has moved it. Never add a clue that would make another answer true.
+  - If the narrator invented evidence, a witness, a confession, or a fact that contradicts the locked answer, the answer still stands. Write "fix": one or two narrator-safe sentences that explain it away without revealing the answer (the witness was mistaken or lying, the item was planted, the confession covers for someone), and if it helps, add a clue that shows it. Empty "fix" once the chat has set it straight.
+  - While it is open, keep its thread open with something still to happen, and keep the answer out of everything the narrator can see: thread hints, steps, signs, beats, seeds, recap, summary, story.hiddenTruth, twist, and people's hint, doing, voice, depth, and sheet. The one behind it keeps acting like someone with something to hide; their "doing" is what they appear to be doing.
+  - Once it is solved or revealed, close its thread (outcome won if the player solved it, lost if it came out by itself), and let people's notes reflect that everyone now knows.
+`;
+
 // src/note.ts
 function liveClock(saved, values, types) {
   const clock = { ...saved }, sources = { day: "notebook", hour: saved.hour === null ? "unknown" : "notebook", exact: false };
@@ -1039,10 +1556,10 @@ function liveClock(saved, values, types) {
     clock.label = labels.join(", ").slice(0, 160);
   return { clock, sources };
 }
-var words = (text) => text.trim().length >= 3;
-var end = (text) => `${text.trim().replace(/[.!?]+$/, "")}.`;
+var words2 = (text) => text.trim().length >= 3;
+var end2 = (text) => `${text.trim().replace(/[.!?]+$/, "")}.`;
 function mentioned(person, text) {
-  return [person.name, ...person.aliases].filter(words).some((name) => new RegExp(`(?<![\\p{L}\\p{N}])${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`, "iu").test(text));
+  return [person.name, ...person.aliases].filter(words2).some((name) => new RegExp(`(?<![\\p{L}\\p{N}])${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`, "iu").test(text));
 }
 function presentPeople(notebook, narrated, trackerPresent) {
   const where = spaces(trackerPresent?.trim() ? trackerPresent : narrated);
@@ -1113,6 +1630,7 @@ function buildNote(input) {
   const present = presentPeople(notebook, input.narrated ?? input.recent, input.trackerPresent);
   const quietTime = pace === "quiet" || pace === "auto" && (notebook.rhythm === "aftermath" || notebook.rhythm === "peak");
   must("Grimoire: private story guidance for the narrator. Never mention, quote, or explain it.");
+  const about = (t) => t.hint || (notebook.mystery?.status === "open" ? t.title : t.why);
   lines.push(`${input.clockMayLag ? "Story time at the last check-up" : "Story time"}: ${describeClock(input.clock)}.${input.clockMayLag ? " Time may have moved on since; the chat decides what time it is now." : ""}${input.skipHours ? ` About ${describeDuration(input.skipHours)} have passed since the last message: open with that gap and what changed during it.` : ""}`);
   if (input.layout)
     lines.push(input.layout);
@@ -1130,25 +1648,28 @@ function buildNote(input) {
   lines.push(`What the story is about: ${fit(notebook.story.question, 240)}`);
   const wishes = (input.notes ?? []).map((n) => n.trim()).filter(Boolean).slice(0, 8);
   if (wishes.length)
-    must(`The player's standing wishes for this story (they outrank the plans below): ${wishes.map(end).join(" ")}`.slice(0, 900));
+    must(`The player's standing wishes for this story (they outrank the plans below): ${wishes.map(end2).join(" ")}`.slice(0, 900));
   const held = new Set(input.held ?? []), reworking = !!input.reworking, quiet = reworking || guided || intimate;
   const m = typeof now === "number" ? { hours: now } : now;
   const main = quiet ? undefined : notebook.threads.find((t) => t.id === notebook.arc.main && t.status === "open" && !held.has(t.id));
   const opening = !!main && inOpening(notebook, m);
   if (main)
-    lines.push(`The main storyline is ${main.title}: ${end(fit(main.hint || main.why, 220))} This is the story the player is in. Keep it present through what people say and do, and let its next development arrive when it is due.`);
+    lines.push(`The main storyline is ${main.title}: ${end2(fit(about(main), 220))} This is the story the player is in. Keep it present through what people say and do, and let its next development arrive when it is due.`);
   if (opening)
     lines.push(OPENING);
   const seedsAll = seedPlan(notebook, now), used = new Set;
   const seeds = quiet ? { plant: null, ready: [], echo: null } : { plant: seedsAll.plant && !held.has(seedsAll.plant.pays) ? seedsAll.plant : null, ready: seedsAll.ready.filter((s) => !held.has(s.pays)), echo: seedsAll.echo };
   if (reworking)
     must("The story has just changed direction. Follow the player's lead; older plans are being reworked, so do not steer back toward them. People left behind can still be thought of, but nothing needs to happen yet.");
+  const mystery = mysteryNote(notebook, present, input.location ?? "", m, quiet);
+  for (const line of mystery.vital)
+    must(line);
   const callback = (seed) => {
     used.add(seed.id);
     return `Bring back something mentioned earlier: "${seed.detail}" (${seed.payoff.replace(/[.!?]+$/, "")}).`;
   };
   if (!guided && !intimate && notebook.arc.shape === "kishotenketsu" && notebook.arc.stage === "ten" && notebook.arc.turn) {
-    lines.push(`The turn: ${end(fit(notebook.arc.turn, 240))} Let it land through what happens, then give people room to react.`);
+    lines.push(`The turn: ${end2(fit(notebook.arc.turn, 240))} Let it land through what happens, then give people room to react.`);
     for (const seed of seeds.ready.filter((s) => s.pays === "turn").slice(0, 2))
       lines.push(`- ${callback(seed)}`);
   }
@@ -1162,7 +1683,7 @@ function buildNote(input) {
     const tie = seeds.ready.find((s) => s.pays === lead.thread.id && !used.has(s.id));
     const tied = notebook.people.filter((p) => p.status === "active" && lead.thread.people.includes(p.id)).map((p) => p.name).slice(0, 3);
     must("What the story does now:");
-    must(`- ${lead.thread.title}: ${fit(lead.step.sign || lead.step.text, 320)} (bring it in ${when}). Why it matters: ${fit(lead.thread.hint || lead.thread.why, 200)}${tie ? ` ${callback(tie)}` : ""}`);
+    must(`- ${lead.thread.title}: ${fit(lead.step.sign || lead.step.text, 320)} (bring it in ${when}). Why it matters: ${fit(about(lead.thread), 200)}${tie ? ` ${callback(tie)}` : ""}`);
     const where = lead.thread.speed === "urgent" || input.size === "close" ? ", or it happens where they are" : ", with a reason to go where it is happening; it only comes to where they are if there is no other way";
     if (late)
       must(`- If this has not reached the player yet, bring it to them: someone tied to it seeks them out${tied.length ? ` (${tied.join(", ")})` : ""} or word reaches them${where}. They still choose what to do.`);
@@ -1177,7 +1698,7 @@ function buildNote(input) {
     for (const { thread, step } of [...urgent, ...slower]) {
       const when = thread.speed === "urgent" ? "this can interrupt" : pace === "fast" || step.afterHours === 0 ? "bring this in soon" : "at a natural break, such as the end of this scene";
       const tie = seeds.ready.find((s) => s.pays === thread.id && !used.has(s.id));
-      must(`- ${thread.title}: ${fit(step.sign || step.text, 320)} (${when}). Why it matters: ${fit(thread.hint || thread.why, 200)}${tie ? ` ${callback(tie)}` : ""}`);
+      must(`- ${thread.title}: ${fit(step.sign || step.text, 320)} (${when}). Why it matters: ${fit(about(thread), 200)}${tie ? ` ${callback(tie)}` : ""}`);
     }
   }
   const shown = new Set(developments.map((d) => d.thread.id));
@@ -1185,14 +1706,14 @@ function buildNote(input) {
   if (nearby.length) {
     lines.push("Open threads near this scene:");
     for (const thread of nearby)
-      lines.push(`- ${thread.title}: ${thread.hint || thread.why}`);
+      lines.push(`- ${thread.title}: ${about(thread)}`);
   }
   if (present.length) {
     lines.push("People here and what drives them (give each one their own voice; nobody should sound like anyone else; a sample line shows how someone sounds, never repeat it word for word):");
     if (!guided && present.length > 4)
       lines.push("A lot of people are here. They have their own schedules and reasons: when it fits, let one or two drift off, get called away, or leave on business of their own, rather than everyone staying for the whole scene.");
     for (const person of present.slice(0, 4))
-      lines.push(`- ${person.name}${person.role ? ` (${person.role})` : ""}: wants ${end(person.wants || "nothing stated yet")}${person.doing ? ` Currently: ${end(person.doing)}` : ""}${person.hint ? ` Play them as: ${end(person.hint)}` : ""}${person.voice ? ` Voice: ${end(person.voice)}` : ""}${person.depth ? ` More than their role: ${end(person.depth)}` : ""}`);
+      lines.push(`- ${person.name}${person.role ? ` (${person.role})` : ""}: wants ${end2(person.wants || "nothing stated yet")}${person.doing ? ` Currently: ${end2(person.doing)}` : ""}${person.hint ? ` Play them as: ${end2(person.hint)}` : ""}${person.voice ? ` Voice: ${end2(person.voice)}` : ""}${person.depth ? ` More than their role: ${end2(person.depth)}` : ""}`);
   }
   const beat = quiet ? undefined : notebook.beats.find((b) => b.status === "possible" && !held.has(b.thread) && (!quietTime || b.intensity === "low") && (!b.thread || notebook.threads.find((t) => t.id === b.thread)?.status === "open"));
   if (beat && (pace === "fast" || !developments.length || notebook.rhythm === "stalled")) {
@@ -1201,23 +1722,27 @@ function buildNote(input) {
   }
   const scars = quiet ? [] : notebook.threads.filter((t) => t.status === "closed" && t.outcome === "lost" && t.scar).slice(-2);
   if (scars.length)
-    lines.push(`Still felt from earlier: ${scars.map((t) => end(t.scar)).join(" ")}`);
+    lines.push(`Still felt from earlier: ${scars.map((t) => end2(t.scar)).join(" ")}`);
   const loose = !developments.length && (notebook.rhythm === "calm" || notebook.rhythm === "stalled") ? seeds.ready.find((s) => !used.has(s.id) && s.pays !== "turn") : undefined;
   if (loose) {
     const line = callback(loose);
     lines.push(`If it fits, now is a good time to ${line.charAt(0).toLowerCase()}${line.slice(1)}`);
   }
   if (seeds.plant)
-    lines.push(`A small detail to mention in passing, without drawing attention to it: ${end(seeds.plant.detail)}`);
+    lines.push(`A small detail to mention in passing, without drawing attention to it: ${end2(seeds.plant.detail)}`);
+  for (const line of mystery.suspects.slice(0, 3))
+    lines.push(line);
+  for (const line of mystery.lines)
+    lines.push(line);
   const coming = new Set(developments.flatMap((d) => d.thread.people));
   const named = guided ? [] : spokenOf(notebook, input.recent, present).filter((p) => !coming.has(p.id)).slice(0, 3);
   if (named.length) {
     lines.push("Named in the chat but not in the scene. Unless the latest messages already show them here, a name being said does not bring anyone in: they carry on with their own day elsewhere, until the player goes to them or they have a reason of their own to come.");
     for (const person of named)
-      lines.push(`- ${person.name}: ${end(fit(person.doing || `wants ${person.wants || "something of their own"}`, 160))}`);
+      lines.push(`- ${person.name}: ${end2(fit(person.doing || `wants ${person.wants || "something of their own"}`, 160))}`);
   }
   if (seeds.echo)
-    lines.push(`Something that happened elsewhere can reach the player in passing, as news, a rumor, an overheard remark, or a message, only if it fits: ${end(seeds.echo.detail)}`);
+    lines.push(`Something that happened elsewhere can reach the player in passing, as news, a rumor, an overheard remark, or a message, only if it fits: ${end2(seeds.echo.detail)}`);
   const unmet = notebook.people.filter((p) => p.status === "active" && !p.met && !present.includes(p) && !named.includes(p));
   const roomForFaces = !quiet && pace !== "quiet" && (!quietTime && (notebook.rhythm === "calm" || notebook.rhythm === "stalled" || pace === "fast") || pace === "auto" && notebook.rhythm !== "aftermath" && (input.sinceNewFace ?? 0) >= NEW_FACE_GAP);
   const newcomer = roomForFaces ? unmet.find((p) => main?.people.includes(p.id)) ?? (opening ? undefined : unmet[0]) : undefined;
@@ -1232,7 +1757,7 @@ function buildNote(input) {
     const bare = (t) => t.trim().replace(/[.!?]+$/, "");
     lines.push(`The player character told ${heard}: "${bare(c.said)}"${c.hides ? `, to cover ${bare(c.hides)}` : ""}. They remember it${c.status === "strained" ? " and are starting to doubt it" : ""}; it can come up, and details should stay consistent with it.`);
   }
-  const sheets = present.filter((p) => p.sheet || p.own).slice(0, 3).map((p) => `${p.name}:${p.own ? ` ${end(p.own)}` : ""}${p.sheet ? ` ${end(p.sheet)}` : ""}`.slice(0, 2600));
+  const sheets = present.filter((p) => p.sheet || p.own).slice(0, 3).map((p) => `${p.name}:${p.own ? ` ${end2(p.own)}` : ""}${p.sheet ? ` ${end2(p.sheet)}` : ""}`.slice(0, 2600));
   const rules = `The latest messages decide what actually happened; skip anything they have made impossible. Never write the player character's actions, words, thoughts, or feelings. Keep secrets hidden and let them show only through small details.
 ` + PROBLEMS + " " + GROUND;
   while (lines.join(`
@@ -1322,12 +1847,12 @@ function followRate(log) {
 
 // src/layout.ts
 var GENERIC = new Set(["the", "a", "an", "of", "in", "on", "at", "to", "and", "house", "home", "residence", "building", "room", "floor", "level", "inside", "outside", "near", "by", "main"]);
-var words2 = (s) => s.toLowerCase().replace(/['\u2019]s\b/g, "").split(/[^\p{L}\p{N}]+/u).filter((w) => w && !["the", "a", "an", "of", "in", "on", "at", "to", "and"].includes(w));
+var words3 = (s) => s.toLowerCase().replace(/['\u2019]s\b/g, "").split(/[^\p{L}\p{N}]+/u).filter((w) => w && !["the", "a", "an", "of", "in", "on", "at", "to", "and"].includes(w));
 var within = (name, place) => {
-  const w = words2(name);
+  const w = words3(name);
   return w.length > 0 && w.every((x) => place.has(x));
 };
-var names = (b, place) => [b.name, ...b.aliases].some((n) => within(n, place) || words2(n).some((w) => !GENERIC.has(w) && w.length > 2 && place.has(w)));
+var names = (b, place) => [b.name, ...b.aliases].some((n) => within(n, place) || words3(n).some((w) => !GENERIC.has(w) && w.length > 2 && place.has(w)));
 function roomIn(b, place) {
   let best = null;
   for (const floor of b.floors)
@@ -1335,7 +1860,7 @@ function roomIn(b, place) {
       for (const n of [room.name, ...room.aliases]) {
         if (!within(n, place))
           continue;
-        const size = words2(n).length;
+        const size = words3(n).length;
         if (!best || size > best.size)
           best = { floor, room, size };
       }
@@ -1344,7 +1869,7 @@ function roomIn(b, place) {
 function whereabouts(buildings, location, last) {
   if (!location || !buildings.length)
     return null;
-  const place = new Set(words2(location));
+  const place = new Set(words3(location));
   const named = buildings.filter((b) => names(b, place));
   const order = [...named.length ? named : buildings].sort((a, b) => (b.id === last ? 1 : 0) - (a.id === last ? 1 : 0));
   for (const b of order) {
@@ -1368,10 +1893,10 @@ function layoutLine(at, room = 460) {
 }
 
 // src/tidy.ts
-var record3 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
-var array = (v) => Array.isArray(v) ? v : v === undefined || v === null || v === "" ? [] : [v];
+var record4 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
+var array2 = (v) => Array.isArray(v) ? v : v === undefined || v === null || v === "" ? [] : [v];
 var CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
-function plain(value, max = LIMITS.text) {
+function plain2(value, max = LIMITS.text) {
   let s = typeof value === "string" ? value : typeof value === "number" || typeof value === "boolean" ? String(value) : Array.isArray(value) ? value.filter((x) => typeof x === "string" || typeof x === "number").join("; ") : "";
   s = s.replace(/<\s*\/?\s*[a-z][a-z0-9:-]*(?:\s[^>]*|\/?)>/gi, " ").replace(/\{\{[^{}]*\}\}|<%[^%]*%>/g, " ").replace(/\{\{|\}\}|<%|%>/g, "").replace(CONTROL, "").replace(/\s+/g, " ").trim();
   if (s.length <= max)
@@ -1386,7 +1911,7 @@ function plainBlock(value, max) {
 `).trim();
   return s.length <= max ? s : `${s.slice(0, max - 1).replace(/\s+\S*$/, "")}\u2026`;
 }
-function slug(value) {
+function slug2(value) {
   return String(typeof value === "string" || typeof value === "number" ? value : "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036F]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+/, "").slice(0, 41).replace(/-+$/, "");
 }
 function ids(items, prefix) {
@@ -1421,21 +1946,21 @@ var BEAT = { done: "happened", complete: "happened", shown: "happened", planned:
 var PERSON = { dead: "gone", left: "gone", departed: "gone", inactive: "gone", absent: "gone" };
 var RHYTHM2 = { climax: "peak", building: "rising", tense: "rising", cooldown: "aftermath", resolution: "aftermath", quiet: "calm", stuck: "stalled" };
 function tidyNotebook(value, previous) {
-  const input = record3(value), story = record3(input.story);
-  let people = ids(array(input.people).map((raw) => {
-    const p = record3(raw), name = plain(p.name, 80) || human(slug(p.id)), id = slug(p.id) || slug(name);
+  const input = record4(value), story = record4(input.story);
+  let people = ids(array2(input.people).map((raw) => {
+    const p = record4(raw), name = plain2(p.name, 80) || human(slug2(p.id)), id = slug2(p.id) || slug2(name);
     return {
       id,
       name,
-      aliases: [...new Set(array(p.aliases).map((a) => plain(a, 80)).filter(Boolean))].slice(0, 8),
-      role: plain(p.role, LIMITS.short),
-      wants: plain(p.wants),
-      doing: plain(p.doing),
-      hint: plain(p.hint),
-      voice: plain(p.voice, 300) || (previous?.people.find((x) => x.id === id)?.voice ?? ""),
-      depth: plain(p.depth, 400) || (previous?.people.find((x) => x.id === id)?.depth ?? ""),
-      sheet: plain(p.sheet, LIMITS.sheet) || (previous?.people.find((x) => x.id === id)?.sheet ?? ""),
-      own: plain(p.own, LIMITS.own) || (previous?.people.find((x) => x.id === id)?.own ?? ""),
+      aliases: [...new Set(array2(p.aliases).map((a) => plain2(a, 80)).filter(Boolean))].slice(0, 8),
+      role: plain2(p.role, LIMITS.short),
+      wants: plain2(p.wants),
+      doing: plain2(p.doing),
+      hint: plain2(p.hint),
+      voice: plain2(p.voice, 300) || (previous?.people.find((x) => x.id === id)?.voice ?? ""),
+      depth: plain2(p.depth, 400) || (previous?.people.find((x) => x.id === id)?.depth ?? ""),
+      sheet: plain2(p.sheet, LIMITS.sheet) || (previous?.people.find((x) => x.id === id)?.sheet ?? ""),
+      own: plain2(p.own, LIMITS.own) || (previous?.people.find((x) => x.id === id)?.own ?? ""),
       met: truthy(p.met),
       status: pick(p.status, ["active", "gone"], PERSON, "active")
     };
@@ -1453,7 +1978,7 @@ function tidyNotebook(value, previous) {
   const who = new Map;
   for (const p of people)
     for (const key of [p.id, p.name, ...p.aliases])
-      who.set(slug(key), p.id);
+      who.set(slug2(key), p.id);
   const clockNow = previous ? absoluteHours(previous.clock) : NaN;
   const waitHours = (hours, speed) => {
     if (!Number.isFinite(hours))
@@ -1464,34 +1989,34 @@ function tidyNotebook(value, previous) {
       return DEFAULT_AFTER[speed];
     return Math.max(hours, 0);
   };
-  let threads = ids(array(input.threads).map((raw) => {
-    const t = record3(raw), id = slug(t.id) || slug(t.title), speed = pick(t.speed, ["urgent", "steady", "slow"], SPEED, "steady");
+  let threads = ids(array2(input.threads).map((raw) => {
+    const t = record4(raw), id = slug2(t.id) || slug2(t.title), speed = pick(t.speed, ["urgent", "steady", "slow"], SPEED, "steady");
     const status = pick(t.status, ["open", "paused", "closed"], THREAD, "open");
-    const steps = ids(array(t.steps).map((rawStep) => {
-      const s = record3(rawStep), hours = typeof s.afterHours === "number" ? s.afterHours : parseFloat(String(s.afterHours ?? ""));
-      const text = plain(s.text) || plain(s.sign);
+    const steps = ids(array2(t.steps).map((rawStep) => {
+      const s = record4(rawStep), hours = typeof s.afterHours === "number" ? s.afterHours : parseFloat(String(s.afterHours ?? ""));
+      const text = plain2(s.text) || plain2(s.sign);
       return {
-        id: slug(s.id) || slug(text).slice(0, 30),
+        id: slug2(s.id) || slug2(text).slice(0, 30),
         text,
-        sign: plain(s.sign),
+        sign: plain2(s.sign),
         afterHours: waitHours(hours, speed),
         status: pick(s.status, ["waiting", "shown", "offscreen", "skipped"], STEP, "waiting")
       };
     }).filter((s) => s.text), "step");
     return {
       id,
-      title: plain(t.title, LIMITS.short) || human(id),
+      title: plain2(t.title, LIMITS.short) || human(id),
       speed,
-      why: plain(t.why),
-      hint: plain(t.hint),
-      people: [...new Set(array(t.people).map((x) => who.get(slug(x))).filter((x) => !!x))].slice(0, 8),
+      why: plain2(t.why),
+      hint: plain2(t.hint),
+      people: [...new Set(array2(t.people).map((x) => who.get(slug2(x))).filter((x) => !!x))].slice(0, 8),
       status,
-      closedReason: plain(t.closedReason, LIMITS.short) || (status === "closed" ? "Resolved in the story" : ""),
-      ifFollowed: plain(t.ifFollowed),
-      ifIgnored: plain(t.ifIgnored),
+      closedReason: plain2(t.closedReason, LIMITS.short) || (status === "closed" ? "Resolved in the story" : ""),
+      ifFollowed: plain2(t.ifFollowed),
+      ifIgnored: plain2(t.ifIgnored),
       steps,
       ...status === "closed" ? { outcome: pick(t.outcome, ["won", "lost", "faded"], { win: "won", success: "won", resolved: "won", fail: "lost", failed: "lost", loss: "lost", abandoned: "faded", dropped: "faded", ignored: "faded" }, previous?.threads.find((o) => o.id === id)?.outcome ?? "faded") } : {},
-      ...plain(t.scar, LIMITS.short) || previous?.threads.find((o) => o.id === id)?.scar ? { scar: plain(t.scar, LIMITS.short) || previous.threads.find((o) => o.id === id).scar } : {}
+      ...plain2(t.scar, LIMITS.short) || previous?.threads.find((o) => o.id === id)?.scar ? { scar: plain2(t.scar, LIMITS.short) || previous.threads.find((o) => o.id === id).scar } : {}
     };
   }).filter((t) => t.title), "thread");
   if (previous) {
@@ -1518,14 +2043,14 @@ function tidyNotebook(value, previous) {
     t.steps = cap(t.steps, LIMITS.steps, (s) => (kept.has(s.id) ? 4 : 0) + (s.status !== "waiting" ? 2 : 0));
     t.people = t.people.filter((id) => people.some((p) => p.id === id));
   }
-  const threadIds = new Set(threads.map((t) => t.id)), byTitle = new Map(threads.map((t) => [slug(t.title), t.id]));
-  let beats = ids(array(input.beats).map((raw) => {
-    const b = record3(raw), text = plain(b.text), thread = slug(b.thread);
+  const threadIds = new Set(threads.map((t) => t.id)), byTitle = new Map(threads.map((t) => [slug2(t.title), t.id]));
+  let beats = ids(array2(input.beats).map((raw) => {
+    const b = record4(raw), text = plain2(b.text), thread = slug2(b.thread);
     return {
-      id: slug(b.id) || slug(text).slice(0, 30),
+      id: slug2(b.id) || slug2(text).slice(0, 30),
       text,
-      purpose: plain(b.purpose),
-      conditions: plain(b.conditions),
+      purpose: plain2(b.purpose),
+      conditions: plain2(b.conditions),
       thread: threadIds.has(thread) ? thread : byTitle.get(thread) ?? "",
       intensity: pick(b.intensity, ["low", "high"], { big: "high", major: "high", strong: "high", medium: "low", small: "low", minor: "low" }, "low"),
       status: pick(b.status, ["possible", "happened", "dropped"], BEAT, "possible")
@@ -1547,14 +2072,14 @@ function tidyNotebook(value, previous) {
   };
   beats = retire(beats, (b) => b.status !== "possible", 6);
   beats = cap(beats, LIMITS.beats, (b) => b.status === "possible" ? 4 : b.status === "happened" ? 2 : 0);
-  const linkable = new Map([...threads.map((t) => [t.id, t.id]), ...threads.map((t) => [slug(t.title), t.id]), ...beats.map((b) => [b.id, b.id]), ["turn", "turn"]]);
-  let seeds = ids(array(input.seeds).map((raw) => {
-    const s = record3(raw), detail = plain(s.detail, LIMITS.short) || plain(s.text, LIMITS.short);
+  const linkable = new Map([...threads.map((t) => [t.id, t.id]), ...threads.map((t) => [slug2(t.title), t.id]), ...beats.map((b) => [b.id, b.id]), ["turn", "turn"]]);
+  let seeds = ids(array2(input.seeds).map((raw) => {
+    const s = record4(raw), detail = plain2(s.detail, LIMITS.short) || plain2(s.text, LIMITS.short);
     return {
-      id: slug(s.id) || slug(detail).slice(0, 30),
+      id: slug2(s.id) || slug2(detail).slice(0, 30),
       detail,
-      payoff: plain(s.payoff),
-      pays: linkable.get(slug(s.pays)) ?? "",
+      payoff: plain2(s.payoff),
+      pays: linkable.get(slug2(s.pays)) ?? "",
       status: pick(s.status, ["waiting", "planted", "paid", "echo", "dropped"], { mentioned: "planted", shown: "planted", used: "paid", "paid-off": "paid", resolved: "paid", done: "paid", offscreen: "echo", background: "echo", rumor: "echo", news: "echo", cancelled: "dropped", skipped: "dropped" }, "waiting")
     };
   }).filter((s) => s.detail), "seed");
@@ -1570,17 +2095,17 @@ function tidyNotebook(value, previous) {
   seeds = retire(seeds, (s) => s.status === "paid" || s.status === "dropped", 4);
   seeds = cap(seeds, LIMITS.seeds, (s) => (s.status === "planted" || s.status === "echo" ? 6 : s.status === "waiting" ? 4 : 0) + (keptSeeds.has(s.id) ? 1 : 0));
   const teller = (v) => {
-    const w = slug(v);
+    const w = slug2(v);
     return ["player", "user", "you", "pc", "player-character", "protagonist"].includes(w) ? "player" : who.get(w) ?? "";
   };
-  let covers = ids(array(input.covers).map((raw) => {
-    const c = record3(raw), said = plain(c.said, LIMITS.short) || plain(c.lie, LIMITS.short) || plain(c.text, LIMITS.short);
+  let covers = ids(array2(input.covers).map((raw) => {
+    const c = record4(raw), said = plain2(c.said, LIMITS.short) || plain2(c.lie, LIMITS.short) || plain2(c.text, LIMITS.short);
     return {
-      id: slug(c.id) || slug(said).slice(0, 30),
+      id: slug2(c.id) || slug2(said).slice(0, 30),
       by: teller(c.by),
-      told: [...new Set(array(c.told).map((x) => who.get(slug(x))).filter((x) => !!x))].slice(0, 8),
+      told: [...new Set(array2(c.told).map((x) => who.get(slug2(x))).filter((x) => !!x))].slice(0, 8),
       said,
-      hides: plain(c.hides, LIMITS.short) || plain(c.truth, LIMITS.short),
+      hides: plain2(c.hides, LIMITS.short) || plain2(c.truth, LIMITS.short),
       status: pick(c.status, ["holding", "strained", "exposed"], { active: "holding", intact: "holding", believed: "holding", open: "holding", doubted: "strained", suspected: "strained", cracking: "strained", shaky: "strained", revealed: "exposed", discovered: "exposed", "found-out": "exposed", blown: "exposed", caught: "exposed", broken: "exposed", closed: "exposed" }, "holding")
     };
   }).filter((c) => c.said && c.by), "lie");
@@ -1596,20 +2121,20 @@ function tidyNotebook(value, previous) {
     const k = (x) => x.toLowerCase().replace(/&/g, " and ").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
     return k(a) === k(b);
   };
-  const str = (v, n) => plain(v, n);
+  const str = (v, n) => plain2(v, n);
   const roomOf = (raw) => {
-    const r = record3(raw);
-    return typeof raw === "string" ? { name: plain(raw, 60), aliases: [], near: [] } : { name: str(r.name, 60), aliases: array(r.aliases).map((a) => str(a, 60)).filter(Boolean).slice(0, 6), near: array(r.near ?? r.next ?? r.adjacent).map((a) => str(a, 60)).filter(Boolean).slice(0, 6) };
+    const r = record4(raw);
+    return typeof raw === "string" ? { name: plain2(raw, 60), aliases: [], near: [] } : { name: str(r.name, 60), aliases: array2(r.aliases).map((a) => str(a, 60)).filter(Boolean).slice(0, 6), near: array2(r.near ?? r.next ?? r.adjacent).map((a) => str(a, 60)).filter(Boolean).slice(0, 6) };
   };
-  let buildings = ids(array(input.buildings).map((raw) => {
-    const b = record3(raw), name = str(b.name, 80);
+  let buildings = ids(array2(input.buildings).map((raw) => {
+    const b = record4(raw), name = str(b.name, 80);
     return {
-      id: slug(b.id) || slug(name).slice(0, 30),
+      id: slug2(b.id) || slug2(name).slice(0, 30),
       name,
-      aliases: array(b.aliases).map((a) => str(a, 60)).filter(Boolean).slice(0, 6),
-      floors: array(b.floors).map((f) => {
-        const fl = record3(f);
-        return { name: str(fl.name ?? fl.level, 40), rooms: array(fl.rooms).map(roomOf).filter((r) => r.name).slice(0, LIMITS.rooms) };
+      aliases: array2(b.aliases).map((a) => str(a, 60)).filter(Boolean).slice(0, 6),
+      floors: array2(b.floors).map((f) => {
+        const fl = record4(f);
+        return { name: str(fl.name ?? fl.level, 40), rooms: array2(fl.rooms).map(roomOf).filter((r) => r.name).slice(0, LIMITS.rooms) };
       }).filter((f) => f.name && f.rooms.length).reduce((out, f) => {
         const same = out.find((o) => sameName(o.name, f.name));
         if (same)
@@ -1642,38 +2167,39 @@ function tidyNotebook(value, previous) {
     }
   buildings = cap(buildings, LIMITS.buildings, (b) => previous?.buildings?.some((o) => o.id === b.id) ? 1 : 0);
   covers = cap(covers, LIMITS.covers, (c) => (previous?.covers?.some((o) => o.id === c.id) ? 4 : 0) + (c.status === "exposed" ? 0 : 2));
-  const a = record3(input.arc), shapeWord = typeof a.shape === "string" ? a.shape.toLowerCase().replace(/[^a-z]/g, "") : "";
+  const a = record4(input.arc), shapeWord = typeof a.shape === "string" ? a.shape.toLowerCase().replace(/[^a-z]/g, "") : "";
   const shape = shapeWord.startsWith("kish") ? "kishotenketsu" : shapeWord === "conflict" ? "conflict" : previous?.arc.shape ?? "conflict";
   const stageWord = typeof a.stage === "string" ? a.stage.toLowerCase().normalize("NFKD").replace(/[^a-z]/g, "") : "";
   const STAGE_WORDS = { introduction: "ki", development: "sho", shou: "sho", turn: "ten", twist: "ten", conclusion: "ketsu", reconciliation: "ketsu", together: "ketsu", risingaction: "rising", build: "rising", resolve: "resolution", aftermath: "resolution" };
   const named = STAGES[shape].includes(stageWord) ? stageWord : STAGE_WORDS[stageWord];
   const stage = named && STAGES[shape].includes(named) ? named : previous && previous.arc.shape === shape ? previous.arc.stage : STAGES[shape][0];
-  const mainWord = slug(a.main), main = threadIds.has(mainWord) ? mainWord : byTitle.get(mainWord) ?? (!mainWord && previous && threadIds.has(previous.arc.main) ? previous.arc.main : "");
-  const arc = { shape, stage, turn: plain(a.turn), main };
-  let events = array(input.events).map((e) => plain(typeof e === "string" ? e : record3(e).text)).filter(Boolean);
+  const mainWord = slug2(a.main), main = threadIds.has(mainWord) ? mainWord : byTitle.get(mainWord) ?? (!mainWord && previous && threadIds.has(previous.arc.main) ? previous.arc.main : "");
+  const arc = { shape, stage, turn: plain2(a.turn), main };
+  let events = array2(input.events).map((e) => plain2(typeof e === "string" ? e : record4(e).text)).filter(Boolean);
   if (events.length > LIMITS.events) {
     const fold = events.length - LIMITS.events + 1;
-    events = [plain(`Earlier: ${events.slice(0, fold).join("; ")}`), ...events.slice(fold)];
+    events = [plain2(`Earlier: ${events.slice(0, fold).join("; ")}`), ...events.slice(fold)];
   }
-  const c = record3(input.clock), day = Math.round(Number(c.day)), hour = Number(c.hour), label = plain(c.label, LIMITS.short);
+  const c = record4(input.clock), day = Math.round(Number(c.day)), hour = Number(c.hour), label = plain2(c.label, LIMITS.short);
   const given = c.hour !== null && c.hour !== undefined && c.hour !== "" && Number.isFinite(hour) && hour >= 0 && hour < 24 ? hour : null;
   const clock = { day: Number.isFinite(day) && day >= 0 && day <= 1e7 ? day : previous?.clock.day ?? 1, hour: given ?? readTime(label)?.hour ?? null, label };
-  const question = plain(story.question) || plain(story.direction) || plain(story.stakes) || previous?.story.question || "";
+  const question = plain2(story.question) || plain2(story.direction) || plain2(story.stakes) || previous?.story.question || "";
   const cameOut = [];
-  for (const item of array(story.cameOut)) {
-    const t = plain(typeof item === "string" ? item : record3(item).text);
+  for (const item of array2(story.cameOut)) {
+    const t = plain2(typeof item === "string" ? item : record4(item).text);
     if (t && cameOut.length < LIMITS.truths && !cameOut.some((r) => r.text.toLowerCase() === t.toLowerCase()))
       cameOut.push({ text: t });
   }
-  const hiddenTruth = array(story.hiddenTruth).map((x) => plain(x)).filter((t) => t && !cameOut.some((r) => r.text.toLowerCase() === t.toLowerCase())).slice(0, LIMITS.truths);
+  const hiddenTruth = array2(story.hiddenTruth).map((x) => plain2(x)).filter((t) => t && !cameOut.some((r) => r.text.toLowerCase() === t.toLowerCase())).slice(0, LIMITS.truths);
+  const mystery = tidyMystery(input.mystery, who, new Map([...threadIds].map((id) => [id, id]).concat([...byTitle])), previous?.mystery);
   return {
     version: 1,
     story: {
       question,
-      stakes: plain(story.stakes),
-      direction: plain(story.direction),
+      stakes: plain2(story.stakes),
+      direction: plain2(story.direction),
       hiddenTruth,
-      twist: cameOut.some((r) => r.text.toLowerCase() === plain(story.twist).toLowerCase()) ? "" : plain(story.twist),
+      twist: cameOut.some((r) => r.text.toLowerCase() === plain2(story.twist).toLowerCase()) ? "" : plain2(story.twist),
       cameOut
     },
     arc,
@@ -1686,9 +2212,10 @@ function tidyNotebook(value, previous) {
     events,
     clock,
     rhythm: pick(input.rhythm, ["calm", "rising", "peak", "aftermath", "stalled"], RHYTHM2, "calm"),
-    summary: plain(input.summary, LIMITS.short),
-    taste: (Array.isArray(input.taste) ? input.taste.map((x) => plain(x, LIMITS.short)).filter(Boolean) : previous?.taste ?? []).slice(0, 6),
-    recap: plain(input.recap, LIMITS.text) || previous?.recap || ""
+    summary: plain2(input.summary, LIMITS.short),
+    taste: (Array.isArray(input.taste) ? input.taste.map((x) => plain2(x, LIMITS.short)).filter(Boolean) : previous?.taste ?? []).slice(0, 6),
+    recap: plain2(input.recap, LIMITS.text) || previous?.recap || "",
+    ...mystery ? { mystery } : {}
   };
 }
 
@@ -1706,23 +2233,27 @@ var PUSH_ASKS = {
   secret: "A secret starts to surface: something still in hiddenTruth (never anything in cameOut, which the player already knows), or what a planted breadcrumb really means, begins to come out.",
   consequence: "Something catches up with the player: a consequence of something that already happened in the chat, or of a storyline left alone, arrives.",
   surprise: "Choose whatever established thing would move this story best right now.",
-  chapter: 'Start a new chapter: a new part of the story, not one storyline reworked. Wrap up what is spent (close threads with a reason; keep anything still alive), then open the next part of the story from where things stand now: what people want now, what is unresolved, what the player set in motion. Set a new story question if the old one is answered or tired, set arc.stage to the first stage of its shape, and set arc.main to the main storyline of the chapter: its first waiting step is the opening moment that draws the player in, arriving with the next reply. Give the chapter what a new part needs: a main storyline and one to three side storylines, new breadcrumbs, and new possible moments. If a jump in time would give the chapter a fresh start, set "skipHours" (up to 720); otherwise 0.'
+  chapter: 'Start a new chapter: a new part of the story, not one storyline reworked. Wrap up what is spent (close threads with a reason; keep anything still alive), then open the next part of the story from where things stand now: what people want now, what is unresolved, what the player set in motion. Set a new story question if the old one is answered or tired, set arc.stage to the first stage of its shape, and set arc.main to the main storyline of the chapter: its first waiting step is the opening moment that draws the player in, arriving with the next reply. Give the chapter what a new part needs: a main storyline and one to three side storylines, new breadcrumbs, and new possible moments. If a jump in time would give the chapter a fresh start, set "skipHours" (up to 720); otherwise 0.',
+  mystery: `Add a mystery to this story: a real one, which the player can solve. Grow it out of what is already established (people the player knows, things that have happened, what people want), so it belongs to this story. Return it in "changes" as ${MYSTERY_SHAPE}
+Also in "changes": the thread that carries it (new, or an existing one reworked), whose first waiting step is the sign that there is a mystery at all (the discovery, the thing gone missing, the first thing that does not add up), and any new people it needs, written in full. If the player said what it should be about, build it around that. "push" is not needed.
+${MYSTERY_RULES}`
 };
 var ALLOWED = {
   person: ["person"],
   secret: ["truth", "seed"],
   consequence: ["event", "thread", "seed", "revealed"],
   surprise: ["person", "thread", "seed", "event", "truth", "revealed"],
-  chapter: ["person", "thread", "seed", "event", "truth", "revealed"]
+  chapter: ["person", "thread", "seed", "event", "truth", "revealed"],
+  mystery: ["person", "thread", "seed", "event", "truth", "revealed"]
 };
 var TIE_KINDS = ["person", "thread", "seed", "event", "truth", "revealed"];
-var record4 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
+var record5 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
 var bad = (message) => {
   throw new NotebookError(message, "The model\u2019s push wasn\u2019t tied to anything already in the story, so nothing was changed.");
 };
 function checkPush(previous, revised, value, kind, lenient = false) {
-  const input = record4(value), from = record4(input.from);
-  const named = (list, ref) => list.find((x) => x.id === ref) ?? list.find((x) => [x.id, x.title, x.name, ...x.aliases ?? []].some((k) => k && slug(k) === slug(ref)));
+  const input = record5(value), from = record5(input.from);
+  const named = (list, ref) => list.find((x) => x.id === ref) ?? list.find((x) => [x.id, x.title, x.name, ...x.aliases ?? []].some((k) => k && slug2(k) === slug2(ref)));
   const thread = named(revised.threads, typeof input.thread === "string" ? input.thread : "")?.id ?? (typeof input.thread === "string" ? input.thread : "");
   const rawKind = typeof from.kind === "string" ? from.kind.toLowerCase() : "";
   const tie = { kind: TIE_KINDS.includes(rawKind) ? rawKind : rawKind === "cameout" ? "revealed" : rawKind, ref: String(from.ref ?? "") };
@@ -1772,6 +2303,22 @@ function launchPush(notebook, push) {
 function secretsLeft(notebook) {
   return notebook.story.hiddenTruth.length > 0 || !!notebook.story.twist || notebook.seeds.some((s) => s.status === "planted" || s.status === "waiting");
 }
+function launchMystery(notebook) {
+  const id = notebook.mystery?.thread;
+  if (!id)
+    return notebook;
+  return { ...notebook, threads: notebook.threads.map((thread) => {
+    if (thread.id !== id)
+      return thread;
+    let first = true;
+    return { ...thread, status: "open", speed: thread.speed === "urgent" ? "steady" : thread.speed, steps: thread.steps.map((step) => {
+      if (step.status !== "waiting" || !first)
+        return step;
+      first = false;
+      return { ...step, afterHours: 0, now: true };
+    }) };
+  }) };
+}
 
 // src/lore.ts
 var LORE_ROOM = {
@@ -1780,7 +2327,7 @@ var LORE_ROOM = {
 };
 var NO_LORE = { rules: [], entries: [], index: [], more: 0 };
 var hasLore = (lore) => lore.rules.length + lore.entries.length + lore.index.length > 0;
-var record5 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
+var record6 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
 var strings = (v) => Array.isArray(v) ? v.filter((k) => typeof k === "string").map((k) => k.trim()).filter(Boolean) : [];
 var oneLine = (s) => s.replace(/\s+/g, " ").trim();
 function chapterOf(title) {
@@ -1788,7 +2335,7 @@ function chapterOf(title) {
   return m ? { chapter: m[1].trim(), section: m[2].trim() } : { chapter: "", section: title };
 }
 function toEntry(raw, fallbackId) {
-  const e = record5(raw);
+  const e = record6(raw);
   if (e.disabled === true || e.disable === true)
     return null;
   const content = typeof e.content === "string" ? e.content.trim() : "";
@@ -2022,6 +2569,12 @@ var SHAPE = `{
  "taste": ["up to six short lines on what this player seems to enjoy, from how they play"],
  "recap": "where the story stands now, in two or three plain sentences for the player: what has happened and where things were left. No secrets, no plans, nothing the player has not seen"
 }`;
+var shapeWith = (mystery) => mystery ? SHAPE.replace(/\n\}$/, `,
+ ${MYSTERY_SHAPE}
+}`) : SHAPE;
+var MYSTERY_FIRST = `The player asked for a mystery: this story is one. Return "mystery" in the notebook. Its thread is the main storyline (arc.main), the story question is the mystery's question, and the first step is the moment the player learns there is a mystery at all. A twist, if you plan one, must not be the answer itself.
+${MYSTERY_RULES}
+`;
 var CRAFT = [
   "How to build it:",
   "1. Start from what the card already sets up: its premise, people, and any plot it begins. Build on it; do not replace it.",
@@ -2066,9 +2619,9 @@ function creationMessages(material, preferences, ideas = "", keep = false) {
   return [
     { role: "system", content: `${SAFETY}
 You write a private story notebook for an ongoing roleplay chat. It gives the narrator a story of its own: where it is going, why, and how fast. The player must not see it.
-Return {"notebook": ${SHAPE}, "tracker": {"fields": [], "note": ""}${keep ? ', "notes": ["\u2026"]' : ""}${ideas ? ', "playerPeople": []' : ""}}.
+Return {"notebook": ${shapeWith(!!preferences.mystery)}, "tracker": {"fields": [], "note": ""}${keep ? ', "notes": ["\u2026"]' : ""}${ideas ? ', "playerPeople": []' : ""}}.
 ${CRAFT}
-${LORE(material.lore)}${MEMORY(material.memory)}Tone: ${preferences.tone}. ${preferences.likes ? '"preferences.likes" is the player telling you what they enjoy, in their own words: plan by it. ' : ""}${twist}${shape}
+${preferences.mystery ? MYSTERY_FIRST : ""}${LORE(material.lore)}${MEMORY(material.memory)}Tone: ${preferences.tone}. ${preferences.likes ? '"preferences.likes" is the player telling you what they enjoy, in their own words: plan by it. ' : ""}${twist}${shape}
 ${WORLD(preferences.size)}${ideas ? `
 The player, who co-writes this story, shared ideas for it in "ideas". Build the notebook around them where they fit the card: give them threads, people, beats, or breadcrumbs, paced like everything else, so they arrive in time rather than all at once. They are wishes for where the story can go, not events that already happened. If they describe a person (someone they would like to meet, or someone already in their character's life), make that person, give them a "sheet" that builds on what the player wrote without repeating it, and list them in "playerPeople": [{"person": "their id", "from": "the player's description of them, copied word for word from ideas"}]; their words are kept as they wrote them.${keep ? ` Also return "notes": one to four short standing instructions in plain words that keep these wishes in force, as close to the player's own words as you can, with no spoilers.` : ""}` : ""}
 If the chat already has messages, start from what has happened: record it under events, mark people met, and set the clock to now. A long chat comes with "storySoFar", a record of everything before the messages in "chat"; treat it as part of the chat. Keep events compact: at most about 30 short lines, merging older ones. Threads and people the chat already started come first; plan new ones around them.
@@ -2085,7 +2638,7 @@ function checkupMessages(input) {
     { role: "system", content: `${SAFETY}
 You keep a private story notebook up to date while a roleplay chat goes on. You see the whole notebook and the chat since the last check-up.
 Return {"changes": {...}, "tracker": null or {"fields": [...], "note": ""}, "speedUps": {}}.
-"changes" holds only what is different after this update, in the notebook's own shape: ${SHAPE}
+"changes" holds only what is different after this update, in the notebook's own shape: ${shapeWith(!!input.notebook.mystery)}
 In "changes": "people", "threads", "beats", "seeds", "covers" and "buildings" list only the items that are new or changed, each one complete (a changed thread includes all of its steps, a changed person all of their fields); anything you leave out stays exactly as it is. "story" and "arc" give only the fields that change (a list such as hiddenTruth is given whole). "events" gives only new events. Give "clock", "rhythm", "summary", "recap" and "taste" whenever they change. Leave everything else out; do not copy unchanged items.
 Rules for the update:
 ${LORE(input.lore) ? `- ${LORE(input.lore)}` : ""}${MEMORY(input.memory) ? `- ${MEMORY(input.memory)}` : ""}${input.notes.length ? NOTES : ""}${input.replan ? REPLAN : ""}${input.resync ? RESYNC(input.held) : ""}${input.part ? `- This part of the story is about ${input.part.elapsed} replies in, of roughly ${input.part.length}. Spread what is left across the rest of it: the climax and the biggest moments belong in the last third, and new storylines should fit the time that is left rather than pile on. If the player picks up the pace (Fast), parts are shorter. If everything resolves early anyway, open the next part as usual.
@@ -2103,7 +2656,7 @@ ${input.preferences.size !== "close" ? `- Where the story goes: "places" lists w
 ` : ""}- Places: if the story has spent time in a building that has no layout in "buildings" yet, add one (see 3g). Keep every layout, and add rooms the chat has shown; never move rooms the chat has already used.
 - What the player enjoys: ${input.preferences.likes ? '"preferences.likes" is the player telling you what they enjoy, in their own words. It comes first: plan by it, and never let "taste" contradict it. Beyond that, keep' : "keep"} "taste" current, from how they actually play. It is shown to the player, so it holds only things they have seen, never plans or secrets. Which storylines and people do they go after, which scenes do they stay in and write the most for, what do they skip past or cut short? Short plain lines ("lingers in quiet scenes with Mira", "skips combat", "keeps poking at the ring mystery"). Judge it against what is normal for this chat: something the card delivers all the time anyway (in an erotic card, sex; in a war story, fighting) is not a taste and needs no planning toward, and a long intimate scene says nothing by its length, since those run long by nature. Look for what stands out instead: which people and dynamics they pick, what kind of tension they enjoy around those scenes (the risk, the slow build, the banter), and what they go for outside them. Plan toward it as one ingredient among others: more of what they lean into, less of what they pass over, never the same thing every time.
 - Recap: keep "recap" current (see its description). It is shown to the player, so it holds no secrets and no plans.
-- Lies: record new lies that matter in "covers" (see 3f), and keep every one there. Mark one "strained" when someone in the chat starts to doubt it and "exposed" once it comes apart in the chat; an exposed lie never goes back. When a lie has held for a while, plan a step or beat where it needs upkeep.
+${input.notebook.mystery ? MYSTERY_KEEP : ""}- Lies: record new lies that matter in "covers" (see 3f), and keep every one there. Mark one "strained" when someone in the chat starts to doubt it and "exposed" once it comes apart in the chat; an exposed lie never goes back. When a lie has held for a while, plan a step or beat where it needs upkeep.
 - Secrets that came out: once the chat shows the player has learned a hidden truth (or the twist), or it came out where they could see, move it word for word to story.cameOut and out of hiddenTruth (empty twist if it was the twist). From then on it is an established fact: rewrite people's "hint" and "doing", thread hints, and beats so nobody keeps acting as if it were still secret, and plan no more clues or reveal moments for it; build on it instead. A suspicion or a guess is not learning it. Never move anything back out of cameOut.
 - Sheets: keep each "sheet" true to how the person has actually been in the chat, and add what has changed (what they learned, how they now feel about the player character, what they did). Return a sheet only when it changes; leave it empty to keep it as it is. Someone who has become important gets a sheet; never more than six. Fill in "depth" for anyone who has none.
 - Voices: fill in "voice" for anyone who has none, and keep each one steady once set. Base it on who the person is (age, background, job, temperament, the card) and the moments where they sounded most like themselves, not on how the narrator has been writing everyone lately: narrators drift into one shared voice, and the notebook is how to pull them back out. If several people have started to sound alike, give each a clearly different voice.
@@ -2138,7 +2691,8 @@ ${PUSH_RULES}
 - Keep it brief and end there. Do not ask how they feel about it, offer ideas they didn't ask for, or invite them to keep talking.
 - Only when they ask for ideas ("help me think of something", "any ideas for\u2026"): offer two or three short pitches in "reply", one line each, numbered. Each is an open direction, not a plan ("someone from your past turns up"), built on what the player has seen and met. Never pitch the notebook's secrets, its planned events, or anything that would give them away. Set "ask" to true and "changes" to null, so they can pick one or riff on it; then act on their choice.
 - The reply must contain no spoilers. The player has not seen the notebook. Name only people, places, and events they have mentioned or met in the chat, and secrets in story.cameOut, which they already know. Never mention secrets, twists, planned events, breadcrumbs, or anything else they don't know.
-- Their character is theirs to play. If they ask you to make their character do or feel something, say that part is theirs, and change the world around it instead.
+${input.notebook.mystery?.status === "open" && input.push !== "mystery" ? `- This story has a mystery ("mystery" in the notebook). Its answer is locked and you cannot change it. Never reveal it, hint at it, or tell the player whether a guess of theirs is right: that is for the story to answer. If they ask, say only that the story will show them. Keep its thread open, and keep its answer out of every hint, step, sign, beat, seed, and note on a person.
+` : ""}- Their character is theirs to play. If they ask you to make their character do or feel something, say that part is theirs, and change the world around it instead.
 - What already happened in the chat stays happened. Change what comes next: threads (their speed, steps, and whether they stay open), planned moments, breadcrumbs, people's wants and how they are played, and where the story is heading. Close threads with a reason and mark beats or seeds dropped instead of removing them. Keep every person, thread, step, beat, and seed id that exists.
 - If they are bored, say the story has stalled, or ask for things to get moving or for a new chapter, move the story by the rules below: set "pushKind" to the closest of person, secret, consequence, surprise, or chapter, and fill "push" (and "skipHours" for a new chapter). Otherwise leave "push" null.
 ${LORE(input.lore) ? `- ${LORE(input.lore)}` : ""}${MEMORY(input.memory) ? `- ${MEMORY(input.memory)}` : ""}- Their pinned "notes" still stand. If the new message goes against one, follow the new message.
@@ -2151,7 +2705,7 @@ ${CRAFT}` },
 
 // src/talk.ts
 var count2 = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-var same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+var same2 = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 function describeChanges(before, after) {
   const out = [];
   const old = new Map(before.threads.map((t) => [t.id, t]));
@@ -2179,7 +2733,7 @@ function describeChanges(before, after) {
     else if (moved < 0)
       sooner++;
     const words = (steps) => steps.map((s) => [s.id, s.text, s.sign]);
-    if (!same(words(waiting), words(wasWaiting)))
+    if (!same2(words(waiting), words(wasWaiting)))
       rewritten++;
   }
   if (added)
@@ -2231,10 +2785,12 @@ function describeChanges(before, after) {
     out.push(`Changed what ${count2(replayed, "person", "people")} ${replayed === 1 ? "wants or how they act" : "want or how they act"}`);
   if (before.story.question !== after.story.question || before.story.direction !== after.story.direction || before.story.stakes !== after.story.stakes)
     out.push("Changed where the story is heading");
-  if (!same(before.story.hiddenTruth, after.story.hiddenTruth) || before.story.twist !== after.story.twist || before.arc.turn !== after.arc.turn || before.story.cameOut.length !== after.story.cameOut.length)
+  if (!same2(before.story.hiddenTruth, after.story.hiddenTruth) || before.story.twist !== after.story.twist || before.arc.turn !== after.arc.turn || before.story.cameOut.length !== after.story.cameOut.length)
     out.push("Changed what is really going on");
   if (before.arc.shape !== after.arc.shape)
     out.push("Changed the shape of this part of the story");
+  if (after.mystery && (!before.mystery || before.mystery.question !== after.mystery.question))
+    out.push("Added a mystery");
   return out;
 }
 function openExchange(lines) {
@@ -2284,6 +2840,10 @@ function applyChanges(base, changes) {
       out[key] = c[key];
       touched = true;
     }
+  if (c.mystery && typeof c.mystery === "object" && !Array.isArray(c.mystery)) {
+    out.mystery = overlayMystery(base.mystery?.status === "open" ? base.mystery : undefined, c.mystery);
+    touched = true;
+  }
   return touched ? out : null;
 }
 
@@ -2537,7 +3097,7 @@ var RHYTHMS = {
   aftermath: "Aftermath: just after a big moment; people are catching their breath.",
   stalled: "Stalled: the scene is circling; nothing has changed for a while."
 };
-function quickQuestions(notebook, now) {
+function quickQuestions(notebook, now, scene = "") {
   const questions = {}, marks = {};
   dueThreads(notebook, now).forEach(({ thread, step }, i) => {
     const key = `due_${i + 1}`;
@@ -2603,6 +3163,33 @@ function quickQuestions(notebook, now) {
     };
     marks[key] = { kind: "truth" };
   });
+  const mystery = notebook.mystery;
+  if (mystery?.status === "open") {
+    cluesToCheck(mystery, scene, notebook.people, typeof now === "number" ? { hours: now } : now).forEach((clue, i) => {
+      const key = `clue_${i + 1}`;
+      questions[key] = {
+        type: "noul",
+        instructions: `In the latest reply, does the player see, hear, or get told this? ${clue.text}`,
+        criteria: { true: "Yes: it is shown or said to the player in the latest reply, plainly enough that they now know it.", false: "No, or it is only vaguely hinted at." }
+      };
+      marks[key] = { kind: "clue", clue: clue.id };
+    });
+    questions.theory = {
+      type: "noul",
+      instructions: `In the player's message, does the player's character put an answer to this question to someone, out loud or by acting on it: accusing or confronting a person, telling someone what they believe really happened, reporting it? Private thoughts, wondering, asking questions, and listing suspects do not count. Question: ${mystery.question}`,
+      criteria: { true: "Yes, the player states an answer or makes an accusation.", false: "No answer is stated." }
+    };
+    questions.theory_right = {
+      type: "noul",
+      instructions: `The true answer is: ${mystery.answer} Does the player's message name that same answer, in substance (the same person or the same cause)? If the player's message names no answer, or names someone or something else, the answer is no.`,
+      criteria: { true: "The player named the true answer.", false: "The player named something else, or nothing." }
+    };
+    questions.mystery_out = {
+      type: "noul",
+      instructions: `Does the latest reply reveal or confirm this to the player as a fact? Suspicion, hints, and accusations do not count. ${mystery.answer}`,
+      criteria: { true: "The reply states or confirms it as fact, where the player can see.", false: "It stays unknown or unconfirmed." }
+    };
+  }
   questions.story_shift = {
     type: "noul",
     instructions: "Did the latest exchange take the story somewhere the story notes no longer fit: the player left the setting for good, walked away from the main situation, or changed what they are after?",
@@ -2647,15 +3234,24 @@ function quickState(notebook, clock, playerMessage, latestReply) {
   };
 }
 var yes = (answer) => answer?.type === "noul" && answer.noul >= QUICK.yes;
-function applyQuick(current, plan, result, now) {
+function applyQuick(current, plan, result, now, playerMessage = "") {
   const hours = typeof now === "number" ? now : now.hours, reply = typeof now === "number" ? undefined : now.reply;
   const answers = result.answers;
-  const notebook = structuredClone(current);
-  let marked = 0;
+  let notebook = structuredClone(current);
+  let marked = 0, mysteryEnded = false;
   for (const [key, mark] of Object.entries(plan.marks)) {
     if (mark.kind === "fits" || mark.kind === "truth" || !yes(answers[key]))
       continue;
-    if (mark.kind === "step") {
+    if (mark.kind === "clue") {
+      const clue = notebook.mystery?.status === "open" ? notebook.mystery.clues.find((c) => c.id === mark.clue) : undefined;
+      if (clue?.status === "hidden") {
+        clue.status = "found";
+        if (reply !== undefined)
+          clue.foundAt = reply;
+        clue.quick = true;
+        marked++;
+      }
+    } else if (mark.kind === "step") {
       const step = notebook.threads.find((t) => t.id === mark.thread)?.steps.find((s) => s.id === mark.step);
       if (step?.status === "waiting") {
         step.status = "shown";
@@ -2690,6 +3286,31 @@ function applyQuick(current, plan, result, now) {
       }
     }
   }
+  const mystery = notebook.mystery;
+  if (mystery?.status === "open") {
+    const right = answers.theory_right, score = right?.type === "noul" ? right.noul : 0.5;
+    const said = playerMessage.replace(/\s+/g, " ").trim().slice(0, 300);
+    const again = mystery.theories.some((t) => t.text === said);
+    if (yes(answers.theory) && said && !again) {
+      const verdict = score >= QUICK.yes ? "right" : score <= QUICK.no ? "wrong" : "partly";
+      mystery.theories = [...mystery.theories, { text: said, verdict, ...reply !== undefined ? { atReply: reply } : {}, quick: true }].slice(-8);
+      if (verdict === "right") {
+        mystery.status = "solved";
+        if (reply !== undefined)
+          mystery.endReply = reply;
+        mysteryEnded = true;
+      }
+      marked++;
+    } else if (yes(answers.mystery_out)) {
+      mystery.status = "revealed";
+      if (reply !== undefined)
+        mystery.endReply = reply;
+      mysteryEnded = true;
+      marked++;
+    }
+    if (mysteryEnded)
+      notebook = settleMystery(notebook);
+  }
   const rhythm = answers.rhythm;
   let changed = marked > 0;
   if (rhythm?.type === "choice" && rhythm.confidence >= QUICK.rhythm && rhythm.choice in RHYTHMS && rhythm.choice !== notebook.rhythm) {
@@ -2699,7 +3320,7 @@ function applyQuick(current, plan, result, now) {
   const held = Object.entries(plan.marks).flatMap(([key, mark]) => mark.kind === "fits" && answers[key]?.type === "noul" && answers[key].noul <= QUICK.no ? [mark.thread] : []);
   const cameOut = Object.entries(plan.marks).some(([key, mark]) => mark.kind === "truth" && yes(answers[key]));
   const problem = yes(answers.new_problem), easyFix = yes(answers.easy_fix);
-  return { notebook, changed, marked, needsCheckup: yes(answers.new_turn) || held.length > 0 || cameOut || problem || easyFix, problem, easyFix, revealed: cameOut, rushing: yes(answers.rushing), intimate: yes(answers.intimate), shifted: yes(answers.story_shift), held };
+  return { notebook, changed, marked, needsCheckup: yes(answers.new_turn) || held.length > 0 || cameOut || problem || easyFix, mysteryEnded, problem, easyFix, revealed: cameOut, rushing: yes(answers.rushing), intimate: yes(answers.intimate), shifted: yes(answers.story_shift), held };
 }
 function quickError(error) {
   const message = error instanceof Error ? error.message : String(error ?? "");
@@ -2806,12 +3427,12 @@ var VARIABLE = /^[\w.:-]{1,80}$/;
 var PATH = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\[\d{1,3}\])*$/;
 var NAME = /^[a-z][a-z0-9_]{0,30}$/;
 var TYPES = ["datetime", "date", "time", "text", "list"];
-var record6 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
+var record7 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
 var fail2 = (message) => {
   throw new Error(message);
 };
 function region(value) {
-  const input = record6(value);
+  const input = record7(value);
   if (input.kind === undefined || input.kind === "whole")
     return { kind: "whole" };
   if (input.kind === "tag" && typeof input.tag === "string" && TAG.test(input.tag))
@@ -2821,7 +3442,7 @@ function region(value) {
   return fail2("A tracker region must be the whole reply, a tag, or a fenced block.");
 }
 function source(value) {
-  const input = record6(value);
+  const input = record7(value);
   if (input.kind === "variable" && typeof input.name === "string" && VARIABLE.test(input.name))
     return { kind: "variable", name: input.name };
   if (input.kind === "line" && typeof input.label === "string" && input.label.trim() && input.label.length <= 60 && !/[\n\r]/.test(input.label))
@@ -2839,11 +3460,11 @@ function source(value) {
   return fail2("A tracker field must be read from a saved variable, a labeled line, a tag, a tag attribute, or a JSON path.");
 }
 function validateRecipe(value) {
-  const input = record6(value), fields = [], seen = new Set;
+  const input = record7(value), fields = [], seen = new Set;
   let dropped = 0;
   for (const item of Array.isArray(input.fields) ? input.fields.slice(0, 16) : []) {
     try {
-      const field = record6(item), name = String(field.name ?? "").trim().toLowerCase();
+      const field = record7(item), name = String(field.name ?? "").trim().toLowerCase();
       if (!NAME.test(name) || seen.has(name))
         fail2("Bad name");
       if (!TYPES.includes(field.type))
@@ -2867,7 +3488,7 @@ function areas(text, area) {
     return [...text.matchAll(new RegExp(`<${escape2(area.tag)}(?:\\s[^>]*)?>([\\s\\S]*?)</${escape2(area.tag)}>`, "gi"))].map((m) => m[1]).reverse();
   return [...text.matchAll(/```([\w-]*)[^\n]*\n([\s\S]*?)```/g)].filter((m) => !area.lang || m[1].toLowerCase() === area.lang.toLowerCase()).map((m) => m[2]).reverse();
 }
-function plain2(text) {
+function plain3(text) {
   return text.replace(/<[^>]{0,200}>/g, " ").replace(/\*\*|__|`/g, "").replace(/\s+/g, " ").trim().replace(/^[:\-\u2013\u2014|]\s*/, "").slice(0, 300);
 }
 function jsonPath(value, path) {
@@ -2875,7 +3496,7 @@ function jsonPath(value, path) {
   for (const part of path.match(/[A-Za-z_$][\w$]*|\[\d+\]/g) ?? []) {
     if (current === null || current === undefined)
       return;
-    current = part.startsWith("[") ? Array.isArray(current) ? current[Number(part.slice(1, -1))] : undefined : record6(current)[part];
+    current = part.startsWith("[") ? Array.isArray(current) ? current[Number(part.slice(1, -1))] : undefined : record7(current)[part];
   }
   return current;
 }
@@ -2886,8 +3507,8 @@ function pipeField(text, label) {
       continue;
     for (const piece of line.replace(/^[\s\[(]+|[\s\])]+$/g, "").split("|")) {
       const m = new RegExp(`^[^\\p{L}\\p{N}]*${escape2(label)}\\b\\s*(?::|\uFF1A|=|-|\u2013|\u2014)?\\s*(.+)$`, "iu").exec(piece.trim());
-      if (m && plain2(m[1]))
-        return plain2(m[1]);
+      if (m && plain3(m[1]))
+        return plain3(m[1]);
     }
   }
   return;
@@ -2896,35 +3517,35 @@ function readField(field, raw, variables) {
   const from = field.source, reply = withoutThinking(spaces(raw));
   if (from.kind === "variable") {
     const v = variables[from.name];
-    return typeof v === "string" && v.trim() ? plain2(v) : undefined;
+    return typeof v === "string" && v.trim() ? plain3(v) : undefined;
   }
   for (const part of areas(reply, from.region)) {
     if (from.kind === "line") {
       const line = new RegExp(`^[\\s>*_\\-\u2022|#]*(?:\\*\\*|__)?${escape2(from.label)}(?:\\*\\*|__)?\\s*(?::|\uFF1A|=|-|\u2013|\u2014)\\s*(.+)$`, "im").exec(part);
-      if (line && plain2(line[1]))
-        return plain2(line[1]);
+      if (line && plain3(line[1]))
+        return plain3(line[1]);
       const part2 = pipeField(part, from.label);
       if (part2)
         return part2;
     } else if (from.kind === "attribute") {
       const pattern = new RegExp(`<${escape2(from.tag)}\\b[^>]*?\\s${escape2(from.attribute)}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "gi");
       const found = [...part.matchAll(pattern)].at(-1);
-      const value = found ? plain2(found[1] ?? found[2] ?? "") : "";
+      const value = found ? plain3(found[1] ?? found[2] ?? "") : "";
       if (value)
         return value;
     } else if (from.kind === "tag") {
       const tag = new RegExp(`<${escape2(from.tag)}(?:\\s[^>]*)?>([\\s\\S]*?)</${escape2(from.tag)}>`, "i").exec(part);
-      if (tag && plain2(tag[1]))
-        return plain2(tag[1]);
+      if (tag && plain3(tag[1]))
+        return plain3(tag[1]);
     } else {
       try {
         const found = jsonPath(JSON.parse(part.trim()), from.path);
         if (typeof found === "string" && found.trim())
-          return plain2(found);
+          return plain3(found);
         if (typeof found === "number" || typeof found === "boolean")
           return String(found);
         if (Array.isArray(found) && found.every((x) => typeof x === "string"))
-          return plain2(found.join(", "));
+          return plain3(found.join(", "));
       } catch {}
     }
   }
@@ -3061,7 +3682,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.30.0";
+var VERSION = "0.31.0";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -3071,22 +3692,26 @@ var CHAPTER_WORKING = "Starting a new chapter";
 var CHAPTER_DONE = "New chapter ready";
 
 // src/controller.ts
-var record7 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
+var record8 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
 var PACES = ["auto", "quiet", "fast"];
 var TALK_REASON = "Changed after you talked to Grimoire";
 var PUSH_REASON = "You asked to get things moving";
 var CHAPTER_REASON = "You started a new chapter";
-var PUSH_LABELS = { person: "Get things moving: someone makes a move", secret: "Get things moving: a secret starts to surface", consequence: "Get things moving: something catches up with me", surprise: "Get things moving: surprise me", chapter: "Start a new chapter" };
+var MYSTERY_REASON = "You added a mystery";
+var MYSTERY_THIN = "The model could not write a solid enough mystery, so nothing was added. Try again, or pick a stronger model for Grimoire.";
+var PUSH_LABELS = { person: "Get things moving: someone makes a move", secret: "Get things moving: a secret starts to surface", consequence: "Get things moving: something catches up with me", surprise: "Get things moving: surprise me", chapter: "Start a new chapter", mystery: "Add a mystery" };
 function pushReply(kind, skip) {
   if (kind === "chapter")
     return `A new chapter is set. It starts with the next reply${skip ? `, about ${describeDuration(skip)} later` : ""}.`;
+  if (kind === "mystery")
+    return "A mystery has been added. Its first sign turns up in the next reply or two. From here on, the answer is fixed.";
   return "Something is in motion. Watch for it over the next few replies.";
 }
 function talkLines(value) {
   if (!Array.isArray(value))
     return [];
   return value.slice(-TALK_LIMITS.lines).flatMap((v) => {
-    const x = record7(v);
+    const x = record8(v);
     if (x.from !== "you" && x.from !== "grimoire" || typeof x.text !== "string")
       return [];
     return [{
@@ -3107,14 +3732,14 @@ function quickLog(value) {
   if (!Array.isArray(value))
     return [];
   return value.slice(-QUICK_LOG).flatMap((v) => {
-    const x = record7(v), answers = {};
-    for (const [key, a] of Object.entries(record7(x.answers)).slice(0, 40)) {
+    const x = record8(v), answers = {};
+    for (const [key, a] of Object.entries(record8(x.answers)).slice(0, 40)) {
       if (!/^[a-z_0-9]{1,30}$/.test(key))
         continue;
       if (typeof a === "number" && Number.isFinite(a))
         answers[key] = a;
       else {
-        const c = record7(a);
+        const c = record8(a);
         if (typeof c.choice === "string" && Number.isFinite(Number(c.confidence)))
           answers[key] = { choice: c.choice.slice(0, 20), confidence: Number(c.confidence) };
       }
@@ -3125,6 +3750,8 @@ function quickLog(value) {
 function quickRecord(reply, result, outcome) {
   const answers = {};
   for (const [key, a] of Object.entries(result?.answers ?? {})) {
+    if (key === "theory_right" || key === "mystery_out")
+      continue;
     if (a?.type === "noul" && typeof a.noul === "number")
       answers[key] = Math.round(a.noul * 100) / 100;
     else if (a?.type === "choice" && typeof a.choice === "string")
@@ -3136,12 +3763,12 @@ function playerNotes(value) {
   if (!Array.isArray(value))
     return [];
   return value.slice(0, TALK_LIMITS.notes).flatMap((v) => {
-    const x = record7(v);
+    const x = record8(v);
     return typeof x.id === "string" && typeof x.text === "string" && x.text ? [{ id: x.id, text: x.text.slice(0, TALK_LIMITS.note), at: Number(x.at) || 0 }] : [];
   });
 }
 function validPreferences(value) {
-  const v = record7(value);
+  const v = record8(value);
   const shape = v.shape === "conflict" || v.shape === "kishotenketsu" ? v.shape : "auto";
   return {
     tone: ["light", "balanced", "dark"].includes(v.tone) ? v.tone : "balanced",
@@ -3149,6 +3776,7 @@ function validPreferences(value) {
     shape,
     lockShape: shape !== "auto" && v.lockShape === true,
     size: v.size === "close" || v.size === "wide" ? v.size : "auto",
+    ...v.mystery === true ? { mystery: true } : {},
     ...typeof v.likes === "string" && v.likes.trim() ? { likes: v.likes.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "").trim().slice(0, 600) } : {}
   };
 }
@@ -3156,7 +3784,7 @@ function withOwnWords(notebook, value, ideas) {
   const squash = (s) => s.replace(/\s+/g, " ").trim();
   const source = squash(ideas).toLowerCase(), own = new Map;
   for (const item of Array.isArray(value) ? value : []) {
-    const r = record7(item), from = typeof r.from === "string" ? squash(r.from).slice(0, 3000) : "";
+    const r = record8(item), from = typeof r.from === "string" ? squash(r.from).slice(0, 3000) : "";
     if (typeof r.person === "string" && from.length >= 10 && source.includes(from.toLowerCase()))
       own.set(r.person, from);
   }
@@ -3184,12 +3812,35 @@ function recentPlaces(versions, now) {
 var CALM = 3;
 var SOFT_RANK = ["A problem was solved too easily", "A new problem came up", "Something new happened in the story"];
 function storyRules(previous, revised, round, pace, prefs, checkup = false) {
+  if (!previous)
+    revised = firstMystery(revised, prefs, round);
   if (round === 1) {
-    const problems = [...paceProblems(previous, revised, pace), ...leadProblems(previous, revised, prefs), ...specificProblems(previous, revised), ...checkup && previous ? spentProblems(previous, revised) : [], ...checkup || !previous ? castProblems(previous, revised, prefs) : [], ...checkup && previous ? stockProblems(previous, revised, prefs) : []];
+    const problems = [
+      ...paceProblems(previous, revised, pace),
+      ...leadProblems(previous, revised, prefs),
+      ...specificProblems(previous, revised),
+      ...checkup && previous ? spentProblems(previous, revised) : [],
+      ...checkup || !previous ? castProblems(previous, revised, prefs) : [],
+      ...checkup && previous ? stockProblems(previous, revised, prefs) : [],
+      ...!previous && prefs.mystery ? mysteryProblems(revised) : [],
+      ...previous?.mystery?.status === "open" ? leakProblems({ ...revised, mystery: previous.mystery }) : []
+    ];
     if (problems.length)
       throw new NotebookError(problems.join(" "), "The update broke a story rule, so it was sent back once.");
   }
-  return fixSpecific(fixLead(previous, round === 1 ? revised : fixPace(previous, revised, pace), prefs));
+  const fixed = fixSpecific(fixLead(previous, round === 1 ? revised : fixPace(previous, revised, pace), prefs));
+  const guard = previous?.mystery?.status === "open" ? previous.mystery : !previous ? fixed.mystery : undefined;
+  return guard && round > 1 ? (({ mystery: _m, ...rest }) => ({ ...rest, ...fixed.mystery ? { mystery: fixed.mystery } : {} }))(scrubLeaks({ ...fixed, mystery: guard }, previous)) : fixed;
+}
+function firstMystery(revised, prefs, round) {
+  const { mystery: given, ...rest } = revised;
+  if (!prefs.mystery)
+    return rest;
+  const fresh = lockMystery(undefined, given, true);
+  const out = fresh ? settleMystery({ ...rest, mystery: { ...fresh, thread: fresh.thread || rest.arc.main } }) : rest;
+  if (round > 1 && !mysteryPlayable(out))
+    throw new NotebookError("The mystery is still not complete.", MYSTERY_THIN);
+  return out;
 }
 function prune(versions) {
   if (versions.length <= MAX_VERSIONS)
@@ -3206,7 +3857,7 @@ function prune(versions) {
 }
 var plainSetting = (v, max) => typeof v === "string" ? v.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, max) : "";
 function validSettings(value) {
-  const v = record7(value), every = Number(v.every), tokens = Number(v.maxOutputTokens), quick = record7(v.quick);
+  const v = record8(value), every = Number(v.every), tokens = Number(v.maxOutputTokens), quick = record8(v.quick);
   return {
     connectionId: typeof v.connectionId === "string" ? v.connectionId : "",
     backupId: typeof v.backupId === "string" && v.backupId !== v.connectionId ? v.backupId.slice(0, 120) : "",
@@ -3254,17 +3905,17 @@ class NotebookController {
     return validSettings(await this.api.userStorage.getJson("settings.json", { fallback: DEFAULT_SETTINGS, userId: this.userId }));
   }
   async load(chatId) {
-    const saved = record7(await this.api.userStorage.getJson(this.path(chatId), { fallback: null, userId: this.userId }));
+    const saved = record8(await this.api.userStorage.getJson(this.path(chatId), { fallback: null, userId: this.userId }));
     if (saved.version !== 1 || saved.chatId !== chatId)
       return null;
     try {
       const versions = (Array.isArray(saved.versions) ? saved.versions : []).map((v) => {
-        const item = record7(v);
+        const item = record8(v);
         if (!Array.isArray(item.covered) || !item.covered.every((x) => typeof x === "string"))
           throw new Error("Bad version");
         return { notebook: validateNotebook(item.notebook), covered: item.covered, at: Number(item.at) || 0, reason: String(item.reason ?? ""), ...typeof item.location === "string" ? { location: item.location } : {}, ...item.quick === true ? { quick: true } : {} };
       });
-      const job = saved.job ? record7(saved.job) : null;
+      const job = saved.job ? record8(saved.job) : null;
       return {
         version: 1,
         chatId,
@@ -3280,7 +3931,7 @@ class NotebookController {
         queued: typeof saved.queued === "string" ? saved.queued.slice(0, 200) : "",
         newFaceAt: Number.isInteger(saved.newFaceAt) ? saved.newFaceAt : 0,
         building: typeof saved.building === "string" ? saved.building.slice(0, 80) : "",
-        seen: Object.fromEntries(Object.entries(record7(saved.seen)).filter(([k, v]) => typeof k === "string" && Number.isInteger(v)).slice(0, 200)),
+        seen: Object.fromEntries(Object.entries(record8(saved.seen)).filter(([k, v]) => typeof k === "string" && Number.isInteger(v)).slice(0, 200)),
         trackerTried: saved.trackerTried === true,
         skipDismissedAt: Number(saved.skipDismissedAt) > 0 ? Number(saved.skipDismissedAt) : 0,
         held: Array.isArray(saved.held) ? saved.held.filter((x) => typeof x === "string").slice(0, 12) : [],
@@ -3293,7 +3944,7 @@ class NotebookController {
         paceSignals: Array.isArray(saved.paceSignals) ? saved.paceSignals.filter((x) => Number.isInteger(x)).slice(-12) : [],
         replan: saved.replan === true,
         replannedAt: Number(saved.replannedAt) || 0,
-        quick: saved.quick && typeof saved.quick === "object" ? { at: Number(record7(saved.quick).at) || 0, ok: record7(saved.quick).ok === true, error: String(record7(saved.quick).error ?? "").slice(0, 200) } : null,
+        quick: saved.quick && typeof saved.quick === "object" ? { at: Number(record8(saved.quick).at) || 0, ok: record8(saved.quick).ok === true, error: String(record8(saved.quick).error ?? "").slice(0, 200) } : null,
         job: job && job.status === "running" && !this.running.has(chatId) ? { ...job, status: "failed", label: "Stopped when Lumiverse restarted", error: "Run it again when ready." } : job,
         updatedAt: Number(saved.updatedAt) || 0
       };
@@ -3313,7 +3964,7 @@ class NotebookController {
     const chat = await this.api.chats.get(chatId, this.userId);
     if (!chat)
       return { name: "", supported: false, reason: "This chat is not available.", characterId: "" };
-    const meta = record7(chat.metadata);
+    const meta = record8(chat.metadata);
     if (!chat.character_id || meta.group === true || meta.is_group === true || meta.group_id || Array.isArray(meta.character_ids) && meta.character_ids.length > 1)
       return { name: chat.name, supported: false, reason: "Group chats are not supported yet. Use a chat with one character.", characterId: "" };
     return { name: chat.name, supported: true, reason: "", characterId: chat.character_id };
@@ -3444,6 +4095,7 @@ class NotebookController {
         quickLog: state.quickLog,
         follow: followRate(state.quickLog),
         recap: notebook?.recap ?? "",
+        mystery: mysteryView(notebook?.mystery),
         canUndo: this.undoable(state) !== null,
         spent: !!notebook && !storyLeft(notebook),
         memory: state.enabled ? this.memoryView(chatId) : null,
@@ -3533,7 +4185,7 @@ class NotebookController {
       books.push(...(await this.character(characterId)).world_book_ids);
     } catch {}
     try {
-      const meta = record7((await this.api.chats.get(chatId, this.userId))?.metadata);
+      const meta = record8((await this.api.chats.get(chatId, this.userId))?.metadata);
       if (Array.isArray(meta.chat_world_book_ids))
         books.push(...meta.chat_world_book_ids.filter((id) => typeof id === "string"));
     } catch {}
@@ -3615,7 +4267,7 @@ class NotebookController {
   }
   meaningIndex = null;
   meaning() {
-    const caps = record7(record7(this.api.host).capabilities);
+    const caps = record8(record8(this.api.host).capabilities);
     if (!this.api.permissions.has("embeddings") || !caps["embeddings-v1"] || !this.api.embeddings)
       return null;
     return this.meaningIndex ??= new MeaningIndex(async (texts, kind, signal) => {
@@ -3740,7 +4392,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
             for (const [i, part] of plan.earlier.entries()) {
               await this.progress(chatId, job, `Reading the story so far (${i + 1} of ${plan.earlier.length})`);
               storySoFar = await askJson(ask, digestMessages({ character, persona, part: i + 1, parts: plan.earlier.length, record: storySoFar, chat: part }), (value) => {
-                const text = plainBlock(record7(value).record, 12000);
+                const text = plainBlock(record8(value).record, 12000);
                 if (!text)
                   throw new NotebookError('"record" is empty. Write the story so far as plain text.');
                 return text;
@@ -3753,10 +4405,10 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
           let round = 0;
           const result = await askJson(ask, creationMessages(material, state.preferences, ideas, pin), (value) => {
             round++;
-            const output = record7(value);
+            const output = record8(value);
             const first = validateNotebook(tidyNotebook(output.notebook));
             const ruled = withOwnWords(storyRules(null, first, round, {}, state.preferences), output.playerPeople, ideas);
-            const notes = pin ? (Array.isArray(output.notes) ? output.notes : []).map((n) => plain(n, TALK_LIMITS.note)).filter(Boolean).slice(0, 4) : [];
+            const notes = pin ? (Array.isArray(output.notes) ? output.notes : []).map((n) => plain2(n, TALK_LIMITS.note)).filter(Boolean).slice(0, 4) : [];
             return { notebook: openArc(withoutTimes(ruled), "story"), recipe: validateRecipe(output.tracker).recipe, notes };
           }, signal);
           await this.serial(chatId, async () => {
@@ -3780,7 +4432,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
             const covered = await fingerprints(conversation(messages));
             current.versions = [{ notebook, covered, at: Date.now(), reason: "Notebook written", ...values.location ? { location: values.location } : {} }];
             if (pin) {
-              const texts = result.notes.length ? result.notes : [plain(ideas, TALK_LIMITS.note)];
+              const texts = result.notes.length ? result.notes : [plain2(ideas, TALK_LIMITS.note)];
               current.notes = [...current.notes, ...texts.map((text) => ({ id: uuid(), text, at: Date.now() }))].slice(-TALK_LIMITS.notes);
             }
             current.checks = checks;
@@ -3874,10 +4526,10 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
         let round = 0;
         const result = await askJson(ask, checkupMessages(input), (value) => {
           round++;
-          const output = record7(value);
+          const output = record8(value);
           const proposed = output.notebook && typeof output.notebook === "object" ? output.notebook : applyChanges(base.notebook, output.changes) ?? structuredClone(base.notebook);
           let revised = validateNotebook(tidyNotebook(proposed, base.notebook));
-          const rules = { speedUps: Object.fromEntries(Object.entries(record7(output.speedUps)).map(([k, v]) => [k, typeof v === "string" ? v : ""])) };
+          const rules = { speedUps: Object.fromEntries(Object.entries(record8(output.speedUps)).map(([k, v]) => [k, typeof v === "string" ? v : ""])) };
           revised = storyRules(base.notebook, revised, round, rules, state.preferences, true);
           let merged = mergeRevision(base.notebook, revised, live.moment);
           if (isNewArc(base.notebook, merged))
@@ -3947,6 +4599,16 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
     }
     return this.startTalk(chatId, PUSH_LABELS[kind], false, kind);
   }
+  async addMystery(chatId, aboutInput = "") {
+    const about = typeof aboutInput === "string" ? aboutInput.replace(/[\u0000-\u001f\u007f]+/g, " ").trim().slice(0, 300) : "";
+    const state = await this.serial(chatId, () => this.load(chatId));
+    const notebook = state?.versions.at(-1)?.notebook;
+    if (!notebook)
+      throw new Error("Write a notebook for this chat first.");
+    if (notebook.mystery?.status === "open")
+      throw new Error("This story already has a mystery. It stays until it is solved.");
+    return this.startTalk(chatId, about ? `${PUSH_LABELS.mystery}: ${about}` : PUSH_LABELS.mystery, false, "mystery");
+  }
   startTalk(chatId, message, keep, push) {
     return this.serial(chatId, async () => {
       const state = await this.load(chatId);
@@ -3959,7 +4621,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
       if (!live)
         throw new Error("Write a notebook for this chat first.");
       state.talk = [...state.talk, { from: "you", text: message, at: Date.now(), ...keep ? { keep: true } : {} }].slice(-TALK_LIMITS.lines);
-      const { job, signal } = this.startJob(state, "talk", push === "chapter" ? CHAPTER_WORKING : push ? "Grimoire is setting something in motion" : "Grimoire is thinking");
+      const { job, signal } = this.startJob(state, "talk", push === "chapter" ? CHAPTER_WORKING : push === "mystery" ? "Grimoire is writing a mystery" : push ? "Grimoire is setting something in motion" : "Grimoire is thinking");
       await this.save(state);
       this.changed();
       const base = live.version, read = live.prints.slice();
@@ -3985,19 +4647,32 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
           let round = 0;
           const result = await askJson(ask, talkMessages(input), (value) => {
             round++;
-            const output = record7(value);
+            const output = record8(value);
             const asked = !push && output.ask === true && !input.mustAct;
             const kind = push ?? (!asked && output.push && PUSH_KINDS.includes(output.pushKind) ? output.pushKind : null);
             const reply = kind ? pushReply(kind, 0) : plainBlock(output.reply, 600);
             if (!reply)
               throw new NotebookError('"reply" is empty. Answer the player in one or two short sentences.');
-            const proposed = asked ? null : applyChanges(base.notebook, output.changes) ?? (output.notebook && typeof output.notebook === "object" ? output.notebook : null);
+            const changes = kind === "mystery" && output.mystery && !record8(output.changes).mystery ? { ...record8(output.changes), mystery: output.mystery } : output.changes;
+            const proposed = asked ? null : applyChanges(base.notebook, changes) ?? (output.notebook && typeof output.notebook === "object" ? output.notebook : null);
             if (kind && !proposed)
-              throw new NotebookError('Return "changes" and "push".');
+              throw new NotebookError(kind === "mystery" ? 'Return "changes" with "mystery", its thread, and any new people.' : 'Return "changes" and "push".');
             let notebook = null, skip = 0, { moment, clock } = live;
             if (proposed) {
               let revised = validateNotebook(tidyNotebook(proposed, base.notebook));
-              if (kind)
+              if (kind === "mystery") {
+                const fresh = lockMystery(undefined, revised.mystery, true);
+                if (fresh)
+                  revised = { ...revised, mystery: { ...fresh, thread: fresh.thread || revised.threads.find((t) => t.status === "open" && !base.notebook.threads.some((o) => o.id === t.id))?.id || "" } };
+                const problems = mysteryProblems(revised);
+                if (round === 1 && problems.length)
+                  throw new NotebookError(problems.join(" "), "The mystery was not solid enough yet, so it was sent back once.");
+                if (!mysteryPlayable(revised))
+                  throw new NotebookError(problems.join(" ") || "The mystery is not complete.", MYSTERY_THIN);
+                if (round > 1)
+                  revised = scrubLeaks(revised, base.notebook);
+                revised = launchMystery(revised);
+              } else if (kind)
                 revised = launchPush(revised, checkPush(base.notebook, revised, output.push, kind, round > 1));
               revised = storyRules(base.notebook, revised, round, { playerAsked: true }, state.preferences);
               if (kind === "chapter")
@@ -4007,11 +4682,11 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
                 clock = { day: live.sources.day === "tracker" ? live.clock.day : moved.day, hour: live.sources.hour === "tracker" ? live.clock.hour : moved.hour, label: "" };
                 moment = { ...live.moment, hours: absoluteHours(clock) };
               }
-              notebook = { ...mergeRevision(base.notebook, revised, moment), ...skip ? { clock } : {} };
+              notebook = { ...mergeRevision(base.notebook, revised, moment, { newMystery: kind === "mystery" }), ...skip ? { clock } : {} };
               if (isNewArc(base.notebook, notebook))
                 notebook = openArc(notebook, "chapter");
             }
-            return { reply: kind ? pushReply(kind, skip) : reply, asked, notebook, kind, skip, note: !asked && pinning ? plain(output.note, TALK_LIMITS.note) : "" };
+            return { reply: kind ? pushReply(kind, skip) : reply, asked, notebook, kind, skip, note: !asked && pinning ? plain2(output.note, TALK_LIMITS.note) : "" };
           }, signal);
           await this.serial(chatId, async () => {
             const current = await this.load(chatId);
@@ -4026,7 +4701,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
               if (changes.length || result.kind) {
                 const at = Date.now();
                 const kept = current.versions.filter((v, i) => i === 0 || covers(v.covered, read));
-                current.versions = prune([...kept, { notebook: result.notebook, covered: read, at, reason: result.kind === "chapter" ? CHAPTER_REASON : result.kind ? PUSH_REASON : TALK_REASON, ...live.values.location ? { location: live.values.location } : {} }]);
+                current.versions = prune([...kept, { notebook: result.notebook, covered: read, at, reason: result.kind === "chapter" ? CHAPTER_REASON : result.kind === "mystery" ? MYSTERY_REASON : result.kind ? PUSH_REASON : TALK_REASON, ...live.values.location ? { location: live.values.location } : {} }]);
                 line.versionAt = at;
                 if (result.skip) {
                   current.skipHours = (current.skipHours || 0) + result.skip;
@@ -4040,7 +4715,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
               line.text = result.kind ? "The chat changed while I was working, so nothing was set in motion. Try again." : `${line.text} The chat changed while I was thinking, so I left the plans as they were. Tell me again and I will apply it.`;
             if (!result.asked && pinning) {
               const fallback = open.filter((l) => l.from === "you" && l.keep).at(-1)?.text ?? "";
-              const text = result.note || plain(fallback, TALK_LIMITS.note);
+              const text = result.note || plain2(fallback, TALK_LIMITS.note);
               if (text) {
                 const note = { id: uuid(), text, at: Date.now() };
                 current.notes = [...current.notes, note].slice(-TALK_LIMITS.notes);
@@ -4243,7 +4918,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
       const intimate = state.intimateNow && settings.intimate === "protect" && live.turns.at(-1)?.role === "user";
       const away = awayPeople(live.version.notebook, state.seen, this.presentNow(live), live.moment).map((a) => a.person);
       const at = whereabouts(live.version.notebook.buildings ?? [], live.values.location, state.building);
-      return buildNote({ intimate, away, layout: at ? layoutLine(at) : undefined, size: state.preferences.size, sinceNewFace: (live.moment.reply ?? 0) - state.newFaceAt, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, narrated: this.narrated(live), trackerPresent: this.listed(live), skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map((n) => n.text) });
+      return buildNote({ intimate, away, layout: at ? layoutLine(at) : undefined, size: state.preferences.size, sinceNewFace: (live.moment.reply ?? 0) - state.newFaceAt, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, location: live.values.location, narrated: this.narrated(live), trackerPresent: this.listed(live), skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map((n) => n.text) });
     });
   }
   async macro(name, chatId) {
@@ -4400,14 +5075,17 @@ ${recallNote(recall)}`;
   runQuick(chatId, live, settings) {
     this.quickRunning.add(chatId);
     const task = (async () => {
-      const plan = quickQuestions(live.version.notebook, live.moment);
       const reply = live.turns.at(-1), player = [...live.turns].reverse().find((t) => t.role === "user");
+      const said = readable(splitOoc(player?.content ?? "").story, 2000);
+      const plan = quickQuestions(live.version.notebook, live.moment, `${said}
+${readable(reply.content, 8000)}
+${live.values.location ?? ""}`);
       let result = null, error = "";
       try {
         result = await this.api.decisions.evaluate({
           ...settings.quick.connectionId ? { connection_id: settings.quick.connectionId } : {},
           ...settings.quick.model ? { model: settings.quick.model } : {},
-          state: quickState(live.version.notebook, live.clock, readable(splitOoc(player?.content ?? "").story, 2000), readable(reply.content, 8000)),
+          state: quickState(live.version.notebook, live.clock, said, readable(reply.content, 8000)),
           questions: plan.questions,
           ...this.userId ? { userId: this.userId } : {}
         }, { signal: AbortSignal.timeout(35000) });
@@ -4432,13 +5110,15 @@ ${recallNote(recall)}`;
           }
         }
         if (result && covers(live.prints, now.prints)) {
-          outcome = applyQuick(now.version.notebook, plan, result, now.moment);
+          outcome = applyQuick(now.version.notebook, plan, result, now.moment, said);
           if (outcome.changed) {
             state.versions.push({ notebook: outcome.notebook, covered: live.prints, at: Date.now(), reason: "Quick check", quick: true, ...now.values.location ? { location: now.values.location } : {} });
             state.versions = prune(state.versions);
             now = await this.live(state, messages);
           }
-          if (outcome.revealed)
+          if (outcome.mysteryEnded)
+            extra = "The mystery was answered";
+          else if (outcome.revealed)
             extra = "A secret came out";
           else if (outcome.needsCheckup)
             soft = outcome.easyFix ? "A problem was solved too easily" : outcome.problem ? "A new problem came up" : "Something new happened in the story";
@@ -4485,14 +5165,14 @@ ${recallNote(recall)}`;
 }
 
 // src/backend.ts
-var record8 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
+var record9 = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
 var string = (v, name) => {
   if (typeof v !== "string" || !v)
     throw new Error(`${name} is required.`);
   return v;
 };
 async function handle(controller, action, input) {
-  const data = record8(input);
+  const data = record9(input);
   switch (action) {
     case "snapshot":
       return controller.snapshot(typeof data.chatId === "string" ? data.chatId : null);
@@ -4526,6 +5206,8 @@ async function handle(controller, action, input) {
       return controller.talk(string(data.chatId, "Chat"), data.text, data.keep);
     case "push":
       return controller.push(string(data.chatId, "Chat"), data.kind);
+    case "mystery":
+      return controller.addMystery(string(data.chatId, "Chat"), data.about);
     case "undo-talk":
       return controller.undoTalk(string(data.chatId, "Chat"));
     case "cancel":
@@ -4545,7 +5227,7 @@ async function handle(controller, action, input) {
   }
 }
 function macroIdentity(context) {
-  const value = record8(context), env = record8(value.env), chat = record8(env.chat), extra = record8(env.extra);
+  const value = record9(context), env = record9(value.env), chat = record9(env.chat), extra = record9(env.extra);
   const pick = (...values) => values.find((v) => typeof v === "string" && !!v.trim());
   return { chatId: pick(value.chatId, chat.id), userId: pick(value.userId, extra.userId) };
 }
@@ -4562,7 +5244,7 @@ function setupBackend(api) {
   };
   const stops = [];
   stops.push(api.onFrontendMessage((payload, userId, frontendSessionId) => {
-    const request = record8(payload);
+    const request = record9(payload);
     if (request.type !== "grimoire:request" || typeof request.id !== "string" || request.id.length > 100 || typeof request.action !== "string")
       return;
     handle(instance(userId), request.action, request.input).then((result) => api.sendToFrontend({ type: "grimoire:response", id: request.id, result }, userId, { frontendSessionId })).catch((error) => api.sendToFrontend({ type: "grimoire:response", id: request.id, error: error instanceof Error ? error.message : "Grimoire could not do that." }, userId, { frontendSessionId }));
@@ -4607,13 +5289,13 @@ function setupBackend(api) {
       api.sendToFrontend({ type: "grimoire:changed" }, key === "owner" ? undefined : key);
   }));
   stops.push(api.on("GENERATION_ENDED", (payload, userId) => {
-    const event = record8(payload);
+    const event = record9(payload);
     if (typeof event.chatId !== "string" || event.error || typeof event.messageId !== "string")
       return;
     instance(userId).afterReply(event.chatId, typeof event.generationType === "string" ? event.generationType : undefined).catch(() => {}).finally(() => api.sendToFrontend({ type: "grimoire:changed" }, userId));
   }));
   stops.push(api.on("CHAT_FORKED", (payload, userId) => {
-    const event = record8(payload);
+    const event = record9(payload);
     if (typeof event.sourceChatId === "string" && typeof event.forkedChatId === "string")
       instance(userId).fork(event.sourceChatId, event.forkedChatId).catch(() => {});
   }));

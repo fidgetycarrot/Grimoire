@@ -1,4 +1,5 @@
 import { describeClock, describeDuration, readDay, readTime, type StoryClock } from './clock';
+import { mysteryNote } from './mystery';
 import { spaces } from './history';
 import { dueThreads, inOpening, overdue, type Moment, type Notebook, type Pace, type Person, type Seed, type StorySize } from './notebook';
 import type { FieldType } from './tracker';
@@ -106,7 +107,7 @@ export function seedPlan(notebook: Notebook, now: number | Moment): { plant: See
   return { plant, ready, echo };
 }
 
-export interface NoteInput { notebook: Notebook; pace: Pace; clock: StoryClock; now: number | Moment; /** Threads that no longer fit for now. */ held?: string[]; /** The story just changed direction; old plans are being reworked. */ reworking?: boolean; recent: string; /** The narrator's part of the recent messages, when the caller can tell it apart from the player's. */ narrated?: string; trackerPresent?: string; skipHours?: number; /** True when the time comes from the last check-up, not from a tracker reading of the latest reply. */ clockMayLag?: boolean; /** The player swiped with guidance: the note steps back so it never argues with them. */ guided?: boolean; /** Standing wishes the player pinned. */ notes?: string[]; /** An intimate scene is under way: the story stays out until it ends. */ intimate?: boolean; /** People the player has met who haven't been around for a while, longest away first. */ away?: Person[];
+export interface NoteInput { notebook: Notebook; pace: Pace; clock: StoryClock; now: number | Moment; /** Threads that no longer fit for now. */ held?: string[]; /** The story just changed direction; old plans are being reworked. */ reworking?: boolean; recent: string; /** Where the scene is, from the preset's tracker. */ location?: string; /** The narrator's part of the recent messages, when the caller can tell it apart from the player's. */ narrated?: string; trackerPresent?: string; skipHours?: number; /** True when the time comes from the last check-up, not from a tracker reading of the latest reply. */ clockMayLag?: boolean; /** The player swiped with guidance: the note steps back so it never argues with them. */ guided?: boolean; /** Standing wishes the player pinned. */ notes?: string[]; /** An intimate scene is under way: the story stays out until it ends. */ intimate?: boolean; /** People the player has met who haven't been around for a while, longest away first. */ away?: Person[];
   /** Replies since someone new last turned up in a scene. */ sinceNewFace?: number; /** Where things are in the building the player is in. */ layout?: string; /** How big the world gets; a close story doesn't send the player anywhere. */ size?: StorySize }
 /**
  * The short private note added before a reply. Built by code from the
@@ -133,6 +134,9 @@ export function buildNote(input: NoteInput): string {
   const present = presentPeople(notebook, input.narrated ?? input.recent, input.trackerPresent);
   const quietTime = pace === 'quiet' || (pace === 'auto' && (notebook.rhythm === 'aftermath' || notebook.rhythm === 'peak'));
   must('Grimoire: private story guidance for the narrator. Never mention, quote, or explain it.');
+  // Why a storyline matters, in narrator-safe words. A thread with no safe hint falls back to its hidden reasons, except
+  // while a mystery is open: then nothing hidden reaches the narrator, and the title has to do.
+  const about = (t: { title: string; hint: string; why: string }) => t.hint || (notebook.mystery?.status === 'open' ? t.title : t.why);
   lines.push(`${input.clockMayLag ? 'Story time at the last check-up' : 'Story time'}: ${describeClock(input.clock)}.${input.clockMayLag ? ' Time may have moved on since; the chat decides what time it is now.' : ''}${input.skipHours ? ` About ${describeDuration(input.skipHours)} have passed since the last message: open with that gap and what changed during it.` : ''}`);
   if (input.layout) lines.push(input.layout);
   const gentle = notebook.arc.shape === 'kishotenketsu' && notebook.rhythm === 'rising';
@@ -154,12 +158,15 @@ export function buildNote(input: NoteInput): string {
   // The main storyline: the story the player is in. The note keeps it in front so the player never has to go looking for it.
   const main = quiet ? undefined : notebook.threads.find(t => t.id === notebook.arc.main && t.status === 'open' && !held.has(t.id));
   const opening = !!main && inOpening(notebook, m);
-  if (main) lines.push(`The main storyline is ${main.title}: ${end(fit(main.hint || main.why, 220))} This is the story the player is in. Keep it present through what people say and do, and let its next development arrive when it is due.`);
+  if (main) lines.push(`The main storyline is ${main.title}: ${end(fit(about(main), 220))} This is the story the player is in. Keep it present through what people say and do, and let its next development arrive when it is due.`);
   if (opening) lines.push(OPENING);
   const seedsAll = seedPlan(notebook, now), used = new Set<string>();
   // While plans are reworked, no breadcrumbs: they may belong to storylines that no longer fit.
   const seeds = quiet ? { plant: null, ready: [] as Seed[], echo: null } : { plant: seedsAll.plant && !held.has(seedsAll.plant.pays) ? seedsAll.plant : null, ready: seedsAll.ready.filter(s => !held.has(s.pays)), echo: seedsAll.echo };
   if (reworking) must('The story has just changed direction. Follow the player\'s lead; older plans are being reworked, so do not steer back toward them. People left behind can still be thought of, but nothing needs to happen yet.');
+  // A mystery: the narrator is told the question and its rules, never the answer while it is open.
+  const mystery = mysteryNote(notebook, present, input.location ?? '', m, quiet);
+  for (const line of mystery.vital) must(line);
   const callback = (seed: Seed) => { used.add(seed.id); return `Bring back something mentioned earlier: "${seed.detail}" (${seed.payoff.replace(/[.!?]+$/, '')}).`; };
   // The turn itself, only once the arc has reached it.
   if (!guided && !intimate && notebook.arc.shape === 'kishotenketsu' && notebook.arc.stage === 'ten' && notebook.arc.turn) {
@@ -184,7 +191,7 @@ export function buildNote(input: NoteInput): string {
     const tie = seeds.ready.find(s => s.pays === lead.thread.id && !used.has(s.id));
     const tied = notebook.people.filter(p => p.status === 'active' && lead.thread.people.includes(p.id)).map(p => p.name).slice(0, 3);
     must('What the story does now:');
-    must(`- ${lead.thread.title}: ${fit(lead.step.sign || lead.step.text, 320)} (bring it in ${when}). Why it matters: ${fit(lead.thread.hint || lead.thread.why, 200)}${tie ? ` ${callback(tie)}` : ''}`);
+    must(`- ${lead.thread.title}: ${fit(lead.step.sign || lead.step.text, 320)} (bring it in ${when}). Why it matters: ${fit(about(lead.thread), 200)}${tie ? ` ${callback(tie)}` : ''}`);
     // Bringing everything to where the player already is keeps a story in one room. Unless it is urgent or the story is
     // kept close, the player is given a reason to go where it is happening instead.
     const where = lead.thread.speed === 'urgent' || input.size === 'close' ? ', or it happens where they are' : ', with a reason to go where it is happening; it only comes to where they are if there is no other way';
@@ -201,7 +208,7 @@ export function buildNote(input: NoteInput): string {
     for (const { thread, step } of [...urgent, ...slower]) {
       const when = thread.speed === 'urgent' ? 'this can interrupt' : pace === 'fast' || step.afterHours === 0 ? 'bring this in soon' : 'at a natural break, such as the end of this scene';
       const tie = seeds.ready.find(s => s.pays === thread.id && !used.has(s.id));
-      must(`- ${thread.title}: ${fit(step.sign || step.text, 320)} (${when}). Why it matters: ${fit(thread.hint || thread.why, 200)}${tie ? ` ${callback(tie)}` : ''}`);
+      must(`- ${thread.title}: ${fit(step.sign || step.text, 320)} (${when}). Why it matters: ${fit(about(thread), 200)}${tie ? ` ${callback(tie)}` : ''}`);
     }
   }
   // Other open threads involving people in the scene, so they act with purpose.
@@ -209,7 +216,7 @@ export function buildNote(input: NoteInput): string {
   const nearby = quiet ? [] : notebook.threads.filter(t => t.status === 'open' && !shown.has(t.id) && !held.has(t.id) && t.people.some(p => present.some(person => person.id === p))).slice(0, 3 - developments.length);
   if (nearby.length) {
     lines.push('Open threads near this scene:');
-    for (const thread of nearby) lines.push(`- ${thread.title}: ${thread.hint || thread.why}`);
+    for (const thread of nearby) lines.push(`- ${thread.title}: ${about(thread)}`);
   }
   if (present.length) {
     lines.push('People here and what drives them (give each one their own voice; nobody should sound like anyone else; a sample line shows how someone sounds, never repeat it word for word):');
@@ -231,6 +238,8 @@ export function buildNote(input: NoteInput): string {
   if (loose) { const line = callback(loose); lines.push(`If it fits, now is a good time to ${line.charAt(0).toLowerCase()}${line.slice(1)}`); }
   // One new detail to plant, as part of the scene. What it means stays hidden until it pays off.
   if (seeds.plant) lines.push(`A small detail to mention in passing, without drawing attention to it: ${end(seeds.plant.detail)}`);
+  for (const line of mystery.suspects.slice(0, 3)) lines.push(line);
+  for (const line of mystery.lines) lines.push(line);
   // People who were only talked about: a name being said is not an entrance. Anyone a planned step brings in is left out.
   const coming = new Set(developments.flatMap(d => d.thread.people));
   const named = guided ? [] : spokenOf(notebook, input.recent, present).filter(p => !coming.has(p.id)).slice(0, 3);

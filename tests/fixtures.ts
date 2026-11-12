@@ -48,3 +48,23 @@ export function fakeEmbed(model = 'fake'): { embed: Embed; calls: Array<{ kind: 
   const vec = (text: string) => { const v = new Array(64).fill(0); for (const w of text.toLowerCase().match(/[a-z]{4,}/g) ?? []) { let h = 0; for (const c of w) h = (h * 31 + c.charCodeAt(0)) % 64; v[h] += 1; } return v; };
   return { calls, embed: async (texts, kind) => { calls.push({ kind, count: texts.length }); return { vectors: texts.map(vec), model }; } };
 }
+
+export const MYSTERY_ANSWER = 'Brother Hale took the chapel silver and hid it under the ferry landing to pay a debt.';
+/** A mystery as a model would write it: names instead of ids here and there, loose words. */
+export const rawMystery = () => ({
+  question: 'Who took the chapel silver?', answer: MYSTERY_ANSWER, culprit: 'Brother Hale', how: 'He carried it out in the alms sack after evening prayer.', why: 'He owes money upriver and was threatened.',
+  ifUnsolved: 'The silver turns up at a pawnbroker upriver, and an innocent is blamed first.', thread: 'stolen-ring',
+  suspects: [
+    { person: 'brother-hale', motive: 'He holds the chapel keys.', says: 'He locked up after prayer and saw nothing.', tell: 'He straightens things that are already straight.', did: 'Took the silver and hid it under the landing.' },
+    { person: 'Cole', motive: 'He needs money and was seen near the chapel.', says: 'He was at the tavern all evening.', tell: 'He gets loud.', did: 'Was meeting a buyer for something else; saw Hale with a sack.' },
+    { person: 'wren', motive: 'She cleans the chapel alone.', says: 'She left early with a headache.', tell: 'She will not meet your eye.', did: 'Left early to meet someone she should not; saw nothing.' },
+  ],
+  clues: [
+    { id: 'wet-hem', text: 'The hem of Brother Hale\'s robe is wet with river mud.', where: 'the chapel porch', people: ['brother-hale'], means: 'He was down at the landing after prayer.', points: 'truth', status: 'hidden' },
+    { id: 'alms-sack', text: 'The alms sack is missing from its hook.', where: 'the chapel vestry', people: [], means: 'The silver left in the sack.', points: 'truth' },
+    { id: 'cole-saw', text: 'Cole says he saw a robed figure carrying a sack toward the river.', where: 'the tavern', people: ['cole'], means: 'Hale was seen.', points: 'truth' },
+    { id: 'debt-letter', text: 'A letter demanding payment, addressed to the chapel.', where: 'the harbor office', people: ['harbor-master'], means: 'Hale has a debt.', points: 'truth' },
+    { id: 'loose-board', text: 'One board under the ferry landing is newer than the rest.', where: 'the ferry landing', people: ['mira'], means: 'The silver is hidden there.', points: 'truth' },
+    { id: 'wren-ribbon', text: 'A ribbon of Wren\'s lies by the chapel side door.', where: 'the chapel side door', people: ['wren'], means: 'She slipped out to meet someone; nothing to do with the silver.', points: 'red herring' },
+  ],
+});

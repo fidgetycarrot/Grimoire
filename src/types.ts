@@ -1,4 +1,5 @@
 import type { StoryClock } from './clock';
+import type { MysteryView } from './mystery';
 import type { ClockSources } from './note';
 import type { Notebook, Pace, Preferences, WaitSetting } from './notebook';
 import type { ReasoningMode } from './model';
@@ -6,7 +7,7 @@ import type { FieldCheck, Recipe } from './tracker';
 import type { Glance, SkipOffer } from './skip';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.30.0';
+export const VERSION = '0.31.0';
 export const MAX_VERSIONS = 16;
 
 /** One saved state of the notebook and the chat history it describes. */
@@ -117,6 +118,7 @@ export interface ChatView {
   spent: boolean;
   /** Of recent replies where Grimoire had offered something, how many showed any of it. */ follow: { offered: number; used: number } | null;
   /** Where the story stands, for the player. */ recap: string;
+  /** The mystery as the player may see it: the question and the clues they have found. Never the answer. */ mystery?: MysteryView | null;
   /** How much Lumiverse's Memory Cortex holds for this chat, and what the last reply got from it. Counts only. */
   memory?: MemoryView | null;
 }

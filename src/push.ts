@@ -1,5 +1,6 @@
 import { NotebookError, STAGES, type Notebook } from './notebook';
 import { slug } from './tidy';
+import { MYSTERY_RULES, MYSTERY_SHAPE } from './mystery';
 
 /**
  * Getting a stalled story moving, believably.
@@ -10,7 +11,8 @@ import { slug } from './tidy';
  * as a small sign first (an urgent storyline whose next step is due now), and
  * the bigger part follows over the next replies, at the urgent pace.
  */
-export type PushKind = 'person' | 'secret' | 'consequence' | 'surprise' | 'chapter';
+export type PushKind = 'person' | 'secret' | 'consequence' | 'surprise' | 'chapter' | 'mystery';
+/** The ways to get things moving. A mystery is asked for on its own, never picked as one of these. */
 export const PUSH_KINDS: PushKind[] = ['person', 'secret', 'consequence', 'surprise', 'chapter'];
 export interface PushTie { kind: 'person' | 'thread' | 'seed' | 'event' | 'truth' | 'revealed'; ref: string }
 export interface Push { thread: string; from: PushTie }
@@ -30,11 +32,13 @@ export const PUSH_ASKS: Record<PushKind, string> = {
   consequence: 'Something catches up with the player: a consequence of something that already happened in the chat, or of a storyline left alone, arrives.',
   surprise: 'Choose whatever established thing would move this story best right now.',
   chapter: 'Start a new chapter: a new part of the story, not one storyline reworked. Wrap up what is spent (close threads with a reason; keep anything still alive), then open the next part of the story from where things stand now: what people want now, what is unresolved, what the player set in motion. Set a new story question if the old one is answered or tired, set arc.stage to the first stage of its shape, and set arc.main to the main storyline of the chapter: its first waiting step is the opening moment that draws the player in, arriving with the next reply. Give the chapter what a new part needs: a main storyline and one to three side storylines, new breadcrumbs, and new possible moments. If a jump in time would give the chapter a fresh start, set "skipHours" (up to 720); otherwise 0.',
+  mystery: `Add a mystery to this story: a real one, which the player can solve. Grow it out of what is already established (people the player knows, things that have happened, what people want), so it belongs to this story. Return it in "changes" as ${MYSTERY_SHAPE}\nAlso in "changes": the thread that carries it (new, or an existing one reworked), whose first waiting step is the sign that there is a mystery at all (the discovery, the thing gone missing, the first thing that does not add up), and any new people it needs, written in full. If the player said what it should be about, build it around that. "push" is not needed.\n${MYSTERY_RULES}`,
 };
 
 const ALLOWED: Record<PushKind, PushTie['kind'][]> = {
   person: ['person'], secret: ['truth', 'seed'], consequence: ['event', 'thread', 'seed', 'revealed'],
   surprise: ['person', 'thread', 'seed', 'event', 'truth', 'revealed'], chapter: ['person', 'thread', 'seed', 'event', 'truth', 'revealed'],
+  mystery: ['person', 'thread', 'seed', 'event', 'truth', 'revealed'],
 };
 const TIE_KINDS: PushTie['kind'][] = ['person', 'thread', 'seed', 'event', 'truth', 'revealed'];
 const record = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
@@ -100,4 +104,19 @@ export function launchPush(notebook: Notebook, push: Push): Notebook {
 /** Whether there is anything left to surface: a truth still hidden, or a breadcrumb whose meaning hasn't come out. */
 export function secretsLeft(notebook: Notebook): boolean {
   return notebook.story.hiddenTruth.length > 0 || !!notebook.story.twist || notebook.seeds.some(s => s.status === 'planted' || s.status === 'waiting');
+}
+
+/** A new mystery opens now: the first step of its thread is due at once, and the rest follows at an unhurried pace. */
+export function launchMystery(notebook: Notebook): Notebook {
+  const id = notebook.mystery?.thread;
+  if (!id) return notebook;
+  return { ...notebook, threads: notebook.threads.map(thread => {
+    if (thread.id !== id) return thread;
+    let first = true;
+    return { ...thread, status: 'open' as const, speed: thread.speed === 'urgent' ? 'steady' as const : thread.speed, steps: thread.steps.map(step => {
+      if (step.status !== 'waiting' || !first) return step;
+      first = false;
+      return { ...step, afterHours: 0, now: true as const };
+    }) };
+  }) };
 }

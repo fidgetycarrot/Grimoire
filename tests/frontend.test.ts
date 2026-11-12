@@ -4,7 +4,9 @@ import type { SpindleFrontendContext } from 'lumiverse-spindle-types';
 import { createRpc, nextPace, setup } from '../src/frontend';
 import { stamp, validateNotebook } from '../src/notebook';
 import type { Snapshot } from '../src/types';
-import { sampleNotebook } from './fixtures';
+import { MYSTERY_ANSWER, rawMystery, sampleNotebook } from './fixtures';
+import { mysteryView } from '../src/mystery';
+import { tidyNotebook } from '../src/tidy';
 import { markStories } from '../src/badges';
 
 const cleanups: Array<() => void> = [];
@@ -141,7 +143,7 @@ describe('the panel', () => {
   test('a chat without a notebook offers to write one, and needs a connection first', async () => {
     const h = harness({ hasNotebook: false, notebook: null }); await tick();
     h.button('Write the notebook')!.click(); await tick();
-    expect(h.requests.find(r => r.action === 'create')!.input).toEqual({ chatId: 'chat-1', preferences: { tone: 'balanced', twist: true, shape: 'auto', lockShape: false, size: 'auto' }, ideas: '', keepIdeas: false });
+    expect(h.requests.find(r => r.action === 'create')!.input).toEqual({ chatId: 'chat-1', preferences: { tone: 'balanced', twist: true, shape: 'auto', lockShape: false, size: 'auto', mystery: false }, ideas: '', keepIdeas: false });
     const none = harness({ hasNotebook: false, notebook: null }, { connectionId: '' }); await tick();
     expect(none.button('Write the notebook')!.disabled).toBe(true);
     expect(none.root.textContent).toContain('Choose a model connection in Settings first.');
@@ -311,5 +313,45 @@ describe('your stories', () => {
     expect(a.querySelector('.gm-badge')).toBeNull();
     const off = harness(null, { homeList: false }); const b = cards(off, 'Riley'); await tick(20);
     expect(b.querySelector('.gm-badge')).toBeNull();
+  });
+});
+
+describe('the mystery in the panel', () => {
+  const book = () => { const raw: any = sampleNotebook(); raw.mystery = rawMystery(); for (const t of raw.threads) t.hint = t.hint || 'Something is wrong.'; const nb = stamp(validateNotebook(tidyNotebook(raw)), 40); nb.mystery!.clues[1] = { ...nb.mystery!.clues[1], status: 'found', foundAt: 41 }; return nb; };
+  const outside = (root: HTMLElement) => [...root.querySelectorAll('details')].filter(d => !d.querySelector('summary')!.textContent!.includes('The notebook')).map(d => d.textContent).join('\n') + [...root.querySelectorAll('.gm-card')].map(c => c.textContent).join('\n');
+  test('with none, it can be added, with a word on what it should be about', async () => {
+    const h = harness(); await tick();
+    expect(h.root.textContent).toContain('Once added, a mystery can’t be turned off');
+    const about = [...h.root.querySelectorAll('input')].find(i => (i as unknown as HTMLInputElement).placeholder.includes('goes missing')) as unknown as HTMLInputElement;
+    about.value = 'the missing silver';
+    ([...h.root.querySelectorAll('button')].find(b => b.textContent === 'Add a mystery') as unknown as HTMLButtonElement).click(); await tick();
+    expect(h.requests.find(r => r.action === 'mystery')!.input).toEqual({ chatId: 'chat-1', about: 'the missing silver' });
+  });
+  test('an open one shows the question and the clues found; the answer stays behind the fold; there is no way to turn it off', async () => {
+    const notebook = book();
+    const h = harness({ notebook, mystery: mysteryView(notebook.mystery) }); await tick();
+    const seen = outside(h.root as unknown as HTMLElement);
+    expect(seen).toContain('Who took the chapel silver?');
+    expect(seen).toContain('1 clue found');
+    expect(seen).toContain('The alms sack is missing from its hook.');
+    expect(seen).toContain('The quick check is off');
+    for (const secret of [MYSTERY_ANSWER, 'The silver left in the sack', 'Took the silver and hid it', 'wet with river mud', 'behind it']) expect(seen).not.toContain(secret);
+    expect([...h.root.querySelectorAll('button')].some(b => /Add (a|another) mystery/.test(b.textContent ?? ''))).toBe(false);
+    // Behind the fold, everything.
+    const fold = [...h.root.querySelectorAll('details')].find(d => d.querySelector('summary')!.textContent!.includes('The notebook'))!.textContent!;
+    expect(fold).toContain(`Answer: ${MYSTERY_ANSWER}`); expect(fold).toContain('behind it'); expect(fold).toContain('false trail');
+  });
+  test('a finished one says how it ended and offers another', async () => {
+    const notebook = book(); notebook.mystery = { ...notebook.mystery!, status: 'solved', endReply: 44 };
+    const h = harness({ notebook, mystery: mysteryView(notebook.mystery) }); await tick();
+    expect(h.root.textContent).toContain('Solved. You worked it out.');
+    expect([...h.root.querySelectorAll('button')].some(b => b.textContent === 'Add another mystery')).toBe(true);
+  });
+  test('a new notebook can be asked to be a mystery', async () => {
+    const h = harness({ hasNotebook: false, notebook: null }); await tick();
+    const box = [...h.root.querySelectorAll('label')].find(l => l.textContent!.includes('Make it a mystery'))!.querySelector('input') as unknown as HTMLInputElement;
+    box.checked = true;
+    ([...h.root.querySelectorAll('button')].find(b => b.textContent === 'Write the notebook') as unknown as HTMLButtonElement).click(); await tick();
+    expect(h.requests.find(r => r.action === 'create')!.input.preferences.mystery).toBe(true);
   });
 });
