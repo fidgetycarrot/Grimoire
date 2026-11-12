@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { awayPeople, castProblems, noteSeen } from '../src/cast';
+import { awayPeople, castProblems, followRate, noteSeen } from '../src/cast';
 import { buildNote } from '../src/note';
 import { mergeRevision, validateNotebook, waitsFor, type Notebook, type Preferences } from '../src/notebook';
 import { creationMessages } from '../src/prompts';
@@ -134,6 +134,15 @@ describe('something to act on', () => {
     const sent = creationMessages({ character: { name: 'Mira', description: '', personality: '', scenario: '', firstMessage: '' }, persona: null, lore: { rules: [], entries: [], index: [], more: 0 } as never, storySoFar: '', chat: [], replies: [], variables: {} }, prefs())[0].content;
     expect(sent).toContain('every step hands them something to do something about');
     expect(sent).toContain('"sign": "how it reaches the player, as something they can act on');
+  });
+});
+
+describe('is the narrator listening', () => {
+  const row = (reply: number, marked: number, quiet = false) => ({ reply, ok: true, answers: { moment_1: 0.1 }, marked, ...(quiet ? { quiet: true } : {}) });
+  test('replies written while an intimate scene was protected do not count against the narrator', () => {
+    const log = [row(2, 1), row(3, 0), ...[4, 5, 7, 8, 9, 10].map(r => row(r, 0, true)), row(6, 1)];
+    expect(followRate(log)).toBeNull();
+    expect(followRate([...log, row(11, 0), row(12, 1)])).toEqual({ offered: 5, used: 3 });
   });
 });
 

@@ -71,9 +71,11 @@ export function stockProblems(previous: Notebook, revised: Notebook, prefs: Pref
  * Whether the narrator takes what Grimoire offers: of the recent replies where the quick check was looking for
  * something Grimoire had offered (a step that was due, a possible moment, a breadcrumb), how many showed any of it.
  */
-export function followRate(log: Array<{ reply: number; ok: boolean; answers: Record<string, unknown>; marked: number }>): { offered: number; used: number } | null {
+export function followRate(log: Array<{ reply: number; ok: boolean; answers: Record<string, unknown>; marked: number; quiet?: boolean }>): { offered: number; used: number } | null {
   const byReply = new Map<number, { answers: Record<string, unknown>; marked: number }>();
+  // Replies written while the note was holding back (an intimate scene) had nothing offered to them, so they don't count.
   for (const r of log) if (r.ok) byReply.set(r.reply, r);
+  for (const r of log) if (r.quiet) byReply.delete(r.reply);
   const asked = [...byReply.values()].filter(r => Object.keys(r.answers).some(k => /^(due|moment|callback)_/.test(k))).slice(-12);
   return asked.length >= 4 ? { offered: asked.length, used: asked.filter(r => r.marked > 0).length } : null;
 }

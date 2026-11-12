@@ -59,7 +59,7 @@ function quickLog(value: unknown): QuickRecord[] {
       if (typeof a === 'number' && Number.isFinite(a)) answers[key] = a;
       else { const c = record(a); if (typeof c.choice === 'string' && Number.isFinite(Number(c.confidence))) answers[key] = { choice: c.choice.slice(0, 20), confidence: Number(c.confidence) }; }
     }
-    return Number.isInteger(x.reply) ? [{ reply: Number(x.reply), at: Number(x.at) || 0, ok: x.ok === true, ...(typeof x.error === 'string' && x.error ? { error: x.error.slice(0, 200) } : {}), answers, marked: Number(x.marked) || 0, checkup: x.checkup === true, shifted: x.shifted === true, held: Number(x.held) || 0 }] : [];
+    return Number.isInteger(x.reply) ? [{ reply: Number(x.reply), at: Number(x.at) || 0, ok: x.ok === true, ...(typeof x.error === 'string' && x.error ? { error: x.error.slice(0, 200) } : {}), answers, marked: Number(x.marked) || 0, checkup: x.checkup === true, shifted: x.shifted === true, held: Number(x.held) || 0, ...(x.quiet === true ? { quiet: true as const } : {}) }] : [];
   });
 }
 /** Numbers only: what the decision model answered, never the questions' story text. */
@@ -1166,6 +1166,8 @@ export class NotebookController {
         let now = await this.live(state, messages);
         if (!now) return;
         state.quick = { at: Date.now(), ok: !!result, error };
+        // The reply was written while the note protected an intimate scene: Grimoire offered nothing, so there was nothing to pick up.
+        const quiet = state.intimateNow && settings.intimate === 'protect';
         let extra = '', soft = '', outcome: ReturnType<typeof applyQuick> | null = null;
         // No answer during an intimate scene: assume it goes on, so the scene stays protected and its replies stay uncounted.
         if (!result && state.intimateNow && settings.intimate === 'protect') { const judged = live.prints.at(-1); if (judged && !state.intimate.includes(judged)) { state.intimate = [...state.intimate, judged].slice(-300); now = (await this.live(state, messages))!; } }
@@ -1191,7 +1193,7 @@ export class NotebookController {
           // The story changed direction: hold old plans back and rework the notebook now.
           if (outcome.shifted) { state.resync = now.moment.reply ?? 0; extra = 'The story changed direction'; }
         }
-        state.quickLog = [...state.quickLog, { ...quickRecord(live.moment.reply ?? 0, result, outcome), ...(error ? { error } : {}) }].slice(-QUICK_LOG);
+        state.quickLog = [...state.quickLog, { ...quickRecord(live.moment.reply ?? 0, result, outcome), ...(error ? { error } : {}), ...(quiet ? { quiet: true as const } : {}) }].slice(-QUICK_LOG);
         // A check-up can't start while one runs; the next reply looks again.
         if (this.running.has(chatId)) { await this.save(state); return; }
         await this.decide(state, now, settings, extra, soft);

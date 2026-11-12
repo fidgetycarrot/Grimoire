@@ -7,7 +7,7 @@ import type { FieldCheck, Recipe } from './tracker';
 import type { Glance, SkipOffer } from './skip';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.31.1';
+export const VERSION = '0.31.2';
 export const MAX_VERSIONS = 16;
 
 /** One saved state of the notebook and the chat history it describes. */
@@ -83,6 +83,7 @@ export interface QuickRecord {
   reply: number; at: number; ok: boolean; /** Fixed wording for why it didn't run. */ error?: string;
   answers: Record<string, number | { choice: string; confidence: number }>;
   marked: number; checkup: boolean; shifted: boolean; held: number;
+  /** The note for this reply offered nothing (an intimate scene it was protecting), so it says nothing about whether the narrator listens. */ quiet?: true;
 }
 export const QUICK_LOG = 40;
 export interface PlayerNote { id: string; text: string; at: number }

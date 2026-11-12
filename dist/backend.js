@@ -1842,6 +1842,9 @@ function followRate(log) {
   for (const r of log)
     if (r.ok)
       byReply.set(r.reply, r);
+  for (const r of log)
+    if (r.quiet)
+      byReply.delete(r.reply);
   const asked = [...byReply.values()].filter((r) => Object.keys(r.answers).some((k) => /^(due|moment|callback)_/.test(k))).slice(-12);
   return asked.length >= 4 ? { offered: asked.length, used: asked.filter((r) => r.marked > 0).length } : null;
 }
@@ -3684,7 +3687,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.31.1";
+var VERSION = "0.31.2";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -3746,7 +3749,7 @@ function quickLog(value) {
           answers[key] = { choice: c.choice.slice(0, 20), confidence: Number(c.confidence) };
       }
     }
-    return Number.isInteger(x.reply) ? [{ reply: Number(x.reply), at: Number(x.at) || 0, ok: x.ok === true, ...typeof x.error === "string" && x.error ? { error: x.error.slice(0, 200) } : {}, answers, marked: Number(x.marked) || 0, checkup: x.checkup === true, shifted: x.shifted === true, held: Number(x.held) || 0 }] : [];
+    return Number.isInteger(x.reply) ? [{ reply: Number(x.reply), at: Number(x.at) || 0, ok: x.ok === true, ...typeof x.error === "string" && x.error ? { error: x.error.slice(0, 200) } : {}, answers, marked: Number(x.marked) || 0, checkup: x.checkup === true, shifted: x.shifted === true, held: Number(x.held) || 0, ...x.quiet === true ? { quiet: true } : {} }] : [];
   });
 }
 function quickRecord(reply, result, outcome) {
@@ -5103,6 +5106,7 @@ ${live.values.location ?? ""}`);
         if (!now)
           return;
         state.quick = { at: Date.now(), ok: !!result, error };
+        const quiet = state.intimateNow && settings.intimate === "protect";
         let extra = "", soft = "", outcome = null;
         if (!result && state.intimateNow && settings.intimate === "protect") {
           const judged = live.prints.at(-1);
@@ -5139,7 +5143,7 @@ ${live.values.location ?? ""}`);
             extra = "The story changed direction";
           }
         }
-        state.quickLog = [...state.quickLog, { ...quickRecord(live.moment.reply ?? 0, result, outcome), ...error ? { error } : {} }].slice(-QUICK_LOG);
+        state.quickLog = [...state.quickLog, { ...quickRecord(live.moment.reply ?? 0, result, outcome), ...error ? { error } : {}, ...quiet ? { quiet: true } : {} }].slice(-QUICK_LOG);
         if (this.running.has(chatId)) {
           await this.save(state);
           return;

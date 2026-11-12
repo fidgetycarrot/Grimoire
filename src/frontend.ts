@@ -340,7 +340,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const pct = (n: number) => `${Math.round(n * 100)}%`;
     for (const r of records) {
       const item = el('div', 'gm-entry');
-      const outcome = [r.marked ? `marked ${r.marked}` : '', r.shifted ? 'change of direction' : r.checkup ? 'asked for a check-up' : '', r.held ? `held back ${r.held}` : ''].filter(Boolean).join(' · ');
+      const outcome = [r.marked ? `marked ${r.marked}` : '', r.shifted ? 'change of direction' : r.checkup ? 'asked for a check-up' : '', r.held ? `held back ${r.held}` : '', r.quiet ? 'intimate scene: nothing offered' : ''].filter(Boolean).join(' · ');
       item.append(el('p', 'gm-small', `Reply ${r.reply} · ${ago(r.at)}${r.ok ? '' : ` · didn’t run${r.error ? `: ${r.error.replace(/\.$/, '')}` : ''}`}${outcome ? ` · ${outcome}` : ''}`));
       const parts: string[] = [];
       const scene = r.answers.rhythm;
