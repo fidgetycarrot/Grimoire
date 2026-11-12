@@ -72,7 +72,7 @@ describe('the note leads with the main storyline', () => {
     const text = note(nb, 10, { now: { hours: 50, reply: 10, waits }, recent: 'Mira looks up.\nWhere is Cole?', narrated: 'Mira looks up.' });
     expect(text).toContain('What the story does now:\n- The stolen ring:');
     expect(text).not.toContain('- Cole:');
-    nb.threads[1].people = ['harbor-master'];
+    for (const t of nb.threads) t.people = t.people.filter(p => p !== 'cole');
     expect(note(nb, 10, { now: { hours: 50, reply: 10, waits }, recent: 'Mira looks up.\nWhere is Cole?', narrated: 'Mira looks up.' })).toContain('- Cole:');
   });
   test('its next step is what the story does now, and side storylines stay small in the opening stretch', () => {
