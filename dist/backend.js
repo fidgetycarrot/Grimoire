@@ -322,6 +322,17 @@ function conversation(messages, exclude, isStory) {
   }
   return turns;
 }
+function failedReply(message) {
+  if (!message || message.role !== "assistant")
+    return false;
+  if (!message.content.trim())
+    return true;
+  const extra = message.extra && typeof message.extra === "object" ? message.extra : {};
+  const bySwipe = Array.isArray(extra.generationOutcomeBySwipe) ? extra.generationOutcomeBySwipe[message.swipe_id ?? 0] : undefined;
+  const outcome = extra.generationOutcome ?? bySwipe;
+  const error = outcome && typeof outcome === "object" ? outcome.error : undefined;
+  return typeof error === "string" ? error.trim() !== "" : !!error;
+}
 var storyReplies = (turns) => turns.filter((t) => t.role === "assistant" && !t.ooc);
 function told(turn, max) {
   if (turn.role === "user")
@@ -3696,7 +3707,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.31.8";
+var VERSION = "0.31.9";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -3718,7 +3729,7 @@ function pushReply(kind, skip) {
   if (kind === "chapter")
     return `A new chapter is set. It starts with the next reply${skip ? `, about ${describeDuration(skip)} later` : ""}.`;
   if (kind === "mystery")
-    return "A mystery has been added. Its first sign turns up in the next reply or two. From here on, the answer is fixed.";
+    return "A mystery has been added. Its first sign turns up when the scene has room for it. From here on, the answer is fixed.";
   return "Something is in motion. Watch for it over the next few replies.";
 }
 function talkLines(value) {
@@ -5011,7 +5022,10 @@ ${recallNote(recall)}`;
       const state = await this.load(chatId);
       if (!state?.enabled || !state.versions.length || this.running.has(chatId))
         return null;
-      const live = await this.live(state, await this.api.chat.getMessages(chatId));
+      const messages = await this.api.chat.getMessages(chatId);
+      if (failedReply([...messages].sort((a, b) => a.index_in_chat - b.index_in_chat).at(-1)))
+        return null;
+      const live = await this.live(state, messages);
       if (!live)
         return null;
       if (state.skipHours && live.turns.length > (state.skipTurn ?? 0) && live.turns.at(-1)?.role === "assistant" && (generationType ?? "normal") !== "continue") {

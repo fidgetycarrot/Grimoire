@@ -1,6 +1,6 @@
 import type { SpindleAPI, LlmMessageDTO, InterceptorContextDTO, InterceptorResultDTO } from 'lumiverse-spindle-types';
 import { absoluteHours, advanceClock, describeClock, describeDuration, durationHours, type StoryClock } from './clock';
-import { conversation, fingerprints, newestMatching, covers, planHistory, readable, spaces, storyReplies, told, type Piece, type Turn } from './history';
+import { conversation, fingerprints, newestMatching, covers, planHistory, readable, spaces, storyReplies, told, failedReply, type Piece, type Turn } from './history';
 import { splitOoc } from './ooc';
 import { askJson, askModel, ModelError, withBackup, type Ask } from './model';
 import { buildNote, liveClock, paceLine, presentPeople, type ClockSources } from './note';
@@ -36,7 +36,7 @@ const PUSH_LABELS: Record<PushKind, string> = { person: 'Get things moving: some
 /** Fixed words, never the model's: a push must not give away what it is. */
 function pushReply(kind: PushKind, skip: number): string {
   if (kind === 'chapter') return `A new chapter is set. It starts with the next reply${skip ? `, about ${describeDuration(skip)} later` : ''}.`;
-  if (kind === 'mystery') return 'A mystery has been added. Its first sign turns up in the next reply or two. From here on, the answer is fixed.';
+  if (kind === 'mystery') return 'A mystery has been added. Its first sign turns up when the scene has room for it. From here on, the answer is fixed.';
   return 'Something is in motion. Watch for it over the next few replies.';
 }
 function talkLines(value: unknown): TalkLine[] {
@@ -1067,7 +1067,10 @@ export class NotebookController {
     const quick = await this.serial(chatId, async () => {
       const state = await this.load(chatId);
       if (!state?.enabled || !state.versions.length || this.running.has(chatId)) return null;
-      const live = await this.live(state, await this.api.chat.getMessages(chatId));
+      const messages = await this.api.chat.getMessages(chatId);
+      // A reply that failed, was cut off, or came back empty will be swiped or deleted: no quick check, no check-up.
+      if (failedReply([...messages].sort((a, b) => a.index_in_chat - b.index_in_chat).at(-1))) return null;
+      const live = await this.live(state, messages);
       if (!live) return null;
       // The skip has been told once a new reply exists after it.
       if (state.skipHours && live.turns.length > (state.skipTurn ?? 0) && live.turns.at(-1)?.role === 'assistant' && (generationType ?? 'normal') !== 'continue') { state.skipHours = 0; state.skipTurn = 0; }

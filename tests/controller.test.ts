@@ -1566,3 +1566,28 @@ describe('a mystery', () => {
     for (const secret of SECRETS) expect(await c.noteFor('chat-1')).not.toContain(secret);
   });
 });
+
+describe('replies that failed', () => {
+  const run = async (last: (h: ReturnType<typeof host>) => void) => {
+    const h = host({ decide: () => ({ answers: {} }) });
+    const m = model({ create: created, checkup: input => ({ notebook: input.notebook, tracker: null }) });
+    const { c } = await ready(h, m);
+    await c.saveSettings({ ...(await c.settings()), quick: { enabled: true, connectionId: '', model: '' } });
+    for (const line of ['The far bank.', 'Rain.', 'Night falls.']) { h.add('user', 'On.'); h.add('assistant', `${line}${tracker('Day 1, 19:00', 'The ferry')}`); }
+    h.add('user', 'On.'); last(h);
+    const before = { model: m.calls.length, quick: h.decisionCalls.length };
+    await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+    return { model: m.calls.length - before.model, quick: h.decisionCalls.length - before.quick };
+  };
+  test('a reply the provider failed or cut off costs no quick check and no check-up', async () => {
+    expect(await run(h => { Object.assign(h.add('assistant', 'Half a sent'), { extra: { generationOutcome: { finish_reason: 'length', error: 'output token limit' } } }); })).toEqual({ model: 0, quick: 0 });
+    expect(await run(h => { Object.assign(h.add('assistant', 'Half a sent'), { extra: { generationOutcomeBySwipe: [{ finish_reason: 'error', error: 'Upstream failed' }] } }); })).toEqual({ model: 0, quick: 0 });
+  });
+  test('an empty reply costs nothing either', async () => {
+    expect(await run(h => { h.add('assistant', '  \n'); })).toEqual({ model: 0, quick: 0 });
+  });
+  test('a reply that finished normally is still read', async () => {
+    const used = await run(h => { Object.assign(h.add('assistant', `Dawn.${tracker('Day 2, 06:00', 'The ferry')}`), { extra: { generationOutcome: { finish_reason: 'stop' } } }); });
+    expect(used.model + used.quick).toBeGreaterThan(0);
+  });
+});

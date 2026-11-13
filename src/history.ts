@@ -32,6 +32,19 @@ export function conversation(messages: Message[], exclude?: string, isStory?: (r
   }
   return turns;
 }
+/**
+ * A reply that never properly arrived: the provider reported a failure (an error, a cut-off, a filter), or sent
+ * nothing. The player is going to swipe or delete it, so it is not worth a model request to read.
+ */
+export function failedReply(message: { role: string; content: string; swipe_id?: number; extra?: unknown } | undefined): boolean {
+  if (!message || message.role !== 'assistant') return false;
+  if (!message.content.trim()) return true;
+  const extra = message.extra && typeof message.extra === 'object' ? message.extra as Record<string, unknown> : {};
+  const bySwipe = Array.isArray(extra.generationOutcomeBySwipe) ? extra.generationOutcomeBySwipe[message.swipe_id ?? 0] : undefined;
+  const outcome = extra.generationOutcome ?? bySwipe;
+  const error = outcome && typeof outcome === 'object' ? (outcome as Record<string, unknown>).error : undefined;
+  return typeof error === 'string' ? error.trim() !== '' : !!error;
+}
 /** The narrator's story replies: out-of-character answers don't count. */
 export const storyReplies = (turns: Turn[]) => turns.filter(t => t.role === 'assistant' && !t.ooc);
 /** A turn as words for a model, with out-of-character talk labeled so it is never taken as story events. */
