@@ -3446,6 +3446,402 @@ function glance(notebook, moment) {
   };
 }
 
+// src/tome.ts
+var RHYTHM_META = {
+  calm: { label: "Still Waters", title: "Calm Waters", color: "#7cc4b8", desc: "Ordinary time, with room to talk, look around, or take stock." },
+  rising: { label: "Rising Tension", title: "Tension is Building", color: "#f0b954", desc: "Stakes and complications are building through what people say and do." },
+  peak: { label: "Peak Moment", title: "A Big Moment is Here", color: "#eb6b56", desc: "A turning point, confrontation, or reveal is playing out right now." },
+  aftermath: { label: "Aftermath", title: "Catching Breath", color: "#9ca8e8", desc: "Just after a big moment; Grimoire leaves room for the dust to settle." },
+  stalled: { label: "Quiet Stretch", title: "Ready to Move", color: "#d4a94e", desc: "The scene has been circling; Grimoire is nudging an open thread forward." }
+};
+var STAGE_NAMES = {
+  setup: "Setup",
+  rising: "Rising Action",
+  climax: "Climax",
+  resolution: "Resolution",
+  ki: "Introduction",
+  sho: "Development",
+  ten: "The Turn",
+  ketsu: "Bringing Together"
+};
+var PACE_NAMES = {
+  auto: "Auto",
+  quiet: "Quiet",
+  fast: "Fast"
+};
+var end3 = (text) => {
+  const trimmed = text.trim().replace(/[.!?]+$/, "");
+  return trimmed ? `${trimmed}.` : "";
+};
+function sentences(prose) {
+  const clean = prose.replace(/\s+/g, " ").trim();
+  if (!clean)
+    return [];
+  const matches = clean.match(/[^.!?]+[.!?]+["'\u201D\u2019)]*|[^.!?]+$/g) ?? [clean];
+  return matches.map((s) => s.trim()).filter((s) => s.length >= 4);
+}
+function extractLastQuote(prose) {
+  const quotes = [...prose.matchAll(/(?:\u201C([^\u201D]{6,220})\u201D|"([^"]{6,220})")/g)].map((m) => (m[1] ?? m[2] ?? "").trim()).filter((q) => q.length >= 6 && !/^[a-z0-9_-]+$/i.test(q));
+  return quotes.at(-1) ?? null;
+}
+function speakerNearQuote(prose, quote, present) {
+  if (!present.length)
+    return null;
+  const idx = prose.lastIndexOf(quote);
+  if (idx < 0)
+    return present[0];
+  const windowText = prose.slice(Math.max(0, idx - 140), Math.min(prose.length, idx + quote.length + 140)).toLowerCase();
+  for (const p of present) {
+    if ([p.name, ...p.aliases].some((n) => n.length >= 2 && windowText.includes(n.toLowerCase())))
+      return p;
+  }
+  return present.length === 1 ? present[0] : null;
+}
+function distillScene(latestReply, notebook, present, reply, location, buildingLine) {
+  const clean = readable(latestReply, 4000).replace(/\[[a-z][\w:-]*\s+[^\]]*\]/gi, " ").replace(/\s+/g, " ").trim();
+  const lines = sentences(clean);
+  const tail = lines.slice(-2).join(" ").trim();
+  const gist = fit(tail || notebook.recap || notebook.summary || notebook.story.question, 340);
+  if (!gist)
+    return null;
+  const footholds = [];
+  const quote = extractLastQuote(clean);
+  if (quote) {
+    const speaker = speakerNearQuote(clean, quote, present);
+    const isQuestion = quote.trim().endsWith("?");
+    footholds.push({
+      kind: isQuestion ? "QUESTION IN THE AIR" : "SPOKEN IN THE SCENE",
+      label: speaker ? `${speaker.name}\u2019s Words` : isQuestion ? "Question Put to You" : "Spoken to You",
+      prompt: `\u201C${fit(quote, 150)}\u201D \u2014 ${isQuestion ? "Waiting on your answer, or you can turn the question back." : "You can answer, press further, or act on what is around you."}`
+    });
+  }
+  const newClue = notebook.mystery?.clues.find((c) => c.status === "found" && c.foundAt === reply);
+  if (newClue) {
+    footholds.push({
+      kind: "CLUE IN REACH",
+      label: newClue.where ? fit(newClue.where, 48) : "New Clue Noticed",
+      prompt: `${end3(fit(newClue.text, 160))} You can inspect it closer, ask someone here about it, or keep it to yourself.`
+    });
+  } else {
+    const shownNow = notebook.threads.flatMap((t) => t.steps.filter((s) => s.status === "shown" && s.atReply === reply).map((s) => ({ thread: t, step: s })))[0];
+    if (shownNow) {
+      footholds.push({
+        kind: "WHAT JUST LANDED",
+        label: fit(shownNow.thread.title, 48),
+        prompt: `${end3(fit(shownNow.step.sign || shownNow.step.text, 160))} What you do with it next is yours.`
+      });
+    }
+  }
+  for (const person of present) {
+    if (footholds.length >= 3)
+      break;
+    if (footholds.some((f) => f.label.startsWith(person.name)))
+      continue;
+    const doing = person.doing ? end3(fit(person.doing, 140)) : "Here with you in the scene.";
+    footholds.push({
+      kind: "IN THE ROOM",
+      label: `${person.name}${person.role ? ` \xB7 ${fit(person.role, 28)}` : ""}`,
+      prompt: `${doing} You can talk with ${person.name}, watch their reaction, or make a move.`
+    });
+  }
+  if (footholds.length < 3 && (location || buildingLine)) {
+    footholds.push({
+      kind: "LAY OF THE LAND",
+      label: fit(location || "Where You Stand", 48),
+      prompt: buildingLine ? end3(fit(buildingLine.replace(/^Layout of /i, ""), 160)) : `You are at ${end3(fit(location, 120))} You can stay in the moment or move somewhere new.`
+    });
+  }
+  if (footholds.length < 3 && notebook.recap) {
+    footholds.push({
+      kind: "THE STORY SO FAR",
+      label: "Where Things Stand",
+      prompt: fit(notebook.recap, 170)
+    });
+  }
+  if (!footholds.length) {
+    footholds.push({
+      kind: "THE SCENE AT HAND",
+      label: "Your Move",
+      prompt: fit(notebook.story.question || "React to what is in front of you, ask a question, or take the scene somewhere new.", 170)
+    });
+  }
+  const whisperLine = footholds.map((f) => f.label).join("  \xB7  ");
+  return {
+    hookCount: footholds.length,
+    whisperLine,
+    gist,
+    footholds: footholds.slice(0, 3)
+  };
+}
+function buildTome(input) {
+  const { notebook, reply, pace, clock, sources, intimate } = input;
+  const present = presentPeople(notebook, input.narrated || input.recentChat, input.trackerPresent);
+  const named = spokenOf(notebook, input.recentChat, present);
+  const atBuilding = whereabouts(notebook.buildings ?? [], input.location, input.buildingId ?? "");
+  const buildingText = atBuilding ? layoutLine(atBuilding) : undefined;
+  const isChapterStart = notebook.arc.startReply !== undefined && notebook.arc.startReply === reply && reply > 0;
+  const stageName = STAGE_NAMES[notebook.arc.stage] ?? notebook.arc.stage;
+  const mainThread = notebook.threads.find((t) => t.id === notebook.arc.main);
+  const chapter = isChapterStart ? {
+    label: notebook.arc.opening === "chapter" ? "New Chapter" : "Opening Chapter",
+    title: mainThread?.title || stageName || "A New Part Begins",
+    recap: notebook.recap || fit(notebook.story.question, 180)
+  } : null;
+  const paidSeeds = notebook.seeds.filter((s) => s.status === "paid").sort((a, b) => (b.paidAt ?? 0) - (a.paidAt ?? 0));
+  const cameOut = [...notebook.story.cameOut].sort((a, b) => (b.atReply ?? 0) - (a.atReply ?? 0));
+  const scars = notebook.threads.filter((t) => t.status === "closed" && t.outcome === "lost" && t.scar);
+  const playerCovers = (notebook.covers ?? []).filter((c) => c.by === "player" && c.status !== "exposed");
+  const plantedCount = notebook.seeds.filter((s) => s.status === "planted").length;
+  const paidNow = paidSeeds.find((s) => s.paidAt === reply);
+  const truthNow = cameOut.find((r) => r.atReply === reply);
+  const becauseNew = !!paidNow || !!truthNow;
+  const becauseItems = [];
+  for (const s of paidSeeds.slice(0, 3)) {
+    becauseItems.push({
+      badge: s.paidAt === reply ? "PAID OFF NOW" : s.plantedAt !== undefined ? `FROM REPLY ${s.plantedAt}` : "CALLBACK",
+      label: fit(s.detail, 70),
+      detail: end3(fit(s.payoff, 180)),
+      highlight: s.paidAt === reply
+    });
+  }
+  for (const r of cameOut.slice(0, 2)) {
+    becauseItems.push({
+      badge: r.atReply === reply ? "CAME OUT NOW" : r.atReply !== undefined ? `REPLY ${r.atReply}` : "KNOWN FACT",
+      label: "Out in the Open",
+      detail: end3(fit(r.text, 180)),
+      highlight: r.atReply === reply
+    });
+  }
+  for (const t of scars.slice(-2)) {
+    becauseItems.push({
+      badge: "STILL FELT",
+      label: t.title,
+      detail: end3(fit(t.scar, 160))
+    });
+  }
+  for (const c of playerCovers.slice(0, 2)) {
+    const whoHeard = notebook.people.filter((p) => c.told.includes(p.id)).map((p) => p.name).join(" & ") || "People here";
+    becauseItems.push({
+      badge: c.status === "strained" ? "DOUBTED LIE" : "YOUR WORD",
+      label: `Told to ${whoHeard}`,
+      detail: `\u201C${fit(c.said, 120)}\u201D${c.status === "strained" ? " \u2014 starting to wear thin." : " \u2014 remembered when they are around."}`
+    });
+  }
+  const topBecause = paidNow ? {
+    sub: paidNow.plantedAt !== undefined ? `From Reply #${paidNow.plantedAt}` : "Callback landed",
+    kicker: `PAST DETAIL PAID OFF${paidNow.plantedAt !== undefined ? ` \xB7 PLANTED AT REPLY #${paidNow.plantedAt}` : ""}`,
+    title: fit(paidNow.detail, 110),
+    body: end3(fit(paidNow.payoff, 240))
+  } : truthNow ? {
+    sub: "Secret came out",
+    kicker: "NOW ESTABLISHED \xB7 OUT IN THE OPEN",
+    title: fit(truthNow.text, 110),
+    body: "Grimoire marked this as known to you now, so people stop acting as if it were still secret."
+  } : paidSeeds[0] ? {
+    sub: `${paidSeeds.length} paid \xB7 ${plantedCount} planted`,
+    kicker: "CONTINUITY & CALLBACKS \xB7 WHAT CAME BACK",
+    title: fit(paidSeeds[0].detail, 110),
+    body: end3(fit(paidSeeds[0].payoff, 240))
+  } : scars[0] ? {
+    sub: "Lasting mark",
+    kicker: "STILL FELT FROM EARLIER",
+    title: scars[0].title,
+    body: end3(fit(scars[0].scar, 240))
+  } : playerCovers[0] ? {
+    sub: `${playerCovers.length} cover ${playerCovers.length === 1 ? "story" : "stories"}`,
+    kicker: "WHAT PEOPLE REMEMBER YOU SAID",
+    title: `\u201C${fit(playerCovers[0].said, 90)}\u201D`,
+    body: "Grimoire reminds the narrator of cover stories and promises you have made whenever those people are in the scene."
+  } : {
+    sub: plantedCount ? `${plantedCount} planted so far` : "Watching your choices",
+    kicker: "CONTINUITY & CONSEQUENCES",
+    title: plantedCount ? `${plantedCount} small ${plantedCount === 1 ? "detail has" : "details have"} been planted in passing` : "Grimoire is watching what you say and do",
+    body: "When an earlier detail, promise, or choice comes back later in the story, this seal lights up with the reply it came from."
+  };
+  const becauseTab = {
+    id: "because",
+    icon: "\u21A9",
+    short: "Because You\u2026",
+    subLabel: topBecause.sub,
+    isNew: becauseNew,
+    kicker: topBecause.kicker,
+    title: topBecause.title,
+    body: topBecause.body,
+    items: becauseItems.slice(0, 4),
+    footerLeft: paidSeeds.length ? `${paidSeeds.length} ${paidSeeds.length === 1 ? "callback" : "callbacks"} paid off` : "No callbacks paid off yet",
+    footerRight: plantedCount ? `${plantedCount} earlier ${plantedCount === 1 ? "detail" : "details"} waiting in the wings` : "Spoiler-safe continuity",
+    seal: true
+  };
+  let clueTab;
+  if (notebook.mystery) {
+    const m = notebook.mystery;
+    const found = m.clues.filter((c) => c.status === "found").sort((a, b) => (b.foundAt ?? 0) - (a.foundAt ?? 0));
+    const foundNow = found.find((c) => c.foundAt === reply);
+    const mysteryJustEnded = m.endReply === reply && m.status !== "open";
+    const isNew = !!foundNow || mysteryJustEnded;
+    const newest = foundNow ?? found[0];
+    const items = found.slice(0, 5).map((c, idx) => ({
+      badge: c.foundAt === reply ? "FOUND NOW" : c.foundAt !== undefined ? `REPLY ${c.foundAt}` : `CLUE ${found.length - idx}`,
+      label: c.where ? fit(c.where, 50) : "Discovered Clue",
+      detail: end3(fit(c.text, 190)),
+      highlight: c.foundAt === reply
+    }));
+    for (const t of m.theories.slice(-2).reverse()) {
+      items.push({
+        badge: t.verdict === "right" ? "SOLVED" : "YOUR GUESS",
+        label: "Theory Tested in Chat",
+        detail: `\u201C${fit(t.text, 150)}\u201D`,
+        highlight: t.atReply === reply
+      });
+    }
+    clueTab = {
+      id: "clue",
+      icon: "\u25C6",
+      short: "Clue Found",
+      subLabel: m.status === "solved" ? "Mystery solved" : m.status === "revealed" ? "Truth came out" : `${found.length} of ${m.clues.length} found`,
+      isNew,
+      kicker: m.status === "solved" ? "MYSTERY SOLVED \xB7 CASE CLOSED" : m.status === "revealed" ? "MYSTERY ENDED \xB7 TRUTH CAME OUT" : `MYSTERY LEDGER \xB7 ${found.length} OF ${m.clues.length} CLUES DISCOVERED`,
+      title: newest ? fit(newest.text, 120) : fit(m.question, 120),
+      body: newest ? `Mystery question: ${end3(fit(m.question, 180))}${newest.where ? ` Noticed at: ${end3(fit(newest.where, 90))}` : ""}` : `Mystery question: ${end3(fit(m.question, 200))} Clues appear in the story when you are in the right place or with someone who holds one.`,
+      items,
+      footerLeft: m.status === "open" ? "The narrator does not know the answer while open" : `Mystery ${m.status}`,
+      footerRight: `${found.length} of ${m.clues.length} clues found`,
+      pips: { found: found.length, total: m.clues.length }
+    };
+  } else {
+    const shownSteps = notebook.threads.flatMap((t) => t.steps.filter((s) => s.status === "shown").map((s) => ({ thread: t, step: s }))).sort((a, b) => (b.step.atReply ?? 0) - (a.step.atReply ?? 0));
+    const shownNow = shownSteps.find((x) => x.step.atReply === reply);
+    const openCount = notebook.threads.filter((t) => t.status === "open").length;
+    const latest = shownNow ?? shownSteps[0];
+    const items = shownSteps.slice(0, 4).map((x) => ({
+      badge: x.step.atReply === reply ? "HAPPENED NOW" : x.step.atReply !== undefined ? `REPLY ${x.step.atReply}` : "SHOWN",
+      label: x.thread.title,
+      detail: end3(fit(x.step.sign || x.step.text, 180)),
+      highlight: x.step.atReply === reply
+    }));
+    clueTab = {
+      id: "clue",
+      icon: "\u25C6",
+      short: "Story Beats",
+      subLabel: shownNow ? "New beat shown" : `${shownSteps.length} shown \xB7 ${openCount} open`,
+      isNew: !!shownNow,
+      kicker: `STORY DEVELOPMENTS \xB7 ${openCount} OPEN ${openCount === 1 ? "STORYLINE" : "STORYLINES"}`,
+      title: latest ? fit(latest.step.sign || latest.step.text, 120) : fit(notebook.story.question, 120),
+      body: latest ? `From storyline \u201C${latest.thread.title}\u201D. Grimoire marked this development as shown so the narrator moves on to what comes next.` : `Main question: ${end3(fit(notebook.story.question, 200))}`,
+      items,
+      footerLeft: mainThread ? `Main storyline: ${mainThread.title}` : `${openCount} storylines in play`,
+      footerRight: `${shownSteps.length} ${shownSteps.length === 1 ? "development" : "developments"} shown so far`
+    };
+  }
+  const castItems = [];
+  for (const p of present) {
+    const hasSheet = !!(p.sheet || p.own);
+    castItems.push({
+      badge: hasSheet ? "SHEET IN NOTE" : "VOICE IN NOTE",
+      label: `${p.name}${p.role ? ` \xB7 ${fit(p.role, 36)}` : ""}`,
+      detail: `${p.doing ? end3(fit(p.doing, 140)) : "In the scene."}${hasSheet ? " Full character sheet active." : " Voice and goals active."}`,
+      highlight: true
+    });
+  }
+  for (const p of named.slice(0, 3)) {
+    castItems.push({
+      badge: "KEPT OFF-SCREEN",
+      label: `${p.name}${p.role ? ` \xB7 ${fit(p.role, 36)}` : ""}`,
+      detail: `Mentioned only \u2014 Grimoire told the narrator they stay busy elsewhere (${fit(p.doing || "with their own day", 110)}) so a name being said doesn\u2019t walk them in.`
+    });
+  }
+  const metCount = notebook.people.filter((p) => p.status === "active" && p.met).length;
+  const castSub = present.length ? `${present.slice(0, 2).map((p) => p.name).join(" \xB7 ")}${present.length > 2 ? ` +${present.length - 2}` : ""}` : named.length ? `${named.length} kept off-screen` : "Solo scene";
+  const castTab = {
+    id: "cast",
+    icon: "\uD83D\uDC65",
+    short: "Who\u2019s Here",
+    subLabel: castSub,
+    isNew: false,
+    kicker: `IN THE SCENE \xB7 ${present.length} PRESENT${named.length ? ` \xB7 ${named.length} KEPT OFF-SCREEN` : ""}`,
+    title: present.length ? `${present.map((p) => p.name).join(", ")} in the room` : "No other tracked characters are in the room right now",
+    body: present.length ? "Grimoire only loads character sheets and voices for people actually in the scene. Anyone merely talked about is kept busy elsewhere." : named.length ? "You talked about people who aren\u2019t here; Grimoire told the narrator what they are busy with elsewhere so they don\u2019t appear out of nowhere." : "Grimoire is watching for when known faces or new ones enter the scene.",
+    items: castItems,
+    footerLeft: `${present.filter((p) => p.sheet || p.own).length} full character ${present.filter((p) => p.sheet || p.own).length === 1 ? "sheet" : "sheets"} in this note`,
+    footerRight: `${metCount} known ${metCount === 1 ? "person" : "people"} in your story`
+  };
+  const offscreenSteps = notebook.threads.flatMap((t) => t.steps.filter((s) => s.status === "offscreen"));
+  const offscreenNow = offscreenSteps.some((s) => s.atReply === reply);
+  const echoNow = notebook.seeds.some((s) => s.status === "echo" && s.echoAt === reply);
+  const worldMovedNow = offscreenNow || echoNow;
+  const rMeta = RHYTHM_META[notebook.rhythm] ?? RHYTHM_META.calm;
+  const clockLabel = describeClock(clock);
+  const clockSourceText = sources.day === "tracker" && sources.hour === "tracker" ? "Read from your preset\u2019s tracker" : sources.day === "tracker" || sources.hour === "tracker" ? "Partly from your tracker, rest kept by Grimoire" : "Kept by Grimoire\u2019s story clock";
+  const worldItems = [
+    {
+      badge: sources.day === "tracker" || sources.hour === "tracker" ? "TRACKER SYNC" : "STORY CLOCK",
+      label: `${clockLabel}${input.location ? ` \xB7 ${fit(input.location, 45)}` : ""}`,
+      detail: `${clockSourceText}.${atBuilding ? ` Room layout loaded for ${atBuilding.building.name}.` : ""}`,
+      highlight: true
+    },
+    {
+      badge: `PACE: ${PACE_NAMES[pace].toUpperCase()}`,
+      label: `${rMeta.label} \xB7 ${notebook.arc.shape === "kishotenketsu" ? "Kish\u014Dtenketsu" : "Conflict"} (${stageName})`,
+      detail: rMeta.desc
+    }
+  ];
+  if (worldMovedNow || offscreenSteps.length > 0) {
+    worldItems.push({
+      badge: worldMovedNow ? "MOVED THIS TURN" : "OFF-SCREEN",
+      label: worldMovedNow ? "The World Moved Off-Screen" : `${offscreenSteps.length} Off-Screen ${offscreenSteps.length === 1 ? "Step" : "Steps"} So Far`,
+      detail: "Something shifted elsewhere while you were here. Grimoire keeps the details hidden until they cross your path in the story.",
+      highlight: worldMovedNow
+    });
+  }
+  if (input.memory?.last || input.quick) {
+    const memPart = input.memory?.last ? input.memory.last.to === "note" ? `${input.memory.last.found} Lumiverse ${input.memory.last.found === 1 ? "memory" : "memories"} added to the note` : input.memory.last.to === "preset" ? "Your preset already included Lumiverse memories" : "No extra memories needed for this turn" : "";
+    const quickPart = input.quick?.ok ? "Quick check read this reply" : "";
+    const combined = [quickPart, memPart].filter(Boolean).join(" \xB7 ");
+    if (combined) {
+      worldItems.push({
+        badge: "UNDER THE HOOD",
+        label: "What Fed This Turn",
+        detail: `${combined}.`
+      });
+    }
+  }
+  const worldTab = {
+    id: "world",
+    icon: "\uD83C\uDF18",
+    short: worldMovedNow ? "World Moved" : "World & Pulse",
+    subLabel: worldMovedNow ? "Off-screen shift" : `${rMeta.label} \xB7 ${PACE_NAMES[pace]}`,
+    isNew: worldMovedNow,
+    kicker: worldMovedNow ? "UNSEEN CURRENTS \xB7 SOMETHING SHIFTED OFF-SCREEN" : `STORY PULSE & SOURCES \xB7 ${rMeta.label.toUpperCase()}`,
+    title: worldMovedNow ? "Something moved beyond the scene on this turn" : `${rMeta.title} (${stageName})`,
+    body: worldMovedNow ? "While you were in this scene, an open thread moved a step forward off-screen. Nothing is spoiled here\u2014you will only learn what happened when word reaches you or you run into it." : `${rMeta.desc} Grimoire is guiding the narrator using ${clockSourceText.toLowerCase()}.`,
+    items: worldItems,
+    footerLeft: `Story time: ${clockLabel}`,
+    footerRight: `${offscreenSteps.length} off-screen ${offscreenSteps.length === 1 ? "step" : "steps"} recorded`,
+    eclipse: worldMovedNow
+  };
+  const tabs = [becauseTab, clueTab, castTab, worldTab];
+  const newTabs = tabs.filter((t) => t.isNew);
+  const mode = intimate ? "intimate" : newTabs.length > 0 || chapter !== null ? "active" : "quiet";
+  const defaultTab = newTabs[0]?.id ?? (notebook.mystery?.status === "open" ? "clue" : "cast");
+  const statusLine = mode === "intimate" ? "Grimoire has stepped back \u2014 story clocks and outside threads are paused while this scene plays out." : newTabs.length > 0 ? `${newTabs.length} new ${newTabs.length === 1 ? "mark" : "marks"} recorded on this reply` : `Quiet turn${present.length ? ` \xB7 ${present.slice(0, 2).map((p) => p.name).join(", ")} present` : ""}`;
+  const compass = intimate ? null : distillScene(input.latestReply, notebook, present, reply, input.location, buildingText);
+  return {
+    messageId: input.messageId,
+    reply,
+    mode,
+    defaultTab,
+    chapter,
+    compass,
+    pulse: {
+      rhythm: notebook.rhythm,
+      label: rMeta.label,
+      color: rMeta.color,
+      statusLine
+    },
+    tabs
+  };
+}
+
 // src/tracker.ts
 var TAG = /^[A-Za-z][\w:.-]{0,40}$/;
 var VARIABLE = /^[\w.:-]{1,80}$/;
@@ -3707,11 +4103,11 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.31.9";
+var VERSION = "0.32.0";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
-var DEFAULT_SETTINGS = { connectionId: "", backupId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true, intimate: "protect", memories: true };
+var DEFAULT_SETTINGS = { connectionId: "", backupId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true, intimate: "protect", memories: true, replyCard: true };
 var DEFAULT_PREFERENCES = { tone: "balanced", twist: true, shape: "auto", lockShape: false, size: "auto" };
 var CHAPTER_WORKING = "Starting a new chapter";
 var CHAPTER_DONE = "New chapter ready";
@@ -3893,7 +4289,8 @@ function validSettings(value) {
     wait: v.wait === "short" || v.wait === "long" ? v.wait : "medium",
     homeList: v.homeList !== false,
     intimate: v.intimate === "allow" ? "allow" : "protect",
-    memories: v.memories !== false
+    memories: v.memories !== false,
+    replyCard: v.replyCard !== false
   };
 }
 
@@ -4090,6 +4487,31 @@ class NotebookController {
       const live = messages && state.versions.length ? await this.live(state, messages) : null;
       const earlierParts = messages && !live ? planHistory(conversation(messages)).earlier.length : 0;
       const notebook = live?.version.notebook ?? null;
+      const settings = await this.settings();
+      const mem = state.enabled ? this.memoryView(chatId) : null;
+      const offer = live && state.enabled && state.job?.status !== "running" && !state.skipHours && !state.intimateNow && !this.reworking(state, live) ? skipOffer(live.version.notebook, live.moment, live.clock, state.skipDismissedAt) : null;
+      const lastTurn = live ? [...live.turns].reverse().find((t) => t.role === "assistant" && !t.ooc) : undefined;
+      const tome = live && notebook && state.enabled && settings.replyCard !== false && lastTurn ? buildTome({
+        messageId: lastTurn.id,
+        reply: live.moment.reply ?? 0,
+        latestReply: lastTurn.content,
+        recentChat: live.turns.slice(-4).map((t) => t.content).join(`
+`),
+        narrated: this.narrated(live),
+        trackerPresent: this.listed(live),
+        location: live.values.location,
+        notebook,
+        pace: state.pace,
+        clock: live.clock,
+        sources: live.sources,
+        moment: live.moment,
+        intimate: state.intimateNow && settings.intimate === "protect",
+        seen: state.seen,
+        buildingId: state.building,
+        quick: state.quick,
+        memory: mem,
+        skipOffer: offer
+      }) : null;
       return {
         chatId,
         name: info.name,
@@ -4124,8 +4546,9 @@ class NotebookController {
         mystery: mysteryView(notebook?.mystery),
         canUndo: this.undoable(state) !== null,
         spent: !!notebook && !storyLeft(notebook),
-        memory: state.enabled ? this.memoryView(chatId) : null,
-        skipOffer: live && state.enabled && state.job?.status !== "running" && !state.skipHours && !state.intimateNow && !this.reworking(state, live) ? skipOffer(live.version.notebook, live.moment, live.clock, state.skipDismissedAt) : null
+        memory: mem,
+        skipOffer: offer,
+        tome
       };
     });
   }

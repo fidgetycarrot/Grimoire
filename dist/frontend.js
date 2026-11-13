@@ -46,6 +46,75 @@ var styles = `
 @media (prefers-reduced-motion:reduce){.gm-live,.gm-pulse-dot{animation:none}}.gm-waiting{opacity:.85;border:1px dashed var(--gm-line)}
 @media(prefers-color-scheme:light){.gm-app{--gm-bg:var(--lumiverse-bg,#faf8f3);--gm-ink:var(--lumiverse-text,#25231e);--gm-muted:var(--lumiverse-text-muted,#6f6a60);--gm-card:color-mix(in srgb,var(--lumiverse-fill-subtle,var(--lumiverse-bg-secondary,#fffdf8)) 88%,transparent);--gm-accent:var(--lumiverse-accent,var(--lumiverse-primary,#2f6699));--gm-warn:#a06d10;--gm-good:#2f7a45;color-scheme:light}}
 @container(max-width:340px){.gm-grid,.gm-stats{grid-template-columns:1fr}}
+.gm-tome-host{--gm-gold:#f3d286;--gm-gold-mid:#c69a4b;--gm-gold-dim:rgba(218,175,97,.32);--gm-ink:#f6efe2;--gm-muted:#b5aa99;--gm-sub:#8c8273;--gm-obsidian:#110f16;--gm-obsidian-2:#171420;--gm-rose:#d88ca4;display:block;margin-top:14px;font:13px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--gm-ink);text-align:left;user-select:none}
+.gm-tome-host *,.gm-tome-host *:before,.gm-tome-host *:after{box-sizing:border-box}
+.gm-tome-host [hidden]{display:none!important}
+.gm-tome{position:relative;border-radius:16px;padding:16px 18px 15px;background:radial-gradient(120% 95% at 15% 0%,rgba(226,180,98,.13) 0%,transparent 58%),radial-gradient(95% 95% at 88% 100%,rgba(139,92,246,.1) 0%,transparent 58%),linear-gradient(180deg,var(--gm-obsidian-2) 0%,var(--gm-obsidian) 100%);border:1px solid var(--gm-gold-dim);box-shadow:0 16px 38px rgba(0,0,0,.52),inset 0 0 0 1px rgba(255,232,185,.06),inset 0 1px 0 rgba(255,238,195,.2);overflow:hidden}
+.gm-tome:before{content:"";position:absolute;inset:5px;border-radius:12px;border:1px solid rgba(218,175,97,.13);pointer-events:none}
+.gm-tome-corner{position:absolute;width:20px;height:20px;color:rgba(228,186,108,.48);pointer-events:none;z-index:1}
+.gm-tome-corner.tl{top:6px;left:6px}.gm-tome-corner.tr{top:6px;right:6px;transform:scaleX(-1)}.gm-tome-corner.bl{bottom:6px;left:6px;transform:scaleY(-1)}.gm-tome-corner.br{bottom:6px;right:6px;transform:scale(-1,-1)}
+.gm-tome-chapter{text-align:center;padding:6px 12px 13px;margin-bottom:12px;border-bottom:1px solid rgba(218,175,97,.2);position:relative;z-index:2}
+.gm-tome-chapter-kicker{font-size:10px;font-weight:750;letter-spacing:.22em;text-transform:uppercase;color:#dfba73;display:flex;align-items:center;justify-content:center;gap:10px}
+.gm-tome-chapter-kicker:before,.gm-tome-chapter-kicker:after{content:"";width:32px;height:1px;background:linear-gradient(90deg,transparent,rgba(223,186,115,.6),transparent)}
+.gm-tome-chapter-title{margin:3px 0 0;font:700 18px/1.25 "Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;color:#fff7e6;letter-spacing:.02em}
+.gm-tome-chapter-recap{margin:5px auto 0;max-width:56ch;font-size:12px;color:var(--gm-muted);line-height:1.45}
+.gm-tome-compass{position:relative;z-index:2;margin-bottom:12px}
+.gm-tome-clasp{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:9px 13px;border-radius:11px;background:linear-gradient(90deg,rgba(228,186,108,.11),rgba(255,255,255,.02));border:1px solid rgba(228,186,108,.26);color:var(--gm-ink);cursor:pointer;text-align:left;transition:background .15s ease,border-color .15s ease}
+.gm-tome-clasp:hover{background:linear-gradient(90deg,rgba(228,186,108,.17),rgba(255,255,255,.04));border-color:rgba(228,186,108,.45)}
+.gm-tome-clasp-left{display:flex;align-items:center;gap:10px;min-width:0;flex:1}
+.gm-tome-compass-gem{width:24px;height:24px;border-radius:7px;flex:none;display:inline-flex;align-items:center;justify-content:center;background:radial-gradient(circle,rgba(228,186,108,.25),rgba(228,186,108,.06));border:1px solid rgba(228,186,108,.38);color:var(--gm-gold);font-size:12px}
+.gm-tome-clasp-words{min-width:0;flex:1}
+.gm-tome-clasp-kicker{font-size:10px;font-weight:750;letter-spacing:.14em;text-transform:uppercase;color:#e5c178}
+.gm-tome-clasp-sub{font-size:12px;color:#dfd5c5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+.gm-tome-clasp-btn{flex:none;font-size:11px;font-weight:700;letter-spacing:.04em;color:#f3d286;padding:4px 10px;border-radius:999px;background:rgba(228,186,108,.13);border:1px solid rgba(228,186,108,.3)}
+.gm-tome-compass-drawer{margin-top:8px;padding:13px 15px;border-radius:12px;background:linear-gradient(180deg,rgba(26,22,34,.95),rgba(17,14,23,.96));border:1px solid rgba(228,186,108,.28);box-shadow:inset 0 1px 0 rgba(255,238,195,.08)}
+.gm-tome-compass-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;font-size:10px;font-weight:750;letter-spacing:.14em;text-transform:uppercase;color:#dfba73}
+.gm-tome-gist{margin:0 0 11px;font:13.5px/1.58 "Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;color:#f3eadb}
+.gm-tome-dropcap{float:left;font:700 28px/.88 "Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;color:#f3d286;margin:2px 8px 0 0;text-shadow:0 2px 10px rgba(228,186,108,.35)}
+.gm-tome-foothold-title{font-size:10px;font-weight:750;letter-spacing:.14em;text-transform:uppercase;color:var(--gm-muted);margin:6px 0 7px;clear:both}
+.gm-tome-footholds{display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:7px}
+.gm-tome-foothold{padding:8px 10px;border-radius:9px;background:rgba(255,255,255,.03);border:1px solid rgba(228,186,108,.2)}
+.gm-tome-foothold-kind{font-size:9.5px;font-weight:750;letter-spacing:.12em;text-transform:uppercase;color:#e5c178}
+.gm-tome-foothold-label{font-size:12px;font-weight:700;color:#fff7e6;margin-top:2px}
+.gm-tome-foothold-prompt{font-size:11.5px;color:var(--gm-muted);margin-top:2px;line-height:1.4}
+.gm-tome-tabs{position:relative;z-index:2;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-bottom:10px}
+@media(max-width:560px){.gm-tome-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.gm-tome-tab{position:relative;display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.025);border:1px solid rgba(255,232,185,.1);color:var(--gm-muted);cursor:pointer;text-align:left;transition:all .15s ease;min-width:0}
+.gm-tome-tab:hover{background:rgba(228,186,108,.08);border-color:rgba(228,186,108,.26);color:var(--gm-ink)}
+.gm-tome-tab[aria-selected=true]{background:linear-gradient(180deg,rgba(228,186,108,.18),rgba(228,186,108,.06));border-color:rgba(228,186,108,.55);color:#fff8ea;box-shadow:0 4px 14px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,240,200,.22)}
+.gm-tome-tab-icon{font-size:13px;color:#e5c178;flex:none}
+.gm-tome-tab-words{min-width:0;flex:1}
+.gm-tome-tab-short{display:block;font-size:11.5px;font-weight:700;color:inherit;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gm-tome-tab-sub{display:block;font-size:10px;color:var(--gm-sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gm-tome-tab[aria-selected=true] .gm-tome-tab-sub{color:#dfba73}
+.gm-tome-tab-dot{width:7px;height:7px;border-radius:50%;background:#f0b954;box-shadow:0 0 8px #f0b954;flex:none}
+.gm-tome-card{position:relative;z-index:2;padding:13px 15px;border-radius:12px;background:linear-gradient(180deg,rgba(255,248,230,.04),rgba(255,248,230,.015));border:1px solid rgba(228,186,108,.24)}
+.gm-tome-card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:6px}
+.gm-tome-kicker{font-size:10px;font-weight:750;letter-spacing:.15em;text-transform:uppercase;color:#e5c178}
+.gm-tome-title{margin:2px 0 0;font:700 15.5px/1.3 "Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;color:#fff8eb}
+.gm-tome-body{margin:4px 0 10px;font-size:12.5px;color:#dbd1c0;line-height:1.5}
+.gm-tome-seal{flex:none;width:34px;height:34px;border-radius:50%;background:radial-gradient(circle at 32% 30%,#c93b4b,#741622 72%);border:1.5px solid #e6be74;box-shadow:0 3px 10px rgba(0,0,0,.45),inset 0 1px 2px rgba(255,215,150,.45);display:inline-flex;align-items:center;justify-content:center;color:#fde6b0;font-size:14px;font-weight:700}
+.gm-tome-pips{display:inline-flex;align-items:center;gap:5px;flex:none;margin-top:2px}
+.gm-tome-pip{width:9px;height:9px;transform:rotate(45deg);border:1px solid rgba(228,186,108,.55);background:rgba(255,255,255,.04)}
+.gm-tome-pip.found{background:linear-gradient(135deg,#f6d88e,#c89238);box-shadow:0 0 8px rgba(243,210,134,.55);border-color:#fbe5ad}
+.gm-tome-items{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.gm-tome-item{display:flex;align-items:baseline;gap:8px;padding:7px 10px;border-radius:9px;background:rgba(0,0,0,.22);border:1px solid rgba(255,232,185,.08);font-size:12px;line-height:1.42}
+.gm-tome-item.highlight{border-color:rgba(228,186,108,.36);background:linear-gradient(90deg,rgba(228,186,108,.12),rgba(0,0,0,.22))}
+.gm-tome-badge{flex:none;font-size:9.5px;font-weight:750;letter-spacing:.1em;text-transform:uppercase;padding:2px 6px;border-radius:5px;background:rgba(228,186,108,.15);color:#f3d286;border:1px solid rgba(228,186,108,.3)}
+.gm-tome-item-text{min-width:0;flex:1;color:#d6ccb9}
+.gm-tome-item-label{font-weight:700;color:#fff6e5;margin-right:6px}
+.gm-tome-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 14px;margin-top:11px;padding-top:9px;border-top:1px solid rgba(228,186,108,.14);font-size:11px;color:var(--gm-muted)}
+.gm-tome-pulse{display:inline-flex;align-items:center;gap:6px;font-weight:650;color:#efe5d4}
+.gm-tome-pulse-dot{width:7px;height:7px;border-radius:50%;flex:none}
+.gm-tome-spine{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;border-radius:13px;background:linear-gradient(90deg,#171420,#121018);border:1px solid rgba(218,175,97,.26);box-shadow:0 8px 22px rgba(0,0,0,.36)}
+.gm-tome-spine-left{display:flex;align-items:center;gap:10px;min-width:0;flex:1;font-size:12px;color:#e5dccb}
+.gm-tome-spine-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.gm-tome-pill{border:1px solid rgba(228,186,108,.32);background:rgba(228,186,108,.1);color:#f3d286;border-radius:999px;padding:4px 11px;font:650 11.5px/1.3 ui-sans-serif,system-ui,sans-serif;cursor:pointer;transition:background .15s ease,border-color .15s ease}
+.gm-tome-pill:hover{background:rgba(228,186,108,.2);border-color:rgba(228,186,108,.55)}
+.gm-tome-pill.subtle{border-color:rgba(255,255,255,.14);background:rgba(255,255,255,.04);color:var(--gm-muted)}
+.gm-tome-veil{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;border-radius:13px;background:linear-gradient(90deg,rgba(42,22,34,.92),rgba(24,15,24,.94));border:1px solid rgba(216,140,164,.34);box-shadow:0 8px 22px rgba(0,0,0,.36);color:#f0dce4;font-size:12px}
+.gm-tome-veil-left{display:flex;align-items:center;gap:9px;min-width:0;flex:1}
+.gm-tome-veil-dot{width:7px;height:7px;border-radius:50%;background:var(--gm-rose);box-shadow:0 0 8px var(--gm-rose);flex:none}
 `;
 
 // src/badges.ts
@@ -105,11 +174,12 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.31.9";
+var VERSION = "0.32.0";
 var CHAPTER_WORKING = "Starting a new chapter";
 var CHAPTER_DONE = "New chapter ready";
 
 // src/frontend.ts
+var CORNER_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2 20V6a4 4 0 0 1 4-4h14"/><path d="M6 14V8a2 2 0 0 1 2-2h6"/><circle cx="6" cy="6" r="1.4" fill="currentColor"/></svg>';
 var ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="10" r="7"/><path d="M8.5 7.5a4 4 0 0 1 3-1.8"/><path d="M7 20h10"/><path d="M8.5 16.5 7.5 20M15.5 16.5l1 3.5"/><path d="M14.5 9.2l.5-1.4.5 1.4 1.4.5-1.4.5-.5 1.4-.5-1.4-1.4-.5z" fill="currentColor" stroke-width="0.8"/></svg>';
 var PACE_ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 16a8 8 0 0 1 16 0"/><path d="M12 16l4-5"/></svg>';
 var PACE_LABELS = {
@@ -1091,11 +1161,16 @@ function setup(ctx) {
     home.checked = settings.homeList !== false;
     home.style.width = "auto";
     homeRow.append(home, document.createTextNode("Mark my stories on the home page"));
-    card.append(homeRow);
+    const cardRow = el("label", "gm-row gm-small"), replyCard = el("input");
+    replyCard.type = "checkbox";
+    replyCard.checked = settings.replyCard !== false;
+    replyCard.style.width = "auto";
+    cardRow.append(replyCard, document.createTextNode("Show the story chronicle under the latest reply"));
+    card.append(homeRow, cardRow, el("p", "gm-hint", "Attaches a spoiler-free chronicle beneath the newest reply showing what Grimoire is using, callbacks to your choices, found clues, and a collapsible “In Front of You” room reader."));
     const status = el("p", "gm-hint", "Changes save on their own.");
     const save = async () => {
       try {
-        await rpc.request("settings", { settings: { connectionId: connection.value, backupId: backup.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, wait: wait.value, homeList: home.checked, intimate: intimate.value, memories: mem.checked, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } });
+        await rpc.request("settings", { settings: { connectionId: connection.value, backupId: backup.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, wait: wait.value, homeList: home.checked, replyCard: replyCard.checked, intimate: intimate.value, memories: mem.checked, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } });
       } catch (error) {
         notify(error instanceof Error ? error.message : String(error), "error");
         return;
@@ -1179,12 +1254,21 @@ function setup(ctx) {
   }
   if (typeof MutationObserver !== "undefined") {
     const watcher = new MutationObserver(() => {
-      if (marking || destroyed || chatId() || !stories.length)
+      if (marking || destroyed)
         return;
-      marking = setTimeout(() => {
-        marking = null;
-        renderHome();
-      }, 200);
+      if (!chatId() && stories.length) {
+        marking = setTimeout(() => {
+          marking = null;
+          renderHome();
+        }, 200);
+        return;
+      }
+      if (chatId() && snapshot?.chat?.tome && (!tomeHost || !tomeHost.isConnected)) {
+        marking = setTimeout(() => {
+          marking = null;
+          syncReplyTome();
+        }, 120);
+      }
     });
     watcher.observe(document.body, { childList: true, subtree: true });
     teardown.push(() => {
@@ -1271,6 +1355,263 @@ function setup(ctx) {
     extras.setLabel(active ? `Story pace: ${PACE_LABELS[view.pace].name}` : "Story pace");
     extras.setSubtitle(active ? `Grimoire · tap for ${PACE_LABELS[nextPace(view.pace)].name}` : "Grimoire is off in this chat");
     extras.setEnabled(active);
+    syncReplyTome();
+  }
+  let tomeHost = null, tomeTargetId = "", tomeDrawnKey = "";
+  const tomeUiState = new Map;
+  function clearReplyTome() {
+    if (tomeHost) {
+      try {
+        ctx.dom.uninject?.(tomeHost);
+      } catch {}
+      try {
+        tomeHost.remove();
+      } catch {}
+      tomeHost = null;
+    }
+    tomeTargetId = "";
+    tomeDrawnKey = "";
+  }
+  teardown.push(clearReplyTome);
+  function findBubble(messageId) {
+    try {
+      const direct = ctx.dom.findMessageElement?.(messageId);
+      if (direct)
+        return direct;
+      const all = ctx.dom.listMessageElements?.() ?? [];
+      const match = all.find((m) => m.messageId === messageId);
+      return match?.element ?? all.at(-1)?.element ?? null;
+    } catch {
+      return null;
+    }
+  }
+  function buildOpenTome(view, tome, ui, redraw) {
+    const box = el("section", "gm-tome");
+    box.setAttribute("aria-label", "Grimoire story chronicle");
+    for (const pos of ["tl", "tr", "bl", "br"]) {
+      const c = el("span", `gm-tome-corner ${pos}`);
+      c.innerHTML = CORNER_SVG;
+      c.setAttribute("aria-hidden", "true");
+      box.append(c);
+    }
+    if (tome.chapter) {
+      const ch = el("header", "gm-tome-chapter");
+      ch.append(el("div", "gm-tome-chapter-kicker", tome.chapter.label), el("h3", "gm-tome-chapter-title", tome.chapter.title));
+      if (tome.chapter.recap)
+        ch.append(el("p", "gm-tome-chapter-recap", tome.chapter.recap));
+      box.append(ch);
+    }
+    if (tome.compass) {
+      const comp = el("div", "gm-tome-compass");
+      const clasp = el("button", "gm-tome-clasp");
+      clasp.type = "button";
+      clasp.setAttribute("aria-expanded", String(ui.compassOpen));
+      const left = el("div", "gm-tome-clasp-left");
+      left.append(el("span", "gm-tome-compass-gem", "❖"));
+      const words = el("div", "gm-tome-clasp-words");
+      words.append(el("div", "gm-tome-clasp-kicker", `In Front of You · ${tome.compass.hookCount} waiting on your move`), el("div", "gm-tome-clasp-sub", tome.compass.whisperLine));
+      left.append(words);
+      const btn = el("span", "gm-tome-clasp-btn", ui.compassOpen ? "Fold ▴" : "Read the Room ▾");
+      clasp.append(left, btn);
+      clasp.addEventListener("click", () => {
+        ui.compassOpen = !ui.compassOpen;
+        redraw();
+      });
+      comp.append(clasp);
+      if (ui.compassOpen) {
+        const drawer = el("div", "gm-tome-compass-drawer");
+        const head = el("div", "gm-tome-compass-head");
+        head.append(el("span", "", "The Moment in Plain Sight"), el("span", "", `Reply ${tome.reply}`));
+        const gist = el("p", "gm-tome-gist");
+        const first = tome.compass.gist.charAt(0), rest = tome.compass.gist.slice(1);
+        if (first)
+          gist.append(el("span", "gm-tome-dropcap", first), document.createTextNode(rest));
+        drawer.append(head, gist);
+        if (tome.compass.footholds.length) {
+          drawer.append(el("div", "gm-tome-foothold-title", "Waiting on Your Move"));
+          const grid = el("div", "gm-tome-footholds");
+          for (const fh of tome.compass.footholds) {
+            const card = el("div", "gm-tome-foothold");
+            card.append(el("div", "gm-tome-foothold-kind", fh.kind), el("div", "gm-tome-foothold-label", fh.label), el("div", "gm-tome-foothold-prompt", fh.prompt));
+            grid.append(card);
+          }
+          drawer.append(grid);
+        }
+        comp.append(drawer);
+      }
+      box.append(comp);
+    }
+    const tabBar = el("div", "gm-tome-tabs");
+    tabBar.setAttribute("role", "tablist");
+    for (const t of tome.tabs) {
+      const b = el("button", "gm-tome-tab");
+      b.type = "button";
+      b.setAttribute("role", "tab");
+      b.setAttribute("aria-selected", String(ui.tab === t.id));
+      b.dataset.tabId = t.id;
+      const words = el("span", "gm-tome-tab-words");
+      words.append(el("span", "gm-tome-tab-short", t.short), el("span", "gm-tome-tab-sub", t.subLabel));
+      b.append(el("span", "gm-tome-tab-icon", t.icon), words);
+      if (t.isNew) {
+        const dot = el("span", "gm-tome-tab-dot");
+        dot.title = "New on this reply";
+        b.append(dot);
+      }
+      b.addEventListener("click", () => {
+        ui.tab = t.id;
+        redraw();
+      });
+      tabBar.append(b);
+    }
+    box.append(tabBar);
+    const active = tome.tabs.find((t) => t.id === ui.tab) ?? tome.tabs[0];
+    if (active) {
+      const card = el("div", "gm-tome-card");
+      const top = el("div", "gm-tome-card-top"), head = el("div");
+      head.append(el("div", "gm-tome-kicker", active.kicker), el("h4", "gm-tome-title", active.title));
+      top.append(head);
+      if (active.seal) {
+        const seal = el("span", "gm-tome-seal", "✦");
+        seal.title = "Earned from your earlier move";
+        top.append(seal);
+      } else if (active.pips && active.pips.total > 0) {
+        const pips = el("div", "gm-tome-pips");
+        pips.title = `${active.pips.found} of ${active.pips.total} clues found`;
+        for (let i = 0;i < active.pips.total; i++)
+          pips.append(el("span", `gm-tome-pip${i < active.pips.found ? " found" : ""}`));
+        top.append(pips);
+      }
+      card.append(top, el("p", "gm-tome-body", active.body));
+      if (active.items.length) {
+        const list = el("div", "gm-tome-items");
+        for (const item of active.items) {
+          const row = el("div", `gm-tome-item${item.highlight ? " highlight" : ""}`);
+          const text = el("div", "gm-tome-item-text");
+          text.append(el("span", "gm-tome-item-label", item.label), document.createTextNode(item.detail));
+          row.append(el("span", "gm-tome-badge", item.badge), text);
+          list.append(row);
+        }
+        card.append(list);
+      }
+      const foot = el("div", "gm-tome-foot");
+      const pulse = el("span", "gm-tome-pulse");
+      const dot = el("span", "gm-tome-pulse-dot");
+      dot.style.background = tome.pulse.color;
+      dot.style.boxShadow = `0 0 8px ${tome.pulse.color}`;
+      pulse.append(dot, document.createTextNode(`${tome.pulse.label} · ${active.footerLeft}`));
+      const right = el("span", "", active.footerRight);
+      foot.append(pulse, right);
+      if (tome.mode !== "active") {
+        const foldBtn = el("button", "gm-tome-pill subtle", "Fold Chronicle ▴");
+        foldBtn.type = "button";
+        foldBtn.addEventListener("click", () => {
+          ui.expanded = false;
+          redraw();
+        });
+        foot.append(foldBtn);
+      }
+      card.append(foot);
+      box.append(card);
+    }
+    return box;
+  }
+  function syncReplyTome() {
+    if (destroyed)
+      return;
+    const view = snapshot?.chat;
+    const tome = view?.enabled && snapshot?.settings.replyCard !== false ? view.tome : null;
+    if (!view || !tome || !ctx.dom.inject) {
+      clearReplyTome();
+      return;
+    }
+    const bubble = findBubble(tome.messageId);
+    if (!bubble) {
+      clearReplyTome();
+      return;
+    }
+    const stateKey = `${view.chatId}:${tome.messageId}:${tome.reply}`;
+    let ui = tomeUiState.get(stateKey);
+    if (!ui) {
+      ui = { tab: tome.defaultTab, compassOpen: false, expanded: false };
+      tomeUiState.set(stateKey, ui);
+    }
+    const drawKey = `${stateKey}:${JSON.stringify({ tome, ui, skip: view.skipOffer })}`;
+    if (tomeHost && tomeTargetId === tome.messageId && bubble.contains(tomeHost) && tomeDrawnKey === drawKey)
+      return;
+    if (!tomeHost || tomeTargetId !== tome.messageId || !bubble.contains(tomeHost)) {
+      clearReplyTome();
+      try {
+        tomeHost = ctx.dom.inject(bubble, '<div class="gm-tome-host"></div>', "beforeend");
+      } catch {
+        tomeHost = null;
+        return;
+      }
+      tomeTargetId = tome.messageId;
+    }
+    const redraw = () => {
+      tomeDrawnKey = "";
+      syncReplyTome();
+    };
+    tomeHost.replaceChildren();
+    if (tome.mode === "intimate" && !ui.expanded) {
+      const veil = el("div", "gm-tome-veil");
+      const left = el("div", "gm-tome-veil-left");
+      left.append(el("span", "gm-tome-veil-dot"), document.createTextNode("Grimoire has stepped back — story clocks and outside threads are paused while this scene plays out."));
+      const peek = el("button", "gm-tome-pill subtle", "Peek at Chronicle ▾");
+      peek.type = "button";
+      peek.addEventListener("click", () => {
+        ui.expanded = true;
+        redraw();
+      });
+      veil.append(left, peek);
+      tomeHost.append(veil);
+    } else if (tome.mode === "quiet" && !ui.expanded) {
+      const spine = el("div", "gm-tome-spine");
+      const left = el("div", "gm-tome-spine-left");
+      const dot = el("span", "gm-tome-pulse-dot");
+      dot.style.background = tome.pulse.color;
+      dot.style.boxShadow = `0 0 8px ${tome.pulse.color}`;
+      const castTab = tome.tabs.find((t) => t.id === "cast");
+      const worldTab = tome.tabs.find((t) => t.id === "world");
+      left.append(dot, document.createTextNode(`${tome.pulse.label} · ${castTab?.subLabel ?? "Quiet turn"} · ${worldTab?.subLabel ?? ""}`));
+      const actions = el("div", "gm-tome-spine-actions");
+      if (view.skipOffer?.options.length) {
+        const first = view.skipOffer.options[0];
+        const skipBtn = el("button", "gm-tome-pill", `⏳ ${first.label}`);
+        skipBtn.type = "button";
+        skipBtn.addEventListener("click", () => {
+          act("skip", { chatId: view.chatId, amount: first.hours, unit: "hours" });
+        });
+        const dismissBtn = el("button", "gm-tome-pill subtle", "Not now");
+        dismissBtn.type = "button";
+        dismissBtn.addEventListener("click", () => {
+          act("dismiss-skip", { chatId: view.chatId });
+        });
+        actions.append(skipBtn, dismissBtn);
+      }
+      if (tome.compass) {
+        const roomBtn = el("button", "gm-tome-pill", "❖ Read the Room ▾");
+        roomBtn.type = "button";
+        roomBtn.addEventListener("click", () => {
+          ui.expanded = true;
+          ui.compassOpen = true;
+          redraw();
+        });
+        actions.append(roomBtn);
+      }
+      const openBtn = el("button", "gm-tome-pill subtle", "Open Chronicle ▾");
+      openBtn.type = "button";
+      openBtn.addEventListener("click", () => {
+        ui.expanded = true;
+        redraw();
+      });
+      actions.append(openBtn);
+      spine.append(left, actions);
+      tomeHost.append(spine);
+    } else {
+      tomeHost.append(buildOpenTome(view, tome, ui, redraw));
+    }
+    tomeDrawnKey = drawKey;
   }
   async function refresh(forced = false) {
     if (destroyed)

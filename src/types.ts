@@ -5,9 +5,10 @@ import type { Notebook, Pace, Preferences, WaitSetting } from './notebook';
 import type { ReasoningMode } from './model';
 import type { FieldCheck, Recipe } from './tracker';
 import type { Glance, SkipOffer } from './skip';
+import type { TomeView } from './tome';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.31.9';
+export const VERSION = '0.32.0';
 export const MAX_VERSIONS = 16;
 
 /** One saved state of the notebook and the chat history it describes. */
@@ -92,8 +93,8 @@ export interface PlayerNote { id: string; text: string; at: number }
 export const TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 } as const;
 /** The quick check after each reply. An empty connection means the default decision connection; an empty model means the connection's model. */
 export interface QuickSettings { enabled: boolean; connectionId: string; model: string }
-export interface Settings { connectionId: string; /** Tried when the main connection declines a request. */ backupId: string; maxOutputTokens: number; reasoningMode: ReasoningMode; every: number; quick: QuickSettings; /** The most replies a planned development waits, as a size. */ wait: WaitSetting; /** List chats with a notebook on the home page. */ homeList: boolean; /** During intimate scenes: keep the story out until they end, or let urgent things in. */ intimate: 'protect' | 'allow'; /** Add Lumiverse's memories to the note when the preset doesn't already. */ memories: boolean }
-export const DEFAULT_SETTINGS: Settings = { connectionId: '', backupId: '', maxOutputTokens: 16000, reasoningMode: 'inherit', every: 8, quick: { enabled: false, connectionId: '', model: '' }, wait: 'medium', homeList: true, intimate: 'protect', memories: true };
+export interface Settings { connectionId: string; /** Tried when the main connection declines a request. */ backupId: string; maxOutputTokens: number; reasoningMode: ReasoningMode; every: number; quick: QuickSettings; /** The most replies a planned development waits, as a size. */ wait: WaitSetting; /** List chats with a notebook on the home page. */ homeList: boolean; /** During intimate scenes: keep the story out until they end, or let urgent things in. */ intimate: 'protect' | 'allow'; /** Add Lumiverse's memories to the note when the preset doesn't already. */ memories: boolean; /** Show the Paged Relic Tome chronicle card under the latest assistant reply. */ replyCard?: boolean }
+export const DEFAULT_SETTINGS: Settings = { connectionId: '', backupId: '', maxOutputTokens: 16000, reasoningMode: 'inherit', every: 8, quick: { enabled: false, connectionId: '', model: '' }, wait: 'medium', homeList: true, intimate: 'protect', memories: true, replyCard: true };
 export const DEFAULT_PREFERENCES: Preferences = { tone: 'balanced', twist: true, shape: 'auto', lockShape: false, size: 'auto' };
 
 export interface ChatView {
@@ -124,6 +125,8 @@ export interface ChatView {
   /** The mystery as the player may see it: the question and the clues they have found. Never the answer. */ mystery?: MysteryView | null;
   /** How much Lumiverse's Memory Cortex holds for this chat, and what the last reply got from it. Counts only. */
   memory?: MemoryView | null;
+  /** The spoiler-safe Relic Tome chronicle card attached beneath the latest assistant reply. */
+  tome?: TomeView | null;
 }
 /** A chat with a notebook, for the home page and the drawer. Names and times only. */
 export interface StoryListing { chatId: string; character: string; chatName: string; playedAt: number; enabled: boolean }

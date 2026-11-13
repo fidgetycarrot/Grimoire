@@ -11,6 +11,7 @@ Read "Who it is for" in README.md before changing anything. In short:
   Don't trade the second and third away for the first; they are much of what makes it fun over a long chat.
 - Features work without the player's attention. Anything that asks for input is optional.
 - Nothing outside the spoiler fold may reveal the notebook's plans or secrets.
-- Panel text uses plain, simple words.
+- Panel and under-reply chronicle text uses plain, simple, in-world words.
+- The Under-Reply Chronicle (`src/tome.ts`, rendered into the latest assistant reply bubble in `src/frontend.ts`) is both a spoiler-free pulse point (showing that Grimoire is working and what context it is feeding the narrator) and a reading-comprehension tool (`In Front of You` / `Read the Room`). Keep the `In Front of You` Hook Whisper collapsed by default so the player always reads the story reply first, keep tab labels self-explanatory (`Because You…`, `Clue Found` / `Story Beats`, `Who’s Here`, `World & Pulse`), fold to the slim spine on quiet turns and the veiled ribbon during protected intimate scenes, and never leak hidden truths, mystery answers, clue meanings, un-paid payoffs, or waiting/off-screen step text.
 
 Run `bun test` and `npx tsc --noEmit` before committing, and `npm run build` so `dist/` matches `src/`.

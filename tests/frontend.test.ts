@@ -8,6 +8,7 @@ import { MYSTERY_ANSWER, rawMystery, sampleNotebook } from './fixtures';
 import { mysteryView } from '../src/mystery';
 import { tidyNotebook } from '../src/tidy';
 import { markStories } from '../src/badges';
+import { buildTome } from '../src/tome';
 
 const cleanups: Array<() => void> = [];
 afterEach(() => { for (const fn of cleanups.splice(0)) fn(); });
@@ -17,8 +18,9 @@ const storyList = [{ chatId: 'chat-9', character: 'Riley', chatName: 'Comic-Con'
 function harness(chat: Partial<NonNullable<Snapshot['chat']>> | null = {}, settings: Partial<Snapshot['settings']> = {}) {
   const window = new Window({ url: 'https://lumiverse.example/' });
   Object.assign(globalThis, { document: window.document });
-  const root = window.document.createElement('div'), bar = window.document.createElement('div'), landing = window.document.createElement('div');
-  window.document.body.append(root, bar, landing);
+  const root = window.document.createElement('div'), bar = window.document.createElement('div'), landing = window.document.createElement('div'), bubble = window.document.createElement('div');
+  bubble.setAttribute('data-message-id', 'msg-1');
+  window.document.body.append(root, bar, landing, bubble);
   const opened: Array<{ ref: unknown; params: unknown }> = [];
   const state: Snapshot = {
     version: '0.1.0', permissions: ['generation', 'interceptor', 'chats', 'characters'], notice: '',
@@ -35,7 +37,12 @@ function harness(chat: Partial<NonNullable<Snapshot['chat']>> | null = {}, setti
   const ctx = {
     ui: { registerDrawerTab: () => ({ root, tabId: 'g', setBadge: () => {}, onActivate: () => () => {}, activate: () => {}, destroy: () => {} }),
       registerInputBarAction: () => ({ actionId: 'a', onClick: () => () => {}, destroy: () => {}, setLabel: (l: string) => extras.push(l), setSubtitle: () => {}, setEnabled: () => {} }), mount: (point: string) => point === 'landing_hero' ? landing : bar },
-    dom: { addStyle: () => () => {} }, events: { on: () => () => {} }, getActiveChat: () => ({ chatId: chat === null ? null : 'chat-1', characterId: 'card' }), ready: () => {},
+    dom: {
+      addStyle: () => () => {},
+      findMessageElement: (id: string) => (bubble.getAttribute('data-message-id') === id ? bubble : null) as unknown as Element | null,
+      inject: (target: Element, html: string) => { const wrap = window.document.createElement('div'); wrap.innerHTML = html; const child = (wrap.firstElementChild ?? wrap) as unknown as Element; target.append(child as never); return child; },
+      uninject: (wrapper: Element) => { wrapper.remove(); },
+    }, events: { on: () => () => {} }, getActiveChat: () => ({ chatId: chat === null ? null : 'chat-1', characterId: 'card' }), ready: () => {},
     host: { surfaces: { invoke: (ref: unknown, params: unknown) => { opened.push({ ref, params }); } } },
     onBackendMessage: (cb: (m: unknown) => void) => { receive = cb; return () => {}; },
     sendToBackend: (m: any) => { requests.push(m); queueMicrotask(() => {
@@ -46,7 +53,7 @@ function harness(chat: Partial<NonNullable<Snapshot['chat']>> | null = {}, setti
   } as unknown as SpindleFrontendContext;
   cleanups.push(setup(ctx));
   const button = (text: string) => Array.from(root.querySelectorAll('button')).find(b => b.textContent === text) as unknown as HTMLButtonElement | undefined;
-  return { root, bar, landing, opened, state, requests, button, extras, window, changed: () => receive({ type: 'grimoire:changed' }) };
+  return { root, bar, landing, bubble, opened, state, requests, button, extras, window, changed: () => receive({ type: 'grimoire:changed' }) };
 }
 
 describe('the panel', () => {
@@ -353,5 +360,64 @@ describe('the mystery in the panel', () => {
     box.checked = true;
     ([...h.root.querySelectorAll('button')].find(b => b.textContent === 'Write the notebook') as unknown as HTMLButtonElement).click(); await tick();
     expect(h.requests.find(r => r.action === 'create')!.input.preferences.mystery).toBe(true);
+  });
+});
+
+describe('the under-reply chronicle tome', () => {
+  const makeTome = (modeOverride?: 'quiet' | 'intimate') => {
+    const raw: any = sampleNotebook();
+    raw.mystery = rawMystery();
+    const nb = stamp(validateNotebook(tidyNotebook(raw)), 24);
+    nb.mystery!.clues[1] = { ...nb.mystery!.clues[1], status: 'found', foundAt: modeOverride ? 4 : 10 };
+    if (modeOverride === 'quiet') nb.rhythm = 'calm';
+    return buildTome({
+      messageId: 'msg-1',
+      reply: 10,
+      latestReply: 'Mira sets the lantern on the wet planks. "Someone knew where the spare key hung," she says. "What do we tell Oswin when he asks?"',
+      recentChat: 'You check the vestry wall. Mira sets the lantern on the wet planks.',
+      narrated: 'Mira sets the lantern on the wet planks.',
+      location: 'The Chapel Vestry',
+      notebook: nb,
+      pace: 'auto',
+      clock: { day: 2, hour: 20, label: 'Day 2, 20:00' },
+      sources: { day: 'tracker', hour: 'tracker', exact: true },
+      moment: { hours: 44, reply: 10 },
+      intimate: modeOverride === 'intimate',
+      seen: { mira: 10 },
+      quick: { at: Date.now(), ok: true, error: '' },
+      memory: null,
+      skipOffer: null,
+    });
+  };
+
+  test('injects into the latest reply bubble, keeps Hook Whisper collapsed by default, and switches tabs cleanly', async () => {
+    const h = harness({ tome: makeTome() }); await tick();
+    const host = h.bubble.querySelector('.gm-tome-host') as unknown as HTMLElement;
+    expect(host).not.toBeNull();
+    expect(host.textContent).toContain('In Front of You');
+    expect(host.textContent).toContain('Read the Room ▾');
+    expect(host.querySelector('.gm-tome-compass-drawer')).toBeNull();
+
+    // Unfold the Hook Whisper clasp
+    (host.querySelector('.gm-tome-clasp') as unknown as HTMLButtonElement).click();
+    expect(host.querySelector('.gm-tome-compass-drawer')).not.toBeNull();
+    expect(host.textContent).toContain('The Moment in Plain Sight');
+    expect(host.textContent).toContain('Waiting on Your Move');
+
+    // Switch to Who's Here tab
+    const castTab = [...host.querySelectorAll('.gm-tome-tab')].find(b => b.textContent?.includes('Who’s Here')) as unknown as HTMLButtonElement;
+    castTab.click();
+    expect(host.textContent).toContain('IN THE SCENE · 1 PRESENT');
+    expect(host.textContent).toContain('Mira in the room');
+  });
+
+  test('renders slim spine in quiet scenes and hushed ribbon in protected intimate scenes', async () => {
+    const quiet = harness({ tome: makeTome('quiet') }); await tick();
+    expect(quiet.bubble.querySelector('.gm-tome-spine')).not.toBeNull();
+    expect(quiet.bubble.textContent).toContain('Open Chronicle ▾');
+
+    const intimate = harness({ tome: makeTome('intimate') }); await tick();
+    expect(intimate.bubble.querySelector('.gm-tome-veil')).not.toBeNull();
+    expect(intimate.bubble.textContent).toContain('Grimoire has stepped back');
   });
 });

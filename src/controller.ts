@@ -20,6 +20,7 @@ import type { CortexResultDTO } from 'lumiverse-spindle-types';
 import { plain, plainBlock, tidyNotebook } from './tidy';
 import { applyQuick, quickError, quickQuestions, quickState } from './quick';
 import { glance, skipOffer } from './skip';
+import { buildTome } from './tome';
 import type { DecisionResult } from 'lumiverse-spindle-types';
 import { checkRecipe, guessRecipe, readField, readTracker, trackerText, validateRecipe, type FieldType, type Recipe } from './tracker';
 import { CHAPTER_DONE, CHAPTER_WORKING, DEFAULT_PREFERENCES, DEFAULT_SETTINGS, MAX_VERSIONS, QUICK_LOG, TALK_LIMITS, type QuickRecord, VERSION, type ChatState, type PlayerNote, type TalkLine, type ChatView, type MemoryView, type Job, type Settings, type Snapshot, type StoryListing, type Version } from './types';
@@ -185,6 +186,7 @@ export function validSettings(value: unknown): Settings {
     homeList: v.homeList !== false,
     intimate: v.intimate === 'allow' ? 'allow' : 'protect',
     memories: v.memories !== false,
+    replyCard: v.replyCard !== false,
   };
 }
 
@@ -340,6 +342,30 @@ export class NotebookController {
       // Before a notebook exists, say how much of a long chat has to be read first (one request per part).
       const earlierParts = messages && !live ? planHistory(conversation(messages)).earlier.length : 0;
       const notebook = live?.version.notebook ?? null;
+      const settings = await this.settings();
+      const mem = state.enabled ? this.memoryView(chatId) : null;
+      const offer = live && state.enabled && state.job?.status !== 'running' && !state.skipHours && !state.intimateNow && !this.reworking(state, live) ? skipOffer(live.version.notebook, live.moment, live.clock, state.skipDismissedAt) : null;
+      const lastTurn = live ? [...live.turns].reverse().find(t => t.role === 'assistant' && !t.ooc) : undefined;
+      const tome = live && notebook && state.enabled && settings.replyCard !== false && lastTurn ? buildTome({
+        messageId: lastTurn.id,
+        reply: live.moment.reply ?? 0,
+        latestReply: lastTurn.content,
+        recentChat: live.turns.slice(-4).map(t => t.content).join('\n'),
+        narrated: this.narrated(live),
+        trackerPresent: this.listed(live),
+        location: live.values.location,
+        notebook,
+        pace: state.pace,
+        clock: live.clock,
+        sources: live.sources,
+        moment: live.moment,
+        intimate: state.intimateNow && settings.intimate === 'protect',
+        seen: state.seen,
+        buildingId: state.building,
+        quick: state.quick,
+        memory: mem,
+        skipOffer: offer,
+      }) : null;
       return {
         chatId, name: info.name, supported: info.supported, reason: info.reason, enabled: state.enabled, pace: state.pace, preferences: state.preferences,
         // Only code-made words reach the panel outside the spoiler fold; a model-written line could give something away.
@@ -347,8 +373,8 @@ export class NotebookController {
         checks: live ? state.checks : [], needsCheck: state.needsCheck || (live && !live.matched ? 'The chat changed before the notebook was written.' : ''),
         job: state.job, updatedAt: state.updatedAt, repliesSinceCheck: live ? this.repliesSince(live) : 0, skipHours: state.skipHours, notebook, behind: !!live && live.index !== state.versions.length - 1, earlierParts, quick: state.quick, dueIds: live ? dueThreads(live.version.notebook, live.moment).map(d => d.thread.id) : [],
         glance: live ? glance(live.version.notebook, live.moment) : null, reworking: !!live && this.reworking(state, live),
-        talk: state.talk, notes: state.notes, quickLog: state.quickLog, follow: followRate(state.quickLog), recap: notebook?.recap ?? '', mystery: mysteryView(notebook?.mystery), canUndo: this.undoable(state) !== null, spent: !!notebook && !storyLeft(notebook), memory: state.enabled ? this.memoryView(chatId) : null,
-        skipOffer: live && state.enabled && state.job?.status !== 'running' && !state.skipHours && !state.intimateNow && !this.reworking(state, live) ? skipOffer(live.version.notebook, live.moment, live.clock, state.skipDismissedAt) : null,
+        talk: state.talk, notes: state.notes, quickLog: state.quickLog, follow: followRate(state.quickLog), recap: notebook?.recap ?? '', mystery: mysteryView(notebook?.mystery), canUndo: this.undoable(state) !== null, spent: !!notebook && !storyLeft(notebook), memory: mem,
+        skipOffer: offer, tome,
       };
     });
   }
