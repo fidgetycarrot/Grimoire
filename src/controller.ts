@@ -863,7 +863,7 @@ export class NotebookController {
   private undoable(state: ChatState): TalkLine | null {
     const line = [...state.talk].reverse().find(l => l.from === 'grimoire' && !l.asked);
     const last = state.versions.at(-1);
-    return line?.versionAt && !line.undone && [TALK_REASON, PUSH_REASON, CHAPTER_REASON].includes(last?.reason ?? '') && last!.at === line.versionAt ? line : null;
+    return line?.versionAt && !line.undone && [TALK_REASON, PUSH_REASON, CHAPTER_REASON, MYSTERY_REASON].includes(last?.reason ?? '') && last!.at === line.versionAt ? line : null;
   }
   /** Put the plans back as they were before the last answer, and unpin its note. */
   async undoTalk(chatId: string) {
