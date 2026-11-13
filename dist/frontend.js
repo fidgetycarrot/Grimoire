@@ -105,7 +105,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.31.4";
+var VERSION = "0.31.5";
 var CHAPTER_WORKING = "Starting a new chapter";
 var CHAPTER_DONE = "New chapter ready";
 
@@ -281,6 +281,11 @@ function setup(ctx) {
   }
   const chatId = () => ctx.getActiveChat().chatId ?? null;
   async function act(action, input = {}) {
+    if (typeof input.chatId === "string" && input.chatId !== chatId()) {
+      editing = false;
+      await refresh(true);
+      throw new Error("The drawer was still showing another chat. It has caught up now; press the button again.");
+    }
     const result = await rpc.request(action, input);
     await refresh(true);
     return result;

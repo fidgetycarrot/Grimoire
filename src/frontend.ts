@@ -96,6 +96,12 @@ export function setup(ctx: SpindleFrontendContext) {
   }
   const chatId = () => ctx.getActiveChat().chatId ?? null;
   async function act<T>(action: string, input: Record<string, unknown> = {}): Promise<T> {
+    // The drawer can lag behind a chat switch (a slow answer, or a box being typed in). A button pressed then must not
+    // act on the chat the drawer was still showing: it would change a story the player is not looking at.
+    if (typeof input.chatId === 'string' && input.chatId !== chatId()) {
+      editing = false; await refresh(true);
+      throw new Error('The drawer was still showing another chat. It has caught up now; press the button again.');
+    }
     const result = await rpc.request<T>(action, input); await refresh(true); return result;
   }
 

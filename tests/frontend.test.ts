@@ -15,6 +15,7 @@ const tick = (ms = 10) => new Promise(r => setTimeout(r, ms));
 
 const storyList = [{ chatId: 'chat-9', character: 'Riley', chatName: 'Comic-Con', playedAt: Date.now() - 3_600_000, enabled: true }, { chatId: 'chat-8', character: 'Mira', chatName: 'Low Water', playedAt: Date.now() - 86_400_000 * 2, enabled: false }];
 function harness(chat: Partial<NonNullable<Snapshot['chat']>> | null = {}, settings: Partial<Snapshot['settings']> = {}) {
+  const active = { id: 'chat-1' };
   const window = new Window({ url: 'https://lumiverse.example/' });
   Object.assign(globalThis, { document: window.document });
   const root = window.document.createElement('div'), bar = window.document.createElement('div'), landing = window.document.createElement('div');
@@ -35,7 +36,7 @@ function harness(chat: Partial<NonNullable<Snapshot['chat']>> | null = {}, setti
   const ctx = {
     ui: { registerDrawerTab: () => ({ root, tabId: 'g', setBadge: () => {}, onActivate: () => () => {}, activate: () => {}, destroy: () => {} }),
       registerInputBarAction: () => ({ actionId: 'a', onClick: () => () => {}, destroy: () => {}, setLabel: (l: string) => extras.push(l), setSubtitle: () => {}, setEnabled: () => {} }), mount: (point: string) => point === 'landing_hero' ? landing : bar },
-    dom: { addStyle: () => () => {} }, events: { on: () => () => {} }, getActiveChat: () => ({ chatId: chat === null ? null : 'chat-1', characterId: 'card' }), ready: () => {},
+    dom: { addStyle: () => () => {} }, events: { on: () => () => {} }, getActiveChat: () => ({ chatId: chat === null ? null : active.id, characterId: 'card' }), ready: () => {},
     host: { surfaces: { invoke: (ref: unknown, params: unknown) => { opened.push({ ref, params }); } } },
     onBackendMessage: (cb: (m: unknown) => void) => { receive = cb; return () => {}; },
     sendToBackend: (m: any) => { requests.push(m); queueMicrotask(() => {
@@ -46,7 +47,7 @@ function harness(chat: Partial<NonNullable<Snapshot['chat']>> | null = {}, setti
   } as unknown as SpindleFrontendContext;
   cleanups.push(setup(ctx));
   const button = (text: string) => Array.from(root.querySelectorAll('button')).find(b => b.textContent === text) as unknown as HTMLButtonElement | undefined;
-  return { root, bar, landing, opened, state, requests, button, extras, window, changed: () => receive({ type: 'grimoire:changed' }) };
+  return { root, bar, landing, opened, state, requests, button, extras, window, changed: () => receive({ type: 'grimoire:changed' }), setChat: (id: string) => { active.id = id; } };
 }
 
 describe('the panel', () => {
@@ -355,3 +356,14 @@ describe('the mystery in the panel', () => {
     expect(h.requests.find(r => r.action === 'create')!.input.preferences.mystery).toBe(true);
   });
 });
+
+describe('a drawer that lags behind a chat switch', () => {
+  test('a button pressed for the chat the drawer was still showing does nothing, and the drawer catches up', async () => {
+    const h = harness(); await tick();
+    h.setChat('chat-2');
+    ([...h.root.querySelectorAll('button')].find(b => b.textContent === 'Add a mystery') as unknown as HTMLButtonElement).click(); await tick(20);
+    expect(h.requests.some(r => r.action === 'mystery')).toBe(false);
+    expect(h.root.ownerDocument.body.textContent + h.root.textContent).toContain('The drawer was still showing another chat');
+  });
+});
+
