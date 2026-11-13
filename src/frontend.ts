@@ -371,10 +371,13 @@ export function setup(ctx: SpindleFrontendContext) {
   /** What the player enjoys: what Grimoire has worked out from how they play, and what they choose to tell it. Closed until opened. */
   /** The mystery, as the player may see it: the question and the clues they have found. Never the answer. */
   function renderMystery(view: ChatView) {
-    const m = view.mystery, open = m?.status === 'open';
-    const d = details('Mystery', open ? `${m!.found.length} ${m!.found.length === 1 ? 'clue' : 'clues'} found` : m ? 'Finished' : 'Add one to this story', open);
+    const m = view.mystery, open = m?.status === 'open', begun = !!m && (!open || m.found.length > 0);
+    const d = details('Mystery', open ? `${m!.found.length} ${m!.found.length === 1 ? 'clue' : 'clues'} found` : m ? 'Finished' : 'Add one to this story', open && begun);
     if (m) {
-      d.body.append(el('h4', '', open ? 'The mystery' : m.status === 'solved' ? 'Solved. You worked it out.' : 'It came out before you named the answer.'), el('p', '', m.question));
+      d.body.append(
+        el('h4', '', open ? 'The mystery' : m.status === 'solved' ? 'Solved. You worked it out.' : 'It came out before you named the answer.'),
+        el('p', '', begun ? m.question : 'A mystery is waiting in this story. What it is about stays hidden until you come across its first sign in play.'),
+      );
       d.body.append(el('h4', '', 'Clues you have found'));
       if (m.found.length) { const list = el('ul'); for (const clue of m.found) list.append(el('li', 'gm-small', clue)); d.body.append(list); }
       else d.body.append(el('p', 'gm-small', 'None yet. They turn up as you play: look around, ask people, pay attention.'));

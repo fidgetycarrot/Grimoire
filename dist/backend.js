@@ -3470,18 +3470,27 @@ var PACE_NAMES = {
   fast: "Fast"
 };
 var end3 = (text) => {
-  const trimmed = text.trim().replace(/[.!?]+$/, "");
-  return trimmed ? `${trimmed}.` : "";
+  const trimmed = text.trim().replace(/(?:\.{2,}|\u2026)+(["'\u201D\u2019)]*)$/g, "$1").trim();
+  if (!trimmed)
+    return "";
+  if (/[.!?]["'\u201D\u2019)]*$/.test(trimmed))
+    return trimmed;
+  const quoteMatch = trimmed.match(/^(.*?)(["'\u201D\u2019)]+)$/);
+  if (quoteMatch && quoteMatch[1])
+    return `${quoteMatch[1]}.${quoteMatch[2]}`;
+  return `${trimmed}.`;
 };
 function sentences(prose) {
-  const clean = prose.replace(/\s+/g, " ").trim();
+  const clean = prose.replace(/(?:\.{3}|\u2026)+$/g, ".").replace(/\s+/g, " ").trim();
   if (!clean)
     return [];
-  const matches = clean.match(/[^.!?]+[.!?]+["'\u201D\u2019)]*|[^.!?]+$/g) ?? [clean];
-  return matches.map((s) => s.trim()).filter((s) => s.length >= 4);
+  const token = "\uE000";
+  const safe = clean.replace(/\.{3}|\u2026/g, token);
+  const matches = safe.match(/[^.!?]+[.!?]+["'\u201D\u2019)]*|[^.!?]+$/g) ?? [safe];
+  return matches.map((s) => s.replaceAll(token, "\u2026").trim()).filter((s) => s.length >= 4).map((s) => s.replace(/(?:\.{2,}|\u2026)+(["'\u201D\u2019)]*)$/, ".$1"));
 }
 function extractLastQuote(prose) {
-  const quotes = [...prose.matchAll(/(?:\u201C([^\u201D]{6,220})\u201D|"([^"]{6,220})")/g)].map((m) => (m[1] ?? m[2] ?? "").trim()).filter((q) => q.length >= 6 && !/^[a-z0-9_-]+$/i.test(q));
+  const quotes = [...prose.matchAll(/(?:\u201C([^\u201D]{6,600})\u201D|"([^"]{6,600})")/g)].map((m) => (m[1] ?? m[2] ?? "").trim().replace(/(?:\.{2,}|\u2026)+$/, "")).filter((q) => q.length >= 6 && !/^[a-z0-9_-]+$/i.test(q));
   return quotes.at(-1) ?? null;
 }
 function speakerNearQuote(prose, quote, present) {
@@ -3497,11 +3506,26 @@ function speakerNearQuote(prose, quote, present) {
   }
   return present.length === 1 ? present[0] : null;
 }
-function distillScene(latestReply, notebook, present, reply, location, buildingLine) {
-  const clean = readable(latestReply, 4000).replace(/\[[a-z][\w:-]*\s+[^\]]*\]/gi, " ").replace(/\s+/g, " ").trim();
+function describeWhereabouts(at, location) {
+  if (at) {
+    const { building, floor, room } = at;
+    if (room && floor) {
+      const near = room.near.length ? `, next to ${room.near.join(", ")}` : "";
+      return `You are in the ${room.name.toLowerCase()} (${floor.name.toLowerCase()} of ${building.name})${near}.`;
+    }
+    return `You are in ${building.name}.`;
+  }
+  if (location)
+    return `You are at ${end3(location)}`;
+  return "";
+}
+function distillScene(latestReply, notebook, present, reply, location, atBuilding) {
+  const clean = readable(latestReply, 50000).replace(/\[[a-z][\w:-]*\s+[^\]]*\]/gi, " ").replace(/\s+/g, " ").trim();
   const lines = sentences(clean);
-  const tail = lines.slice(-2).join(" ").trim();
-  const gist = fit(tail || notebook.recap || notebook.summary || notebook.story.question, 340);
+  const lastTwo = lines.slice(-2).join(" ").trim();
+  const lastOne = (lines.at(-1) ?? "").trim();
+  const rawGist = (lastTwo.length > 480 && lastOne.length >= 40 ? lastOne : lastTwo) || notebook.recap || "";
+  const gist = end3(rawGist);
   if (!gist)
     return null;
   const footholds = [];
@@ -3509,26 +3533,27 @@ function distillScene(latestReply, notebook, present, reply, location, buildingL
   if (quote) {
     const speaker = speakerNearQuote(clean, quote, present);
     const isQuestion = quote.trim().endsWith("?");
+    const cleanQuote = /[.!?]$/.test(quote) ? quote : `${quote}.`;
     footholds.push({
       kind: isQuestion ? "QUESTION IN THE AIR" : "SPOKEN IN THE SCENE",
       label: speaker ? `${speaker.name}\u2019s Words` : isQuestion ? "Question Put to You" : "Spoken to You",
-      prompt: `\u201C${fit(quote, 150)}\u201D \u2014 ${isQuestion ? "Waiting on your answer, or you can turn the question back." : "You can answer, press further, or act on what is around you."}`
+      prompt: `\u201C${cleanQuote}\u201D \u2014 ${isQuestion ? "Waiting on your answer, or you can turn the question back." : "You can answer, press further, or act on what is around you."}`
     });
   }
   const newClue = notebook.mystery?.clues.find((c) => c.status === "found" && c.foundAt === reply);
   if (newClue) {
     footholds.push({
       kind: "CLUE IN REACH",
-      label: newClue.where ? fit(newClue.where, 48) : "New Clue Noticed",
-      prompt: `${end3(fit(newClue.text, 160))} You can inspect it closer, ask someone here about it, or keep it to yourself.`
+      label: newClue.where || "New Clue Noticed",
+      prompt: `${end3(newClue.text)} You can inspect it closer, ask someone here about it, or keep it to yourself.`
     });
   } else {
     const shownNow = notebook.threads.flatMap((t) => t.steps.filter((s) => s.status === "shown" && s.atReply === reply).map((s) => ({ thread: t, step: s })))[0];
     if (shownNow) {
       footholds.push({
         kind: "WHAT JUST LANDED",
-        label: fit(shownNow.thread.title, 48),
-        prompt: `${end3(fit(shownNow.step.sign || shownNow.step.text, 160))} What you do with it next is yours.`
+        label: shownNow.thread.title,
+        prompt: `${end3(shownNow.step.sign || shownNow.step.text)} What you do with it next is yours.`
       });
     }
   }
@@ -3537,32 +3562,33 @@ function distillScene(latestReply, notebook, present, reply, location, buildingL
       break;
     if (footholds.some((f) => f.label.startsWith(person.name)))
       continue;
-    const doing = person.doing ? end3(fit(person.doing, 140)) : "Here with you in the scene.";
+    const doing = person.doing ? end3(person.doing) : "Here with you in the scene.";
     footholds.push({
       kind: "IN THE ROOM",
-      label: `${person.name}${person.role ? ` \xB7 ${fit(person.role, 28)}` : ""}`,
+      label: `${person.name}${person.role ? ` \xB7 ${person.role}` : ""}`,
       prompt: `${doing} You can talk with ${person.name}, watch their reaction, or make a move.`
     });
   }
-  if (footholds.length < 3 && (location || buildingLine)) {
+  const placeSentence = describeWhereabouts(atBuilding ?? null, location);
+  if (footholds.length < 3 && placeSentence) {
     footholds.push({
       kind: "LAY OF THE LAND",
-      label: fit(location || "Where You Stand", 48),
-      prompt: buildingLine ? end3(fit(buildingLine.replace(/^Layout of /i, ""), 160)) : `You are at ${end3(fit(location, 120))} You can stay in the moment or move somewhere new.`
+      label: location || atBuilding?.building.name || "Where You Stand",
+      prompt: `${placeSentence} You can stay in the moment or move somewhere new.`
     });
   }
   if (footholds.length < 3 && notebook.recap) {
     footholds.push({
       kind: "THE STORY SO FAR",
       label: "Where Things Stand",
-      prompt: fit(notebook.recap, 170)
+      prompt: end3(notebook.recap)
     });
   }
   if (!footholds.length) {
     footholds.push({
       kind: "THE SCENE AT HAND",
       label: "Your Move",
-      prompt: fit(notebook.story.question || "React to what is in front of you, ask a question, or take the scene somewhere new.", 170)
+      prompt: "React to what is in front of you, ask a question, or take the scene somewhere new."
     });
   }
   const whisperLine = footholds.map((f) => f.label).join("  \xB7  ");
@@ -3578,14 +3604,14 @@ function buildTome(input) {
   const present = presentPeople(notebook, input.narrated || input.recentChat, input.trackerPresent);
   const named = spokenOf(notebook, input.recentChat, present);
   const atBuilding = whereabouts(notebook.buildings ?? [], input.location, input.buildingId ?? "");
-  const buildingText = atBuilding ? layoutLine(atBuilding) : undefined;
   const isChapterStart = notebook.arc.startReply !== undefined && notebook.arc.startReply === reply && reply > 0;
   const stageName = STAGE_NAMES[notebook.arc.stage] ?? notebook.arc.stage;
   const mainThread = notebook.threads.find((t) => t.id === notebook.arc.main);
+  const mainHasShown = !!mainThread?.steps.some((s) => s.status === "shown");
   const chapter = isChapterStart ? {
     label: notebook.arc.opening === "chapter" ? "New Chapter" : "Opening Chapter",
-    title: mainThread?.title || stageName || "A New Part Begins",
-    recap: notebook.recap || fit(notebook.story.question, 180)
+    title: (mainHasShown ? mainThread?.title : "") || stageName || "A New Part Begins",
+    recap: notebook.recap ? end3(notebook.recap) : "A new part of your story is under way."
   } : null;
   const paidSeeds = notebook.seeds.filter((s) => s.status === "paid").sort((a, b) => (b.paidAt ?? 0) - (a.paidAt ?? 0));
   const cameOut = [...notebook.story.cameOut].sort((a, b) => (b.atReply ?? 0) - (a.atReply ?? 0));
@@ -3599,8 +3625,8 @@ function buildTome(input) {
   for (const s of paidSeeds.slice(0, 3)) {
     becauseItems.push({
       badge: s.paidAt === reply ? "PAID OFF NOW" : s.plantedAt !== undefined ? `FROM REPLY ${s.plantedAt}` : "CALLBACK",
-      label: fit(s.detail, 70),
-      detail: end3(fit(s.payoff, 180)),
+      label: end3(s.detail),
+      detail: end3(s.payoff),
       highlight: s.paidAt === reply
     });
   }
@@ -3608,7 +3634,7 @@ function buildTome(input) {
     becauseItems.push({
       badge: r.atReply === reply ? "CAME OUT NOW" : r.atReply !== undefined ? `REPLY ${r.atReply}` : "KNOWN FACT",
       label: "Out in the Open",
-      detail: end3(fit(r.text, 180)),
+      detail: end3(r.text),
       highlight: r.atReply === reply
     });
   }
@@ -3616,7 +3642,7 @@ function buildTome(input) {
     becauseItems.push({
       badge: "STILL FELT",
       label: t.title,
-      detail: end3(fit(t.scar, 160))
+      detail: end3(t.scar)
     });
   }
   for (const c of playerCovers.slice(0, 2)) {
@@ -3624,33 +3650,33 @@ function buildTome(input) {
     becauseItems.push({
       badge: c.status === "strained" ? "DOUBTED LIE" : "YOUR WORD",
       label: `Told to ${whoHeard}`,
-      detail: `\u201C${fit(c.said, 120)}\u201D${c.status === "strained" ? " \u2014 starting to wear thin." : " \u2014 remembered when they are around."}`
+      detail: `\u201C${end3(c.said)}\u201D${c.status === "strained" ? " \u2014 starting to wear thin." : " \u2014 remembered when they are around."}`
     });
   }
   const topBecause = paidNow ? {
     sub: paidNow.plantedAt !== undefined ? `From Reply #${paidNow.plantedAt}` : "Callback landed",
     kicker: `PAST DETAIL PAID OFF${paidNow.plantedAt !== undefined ? ` \xB7 PLANTED AT REPLY #${paidNow.plantedAt}` : ""}`,
-    title: fit(paidNow.detail, 110),
-    body: end3(fit(paidNow.payoff, 240))
+    title: end3(paidNow.detail),
+    body: end3(paidNow.payoff)
   } : truthNow ? {
     sub: "Secret came out",
     kicker: "NOW ESTABLISHED \xB7 OUT IN THE OPEN",
-    title: fit(truthNow.text, 110),
+    title: end3(truthNow.text),
     body: "Grimoire marked this as known to you now, so people stop acting as if it were still secret."
   } : paidSeeds[0] ? {
     sub: `${paidSeeds.length} paid \xB7 ${plantedCount} planted`,
     kicker: "CONTINUITY & CALLBACKS \xB7 WHAT CAME BACK",
-    title: fit(paidSeeds[0].detail, 110),
-    body: end3(fit(paidSeeds[0].payoff, 240))
+    title: end3(paidSeeds[0].detail),
+    body: end3(paidSeeds[0].payoff)
   } : scars[0] ? {
     sub: "Lasting mark",
     kicker: "STILL FELT FROM EARLIER",
     title: scars[0].title,
-    body: end3(fit(scars[0].scar, 240))
+    body: end3(scars[0].scar)
   } : playerCovers[0] ? {
     sub: `${playerCovers.length} cover ${playerCovers.length === 1 ? "story" : "stories"}`,
     kicker: "WHAT PEOPLE REMEMBER YOU SAID",
-    title: `\u201C${fit(playerCovers[0].said, 90)}\u201D`,
+    title: `\u201C${end3(playerCovers[0].said)}\u201D`,
     body: "Grimoire reminds the narrator of cover stories and promises you have made whenever those people are in the scene."
   } : {
     sub: plantedCount ? `${plantedCount} planted so far` : "Watching your choices",
@@ -3673,6 +3699,7 @@ function buildTome(input) {
     seal: true
   };
   let clueTab;
+  const foundCluesCount = notebook.mystery ? notebook.mystery.clues.filter((c) => c.status === "found").length : 0;
   if (notebook.mystery) {
     const m = notebook.mystery;
     const found = m.clues.filter((c) => c.status === "found").sort((a, b) => (b.foundAt ?? 0) - (a.foundAt ?? 0));
@@ -3682,15 +3709,15 @@ function buildTome(input) {
     const newest = foundNow ?? found[0];
     const items = found.slice(0, 5).map((c, idx) => ({
       badge: c.foundAt === reply ? "FOUND NOW" : c.foundAt !== undefined ? `REPLY ${c.foundAt}` : `CLUE ${found.length - idx}`,
-      label: c.where ? fit(c.where, 50) : "Discovered Clue",
-      detail: end3(fit(c.text, 190)),
+      label: c.where || "Discovered Clue",
+      detail: end3(c.text),
       highlight: c.foundAt === reply
     }));
     for (const t of m.theories.slice(-2).reverse()) {
       items.push({
         badge: t.verdict === "right" ? "SOLVED" : "YOUR GUESS",
         label: "Theory Tested in Chat",
-        detail: `\u201C${fit(t.text, 150)}\u201D`,
+        detail: `\u201C${end3(t.text)}\u201D`,
         highlight: t.atReply === reply
       });
     }
@@ -3698,11 +3725,11 @@ function buildTome(input) {
       id: "clue",
       icon: "\u25C6",
       short: "Clue Found",
-      subLabel: m.status === "solved" ? "Mystery solved" : m.status === "revealed" ? "Truth came out" : `${found.length} of ${m.clues.length} found`,
+      subLabel: m.status === "solved" ? "Mystery solved" : m.status === "revealed" ? "Truth came out" : found.length ? `${found.length} of ${m.clues.length} found` : "None found yet",
       isNew,
       kicker: m.status === "solved" ? "MYSTERY SOLVED \xB7 CASE CLOSED" : m.status === "revealed" ? "MYSTERY ENDED \xB7 TRUTH CAME OUT" : `MYSTERY LEDGER \xB7 ${found.length} OF ${m.clues.length} CLUES DISCOVERED`,
-      title: newest ? fit(newest.text, 120) : fit(m.question, 120),
-      body: newest ? `Mystery question: ${end3(fit(m.question, 180))}${newest.where ? ` Noticed at: ${end3(fit(newest.where, 90))}` : ""}` : `Mystery question: ${end3(fit(m.question, 200))} Clues appear in the story when you are in the right place or with someone who holds one.`,
+      title: m.status !== "open" ? end3(m.question) : newest ? end3(newest.text) : "No clues discovered yet",
+      body: m.status !== "open" ? m.status === "solved" ? "You pieced together the mystery in the chat. The full truth is now in play." : "The mystery has come out in the story, and everyone in the scene can now react to it." : newest ? `${newest.where ? `Noticed at ${end3(newest.where)} ` : ""}Grimoire recorded this clue from the chat. What it points to stays hidden until you work it out.` : "A mystery is woven into this story. Its subject and answer stay hidden until you come across its clues in play.",
       items,
       footerLeft: m.status === "open" ? "The narrator does not know the answer while open" : `Mystery ${m.status}`,
       footerRight: `${found.length} of ${m.clues.length} clues found`,
@@ -3716,7 +3743,7 @@ function buildTome(input) {
     const items = shownSteps.slice(0, 4).map((x) => ({
       badge: x.step.atReply === reply ? "HAPPENED NOW" : x.step.atReply !== undefined ? `REPLY ${x.step.atReply}` : "SHOWN",
       label: x.thread.title,
-      detail: end3(fit(x.step.sign || x.step.text, 180)),
+      detail: end3(x.step.sign || x.step.text),
       highlight: x.step.atReply === reply
     }));
     clueTab = {
@@ -3726,10 +3753,10 @@ function buildTome(input) {
       subLabel: shownNow ? "New beat shown" : `${shownSteps.length} shown \xB7 ${openCount} open`,
       isNew: !!shownNow,
       kicker: `STORY DEVELOPMENTS \xB7 ${openCount} OPEN ${openCount === 1 ? "STORYLINE" : "STORYLINES"}`,
-      title: latest ? fit(latest.step.sign || latest.step.text, 120) : fit(notebook.story.question, 120),
-      body: latest ? `From storyline \u201C${latest.thread.title}\u201D. Grimoire marked this development as shown so the narrator moves on to what comes next.` : `Main question: ${end3(fit(notebook.story.question, 200))}`,
+      title: latest ? end3(latest.step.sign || latest.step.text) : "Storylines are in motion",
+      body: latest ? `From storyline \u201C${latest.thread.title}\u201D. Grimoire marked this development as shown so the narrator moves on to what comes next.` : notebook.recap ? end3(notebook.recap) : "Grimoire is pacing the open storylines in the background; developments appear here once they play out in the chat.",
       items,
-      footerLeft: mainThread ? `Main storyline: ${mainThread.title}` : `${openCount} storylines in play`,
+      footerLeft: mainHasShown && mainThread ? `Main storyline: ${mainThread.title}` : `${openCount} ${openCount === 1 ? "storyline" : "storylines"} in play`,
       footerRight: `${shownSteps.length} ${shownSteps.length === 1 ? "development" : "developments"} shown so far`
     };
   }
@@ -3738,16 +3765,16 @@ function buildTome(input) {
     const hasSheet = !!(p.sheet || p.own);
     castItems.push({
       badge: hasSheet ? "SHEET IN NOTE" : "VOICE IN NOTE",
-      label: `${p.name}${p.role ? ` \xB7 ${fit(p.role, 36)}` : ""}`,
-      detail: `${p.doing ? end3(fit(p.doing, 140)) : "In the scene."}${hasSheet ? " Full character sheet active." : " Voice and goals active."}`,
+      label: `${p.name}${p.role ? ` \xB7 ${p.role}` : ""}`,
+      detail: `${p.doing ? end3(p.doing) : "In the scene."}${hasSheet ? " Full character sheet active." : " Voice and goals active."}`,
       highlight: true
     });
   }
   for (const p of named.slice(0, 3)) {
     castItems.push({
       badge: "KEPT OFF-SCREEN",
-      label: `${p.name}${p.role ? ` \xB7 ${fit(p.role, 36)}` : ""}`,
-      detail: `Mentioned only \u2014 Grimoire told the narrator they stay busy elsewhere (${fit(p.doing || "with their own day", 110)}) so a name being said doesn\u2019t walk them in.`
+      label: `${p.name}${p.role ? ` \xB7 ${p.role}` : ""}`,
+      detail: `Mentioned only \u2014 Grimoire told the narrator they stay busy elsewhere (${p.doing || "with their own day"}) so a name being said doesn\u2019t walk them in.`
     });
   }
   const metCount = notebook.people.filter((p) => p.status === "active" && p.met).length;
@@ -3775,7 +3802,7 @@ function buildTome(input) {
   const worldItems = [
     {
       badge: sources.day === "tracker" || sources.hour === "tracker" ? "TRACKER SYNC" : "STORY CLOCK",
-      label: `${clockLabel}${input.location ? ` \xB7 ${fit(input.location, 45)}` : ""}`,
+      label: `${clockLabel}${input.location ? ` \xB7 ${input.location}` : ""}`,
       detail: `${clockSourceText}.${atBuilding ? ` Room layout loaded for ${atBuilding.building.name}.` : ""}`,
       highlight: true
     },
@@ -3822,9 +3849,9 @@ function buildTome(input) {
   const tabs = [becauseTab, clueTab, castTab, worldTab];
   const newTabs = tabs.filter((t) => t.isNew);
   const mode = intimate ? "intimate" : newTabs.length > 0 || chapter !== null ? "active" : "quiet";
-  const defaultTab = newTabs[0]?.id ?? (notebook.mystery?.status === "open" ? "clue" : "cast");
+  const defaultTab = newTabs[0]?.id ?? (notebook.mystery?.status === "open" && foundCluesCount > 0 ? "clue" : "cast");
   const statusLine = mode === "intimate" ? "Grimoire has stepped back \u2014 story clocks and outside threads are paused while this scene plays out." : newTabs.length > 0 ? `${newTabs.length} new ${newTabs.length === 1 ? "mark" : "marks"} recorded on this reply` : `Quiet turn${present.length ? ` \xB7 ${present.slice(0, 2).map((p) => p.name).join(", ")} present` : ""}`;
-  const compass = intimate ? null : distillScene(input.latestReply, notebook, present, reply, input.location, buildingText);
+  const compass = intimate ? null : distillScene(input.latestReply, notebook, present, reply, input.location, atBuilding);
   return {
     messageId: input.messageId,
     reply,
@@ -4103,7 +4130,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.32.0";
+var VERSION = "0.32.1";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };

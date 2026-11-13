@@ -174,7 +174,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.32.0";
+var VERSION = "0.32.1";
 var CHAPTER_WORKING = "Starting a new chapter";
 var CHAPTER_DONE = "New chapter ready";
 
@@ -785,10 +785,10 @@ function setup(ctx) {
     return s;
   }
   function renderMystery(view) {
-    const m = view.mystery, open = m?.status === "open";
-    const d = details("Mystery", open ? `${m.found.length} ${m.found.length === 1 ? "clue" : "clues"} found` : m ? "Finished" : "Add one to this story", open);
+    const m = view.mystery, open = m?.status === "open", begun = !!m && (!open || m.found.length > 0);
+    const d = details("Mystery", open ? `${m.found.length} ${m.found.length === 1 ? "clue" : "clues"} found` : m ? "Finished" : "Add one to this story", open && begun);
     if (m) {
-      d.body.append(el("h4", "", open ? "The mystery" : m.status === "solved" ? "Solved. You worked it out." : "It came out before you named the answer."), el("p", "", m.question));
+      d.body.append(el("h4", "", open ? "The mystery" : m.status === "solved" ? "Solved. You worked it out." : "It came out before you named the answer."), el("p", "", begun ? m.question : "A mystery is waiting in this story. What it is about stays hidden until you come across its first sign in play."));
       d.body.append(el("h4", "", "Clues you have found"));
       if (m.found.length) {
         const list = el("ul");

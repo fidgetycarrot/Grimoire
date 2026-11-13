@@ -44,9 +44,11 @@ describe('buildTome spoiler safety and modes', () => {
     // Must contain found clue text and cameOut text
     expect(serialized).toContain('The alms sack is missing from its hook.');
     expect(serialized).toContain('The ferry chain was cut from the inside.');
-    // Must NOT contain any secrets
+    // Must NOT contain any secrets or un-revealed mystery/plot questions
     for (const secret of [
       MYSTERY_ANSWER,
+      'Who took the chapel silver?',
+      'Will the stolen ring be returned',
       'gambling debt',
       'Mira knew about the debt all along',
       'The silver left in the sack',
@@ -124,5 +126,21 @@ describe('buildTome spoiler safety and modes', () => {
     expect(compass!.hookCount).toBeGreaterThanOrEqual(2);
     expect(compass!.whisperLine).toContain('Mira’s Words');
     expect(compass!.footholds[0]!.kind).toBe('QUESTION IN THE AIR');
+  });
+
+  test('distillScene completes full sentences and never ends on an ellipsis even on long replies', () => {
+    const notebook = makeBook();
+    const present = notebook.people.filter(p => p.id === 'mira');
+    const filler = 'The cold rain drums steadily against the slate roof of the boathouse while the lantern swings on its iron hook. '.repeat(45);
+    const ending = 'Mira hesitates... then slides the brass key across the table toward your hand. "Take it before the watchmen reach the wharf, or tell me if you have a better plan."';
+    const compass = distillScene(`${filler}${ending}`, notebook, present, 10, 'The Boathouse');
+    expect(compass).not.toBeNull();
+    expect(compass!.gist.endsWith('…')).toBe(false);
+    expect(compass!.gist.endsWith('...')).toBe(false);
+    expect(compass!.gist).toContain('Take it before the watchmen reach the wharf, or tell me if you have a better plan.');
+    for (const fh of compass!.footholds) {
+      expect(fh.prompt.endsWith('…')).toBe(false);
+      expect(fh.prompt.endsWith('...')).toBe(false);
+    }
   });
 });
