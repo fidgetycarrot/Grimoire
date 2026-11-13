@@ -3696,7 +3696,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.31.6";
+var VERSION = "0.31.5";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -4754,7 +4754,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
   undoable(state) {
     const line = [...state.talk].reverse().find((l) => l.from === "grimoire" && !l.asked);
     const last = state.versions.at(-1);
-    return line?.versionAt && !line.undone && [TALK_REASON, PUSH_REASON, CHAPTER_REASON, MYSTERY_REASON].includes(last?.reason ?? "") && last.at === line.versionAt ? line : null;
+    return line?.versionAt && !line.undone && [TALK_REASON, PUSH_REASON, CHAPTER_REASON].includes(last?.reason ?? "") && last.at === line.versionAt ? line : null;
   }
   async undoTalk(chatId) {
     return this.serial(chatId, async () => {

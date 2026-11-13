@@ -389,7 +389,7 @@ export function setup(ctx: SpindleFrontendContext) {
       const add = button(m ? 'Add another mystery' : 'Add a mystery', async () => { await act('mystery', { chatId: view.chatId, about: about.value.trim() }); notify('Writing a mystery. One model request; it can take a minute or two.'); }, 'primary');
       add.disabled = !snapshot?.settings.connectionId || view.job?.status === 'running';
       if (!m) d.body.append(el('p', 'gm-small', 'Grimoire hides a real puzzle in this story, built from what has already happened. It decides the answer once and keeps it from the narrator, so the answer can’t slip out or bend to a guess.'));
-      d.body.append(labeled('What should it be about? (optional)', about, 'Leave it empty and Grimoire picks something that fits.'), add, el('p', 'gm-hint', 'Once the story moves on, a mystery can’t be turned off. It ends when you solve it, or when the truth comes out on its own. Added one by mistake? Undo it right away, before the next reply.'));
+      d.body.append(labeled('What should it be about? (optional)', about, 'Leave it empty and Grimoire picks something that fits.'), add, el('p', 'gm-hint', 'Once added, a mystery can’t be turned off. It ends when you solve it, or when the truth comes out on its own.'));
     }
     return d.root;
   }

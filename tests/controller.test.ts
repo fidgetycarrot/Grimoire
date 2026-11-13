@@ -1481,12 +1481,10 @@ describe('a mystery', () => {
     expect(note).toContain('A mystery runs through this story: Who took the chapel silver?');
     expect(note).toContain('Wren runs out of the chapel, white-faced');
     for (const secret of SECRETS) expect(note).not.toContain(secret);
-    // A second one is refused while it is open.
+    // Once on, it stays: a second one is refused, and it cannot be undone from the talk.
     await expect(c.addMystery('chat-1')).rejects.toThrow('already has a mystery');
-    // Added by mistake: it can be undone straight away, before the story moves on.
-    expect((await c.view('chat-1'))!.canUndo).toBe(true);
-    await c.undoTalk('chat-1');
-    expect((await c.view('chat-1'))!.mystery).toBeNull();
+    await expect(c.undoTalk('chat-1')).rejects.toThrow();
+    expect((await c.view('chat-1'))!.mystery!.status).toBe('open');
   });
   test('a thin mystery is sent back once, and refused if it is still thin', async () => {
     let asks = 0;

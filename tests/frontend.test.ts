@@ -322,7 +322,7 @@ describe('the mystery in the panel', () => {
   const outside = (root: HTMLElement) => [...root.querySelectorAll('details')].filter(d => !d.querySelector('summary')!.textContent!.includes('The notebook')).map(d => d.textContent).join('\n') + [...root.querySelectorAll('.gm-card')].map(c => c.textContent).join('\n');
   test('with none, it can be added, with a word on what it should be about', async () => {
     const h = harness(); await tick();
-    expect(h.root.textContent).toContain('Added one by mistake? Undo it right away');
+    expect(h.root.textContent).toContain('Once added, a mystery can’t be turned off');
     const about = [...h.root.querySelectorAll('input')].find(i => (i as unknown as HTMLInputElement).placeholder.includes('goes missing')) as unknown as HTMLInputElement;
     about.value = 'the missing silver';
     ([...h.root.querySelectorAll('button')].find(b => b.textContent === 'Add a mystery') as unknown as HTMLButtonElement).click(); await tick();
