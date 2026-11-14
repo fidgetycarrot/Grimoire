@@ -174,7 +174,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.32.1";
+var VERSION = "0.33.0";
 var CHAPTER_WORKING = "Starting a new chapter";
 var CHAPTER_DONE = "New chapter ready";
 
@@ -937,7 +937,7 @@ function setup(ctx) {
         name.append(el("span", "gm-chip", "not met"));
       if (p.status === "gone")
         name.append(el("span", "gm-chip", "gone"));
-      e.append(name, el("p", "gm-small", `Wants ${p.wants}`), ...p.doing ? [el("p", "gm-meta", `Doing: ${p.doing}`)] : [], ...p.voice ? [el("p", "gm-meta", `Voice: ${p.voice}`)] : [], ...p.depth ? [el("p", "gm-meta", `More than their role: ${p.depth}`)] : [], ...p.own ? [el("p", "gm-meta", `Your description: ${p.own}`)] : [], ...p.sheet ? [el("p", "gm-meta", `Sheet: ${p.sheet}`)] : []);
+      e.append(name, el("p", "gm-small", `Wants ${p.wants}`), ...p.doing ? [el("p", "gm-meta", `Doing: ${p.doing}`)] : [], ...p.voice ? [el("p", "gm-meta", `Voice: ${p.voice}`)] : [], ...p.drift ? [el("p", "gm-meta", `Slipping: ${p.drift}`)] : [], ...p.depth ? [el("p", "gm-meta", `More than their role: ${p.depth}`)] : [], ...p.own ? [el("p", "gm-meta", `Your description: ${p.own}`)] : [], ...p.sheet ? [el("p", "gm-meta", `Sheet: ${p.sheet}`)] : []);
       people.append(e);
     }
     const threads = section("Threads");

@@ -128,6 +128,10 @@ export function fit(text: string, max: number): string {
  * kept only its heading. What the narrator must do is now never cut, and long background lines are shortened.
  */
 const ROOM = 3600;
+/** How many replies a drift fix keeps being shown before it is left to the next check-up to renew or clear. */
+export const DRIFT_SHOW = 15;
+/** A sheet's length on a reply that is busy with plot. */
+const SHEET_SHORT = 700;
 export function buildNote(input: NoteInput): string {
   const { notebook, pace, now } = input, lines: string[] = [], vital = new Set<string>();
   const must = (text: string) => { vital.add(text); lines.push(text); };
@@ -242,6 +246,15 @@ export function buildNote(input: NoteInput): string {
   if (loose) { const line = callback(loose); lines.push(`If it fits, now is a good time to ${line.charAt(0).toLowerCase()}${line.slice(1)}`); }
   // One new detail to plant, as part of the scene. What it means stays hidden until it pays off.
   if (seeds.plant) lines.push(`A small detail to mention in passing, without drawing attention to it: ${end(seeds.plant.detail)}`);
+  // Plot and character take turns, to keep the note lean: a reply that has a development or a clue to bring in gets
+  // short sheets and no character upkeep; a reply without one gets full sheets and the fixes for anyone who has drifted.
+  const heavy = developments.length > 0 || mystery.vital.some(l => l.startsWith('A clue is within reach') || l.startsWith('The mystery has been quiet'));
+  if (!heavy && !guided && present.length) {
+    const reply = m.reply;
+    for (const person of present.slice(0, 4)) if (person.drift && (reply === undefined || person.driftAt === undefined || reply - person.driftAt <= DRIFT_SHOW)) must(`${person.name} has been slipping. Bring them back: ${end(person.drift)}`);
+    const voiced = present.filter(p => p.voice).slice(0, 4);
+    if (voiced.length >= 2) lines.push(`Before writing lines for ${voiced.map(p => p.name).join(', ').replace(/, ([^,]*)$/, ' and $1')}, check each sounds like their own voice above and not like the others, and that each still shows more than their one most obvious trait.`);
+  }
   for (const line of mystery.suspects.slice(0, 3)) lines.push(line);
   for (const line of mystery.lines) lines.push(line);
   // People who were only talked about: a name being said is not an entrance. Anyone a planned step brings in is left out.
@@ -271,7 +284,8 @@ export function buildNote(input: NoteInput): string {
     lines.push(`The player character told ${heard}: "${bare(c.said)}"${c.hides ? `, to cover ${bare(c.hides)}` : ''}. They remember it${c.status === 'strained' ? ' and are starting to doubt it' : ''}; it can come up, and details should stay consistent with it.`);
   }
   // Fuller sheets for the people here who have one, like short character cards: kept apart from the length limit above.
-  const sheets = present.filter(p => p.sheet || p.own).slice(0, 3).map(p => `${p.name}:${p.own ? ` ${end(p.own)}` : ''}${p.sheet ? ` ${end(p.sheet)}` : ''}`.slice(0, 2600));
+  // On a reply busy with plot, two short sheets; otherwise up to three in full.
+  const sheets = present.filter(p => p.sheet || p.own).slice(0, heavy ? 2 : 3).map(p => { const whole = `${p.own ? ` ${end(p.own)}` : ''}${p.sheet ? ` ${end(p.sheet)}` : ''}`.trim(); return `${p.name}: ${heavy ? fit(whole, SHEET_SHORT) : whole.slice(0, 2600)}`; });
   const rules = 'The latest messages decide what actually happened; skip anything they have made impossible. Never write the player character\'s actions, words, thoughts, or feelings. Keep secrets hidden and let them show only through small details.\n' + PROBLEMS + ' ' + GROUND;
   // Too long: drop whole lines from the end of the guidance, but never what the narrator must do, and never the rules.
   while (lines.join('\n').length > ROOM) {

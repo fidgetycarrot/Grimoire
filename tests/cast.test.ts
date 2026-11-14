@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { awayPeople, castProblems, followRate, noteSeen } from '../src/cast';
-import { buildNote } from '../src/note';
+import { buildNote, DRIFT_SHOW } from '../src/note';
 import { mergeRevision, validateNotebook, waitsFor, type Notebook, type Preferences } from '../src/notebook';
 import { creationMessages } from '../src/prompts';
 import { tidyNotebook } from '../src/tidy';
@@ -146,3 +146,44 @@ describe('is the narrator listening', () => {
   });
 });
 
+
+describe('keeping people sounding like themselves', () => {
+  const nb = () => {
+    const n = validateNotebook(sampleNotebook());
+    const mira = n.people.find(p => p.id === 'mira')!, cole = n.people.find(p => p.id === 'cole')!;
+    mira.voice = 'Short, dry sentences.'; cole.voice = 'Loud, rambling, full of slang.';
+    mira.sheet = 'Mira runs the ferry. '.repeat(80); cole.sheet = 'Cole drifts. '.repeat(80);
+    mira.drift = 'She has gone warm and wordy. She is dry and clipped, and makes people earn a yes.'; mira.driftAt = 10;
+    return n;
+  };
+  const scene = { recent: 'Mira and Cole argue by the rail.', narrated: 'Mira and Cole argue by the rail.' };
+  test('on a quiet reply: the fix for anyone who has slipped, a check that voices differ, and full sheets', () => {
+    const text = note(nb(), { ...scene, now: { hours: 43, reply: 12, waits } });
+    expect(text).toContain('Mira has been slipping. Bring them back: She has gone warm and wordy.');
+    expect(text).toContain('Before writing lines for Mira and Cole, check each sounds like their own voice');
+    expect(text.length).toBeGreaterThan(2500);
+  });
+  test('on a reply busy with plot: no upkeep, and short sheets', () => {
+    const busy = nb(); const storm = busy.threads.find(t => t.id === 'storm')!; storm.speed = 'urgent'; storm.steps[0].afterHours = 0;
+    const text = note(busy, { ...scene, now: { hours: 400, reply: 12, waits } });
+    expect(text).toContain('What the story does now:');
+    expect(text).not.toContain('has been slipping');
+    expect(text).not.toContain('Before writing lines for');
+    expect(text.length).toBeLessThan(note(nb(), { ...scene, now: { hours: 43, reply: 12, waits } }).length);
+  });
+  test('a fix stops showing after a while, so an old one does not linger', () => {
+    expect(note(nb(), { ...scene, now: { hours: 43, reply: 10 + DRIFT_SHOW + 1, waits } })).not.toContain('has been slipping');
+  });
+  test('a fix keeps its reply while unchanged; a new one is stamped afresh; check-ups are told how to write it', () => {
+    const before = nb();
+    const same = mergeRevision(before, validateNotebook(structuredClone(before)), { hours: 50, reply: 30, waits });
+    expect(same.people.find(p => p.id === 'mira')!.driftAt).toBe(10);
+    const changed = structuredClone(before); changed.people.find(p => p.id === 'mira')!.drift = 'Mira has turned into a one-note grump.';
+    expect(mergeRevision(before, validateNotebook(changed), { hours: 50, reply: 30, waits }).people.find(p => p.id === 'mira')!.driftAt).toBe(30);
+    const cleared = structuredClone(before); delete cleared.people.find(p => p.id === 'mira')!.drift;
+    expect(mergeRevision(before, validateNotebook(cleared), { hours: 50, reply: 30, waits }).people.find(p => p.id === 'mira')!.drift).toBeUndefined();
+    const { checkupMessages } = require('../src/prompts');
+    const input: any = { notebook: validateNotebook(sampleNotebook()), pace: 'auto', chat: [], trackerText: '', trackerValues: {}, trackerChecks: [], recipe: { fields: [], note: '' }, clockOwner: { day: 'notebook', hour: 'notebook' }, due: [], skipHours: 0, reason: 'test', preferences: prefs(), resync: false, held: [], notes: [], part: { elapsed: 0, length: 60 }, replan: false, replies: [], lore: { rules: [], entries: [], index: [], more: 0 }, away: [], places: ['Kitchen'] };
+    expect(checkupMessages(input).map((m: any) => m.content).join('\n')).toContain('being shrunk to one trait');
+  });
+});

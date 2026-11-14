@@ -25,6 +25,8 @@ export interface Person {
   /** What keeps them from being a stock type: a contradiction, a specific detail, a tie to the world. */ depth: string;
   /** For the few who matter most: a fuller character sheet, like a short card. No secrets, no appearance. */ sheet: string;
   /** The player's own description of this person, word for word. Code-owned: a model can't change it. */ own: string;
+  /** When the narrator has let them slip (sounding like everyone else, or shrunk to one trait): a short, narrator-safe fix. Empty when they are fine. */ drift?: string;
+  /** Code-owned: the reply the current drift fix was written at. It is shown for a while, then left to the next check-up. */ driftAt?: number;
   met: boolean; status: 'active' | 'gone';
 }
 export interface Beat { id: string; text: string; purpose: string; conditions: string; thread: string; intensity: 'low' | 'high'; status: 'possible' | 'happened' | 'dropped'; quick?: true }
@@ -176,7 +178,7 @@ export function validateNotebook(value: unknown): Notebook {
       id: id(p.id, `${path}.id`), name: text(p.name, `${path}.name`, 80, false),
       aliases: list(p.aliases, `${path}.aliases`, 8).map((a, j) => text(a, `${path}.aliases[${j}]`, 80, false)),
       role: text(p.role, `${path}.role`, LIMITS.short), wants: text(p.wants, `${path}.wants`), doing: text(p.doing, `${path}.doing`),
-      hint: text(p.hint, `${path}.hint`), voice: text(p.voice, `${path}.voice`, 300), depth: text(p.depth, `${path}.depth`, 400), sheet: text(p.sheet, `${path}.sheet`, LIMITS.sheet), own: text(p.own, `${path}.own`, LIMITS.own), met: p.met === true, status: choice(p.status, ['active', 'gone'] as const, `${path}.status`, 'active'),
+      hint: text(p.hint, `${path}.hint`), voice: text(p.voice, `${path}.voice`, 300), depth: text(p.depth, `${path}.depth`, 400), sheet: text(p.sheet, `${path}.sheet`, LIMITS.sheet), own: text(p.own, `${path}.own`, LIMITS.own), ...(typeof p.drift === 'string' && p.drift.trim() ? { drift: text(p.drift, `${path}.drift`, 300) } : {}), ...(Number.isInteger(p.driftAt) && (p.driftAt as number) >= 0 ? { driftAt: p.driftAt as number } : {}), met: p.met === true, status: choice(p.status, ['active', 'gone'] as const, `${path}.status`, 'active'),
     };
   }), 'people');
   if (people.filter(p => p.sheet).length > LIMITS.sheets) fail(`Write a sheet for at most ${LIMITS.sheets} people: the ones who matter most.`);
@@ -286,7 +288,9 @@ export function mergeRevision(previous: Notebook, revised: Notebook, now: number
   }
   const fresh = withoutTimes(holdStage(previous, holdTurn(previous, revised), moment(now)));
   // The player's own words about a person stay exactly as they wrote them.
-  fresh.people = fresh.people.map(p => ({ ...p, own: previous.people.find(x => x.id === p.id)?.own ?? '' }));
+  // A drift fix keeps the reply it was written at while it stays the same; a new one is stamped afresh.
+  fresh.people = fresh.people.map(p => { const old = previous.people.find(x => x.id === p.id), { driftAt: _d, ...rest } = p;
+    return { ...rest, own: old?.own ?? '', ...(p.drift && old?.drift === p.drift && old.driftAt !== undefined ? { driftAt: old.driftAt } : {}) }; });
   // Something that came out can't go back to being secret.
   const lost = previous.story.cameOut.filter(r => !fresh.story.cameOut.some(x => sameText(x.text, r.text)));
   const story = { ...fresh.story, cameOut: carryRevealed(previous, [...fresh.story.cameOut, ...lost.map(({ text }) => ({ text }))]) };
@@ -322,6 +326,7 @@ export function withoutTimes(notebook: Notebook): Notebook {
 /** Fill in code-owned times: when a thread began, when a step happened. */
 export function stamp(notebook: Notebook, now: number | Moment): Notebook {
   const m = moment(now), reply = m.reply;
+  if (reply !== undefined && notebook.people.some(p => p.drift && p.driftAt === undefined)) notebook = { ...notebook, people: notebook.people.map(p => p.drift && p.driftAt === undefined ? { ...p, driftAt: reply } : p) };
   const seeds = reply === undefined ? notebook.seeds : notebook.seeds.map(seed => ({ ...seed,
     ...((seed.status === 'planted' || seed.status === 'paid') && seed.plantedAt === undefined ? { plantedAt: reply } : {}), ...(seed.status === 'paid' && seed.paidAt === undefined ? { paidAt: reply } : {}),
     ...(seed.status === 'echo' && seed.echoAt === undefined ? { echoAt: reply } : {}) }));

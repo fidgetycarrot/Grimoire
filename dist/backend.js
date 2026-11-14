@@ -673,6 +673,8 @@ function validateNotebook(value) {
       depth: text(p.depth, `${path}.depth`, 400),
       sheet: text(p.sheet, `${path}.sheet`, LIMITS.sheet),
       own: text(p.own, `${path}.own`, LIMITS.own),
+      ...typeof p.drift === "string" && p.drift.trim() ? { drift: text(p.drift, `${path}.drift`, 300) } : {},
+      ...Number.isInteger(p.driftAt) && p.driftAt >= 0 ? { driftAt: p.driftAt } : {},
       met: p.met === true,
       status: choice(p.status, ["active", "gone"], `${path}.status`, "active")
     };
@@ -853,7 +855,10 @@ function mergeRevision(previous, revised, now, options = {}) {
       failMerge(`Seed "${seed.id}" was already planted and can't go back to waiting.`);
   }
   const fresh = withoutTimes(holdStage(previous, holdTurn(previous, revised), moment(now)));
-  fresh.people = fresh.people.map((p) => ({ ...p, own: previous.people.find((x) => x.id === p.id)?.own ?? "" }));
+  fresh.people = fresh.people.map((p) => {
+    const old = previous.people.find((x) => x.id === p.id), { driftAt: _d, ...rest } = p;
+    return { ...rest, own: old?.own ?? "", ...p.drift && old?.drift === p.drift && old.driftAt !== undefined ? { driftAt: old.driftAt } : {} };
+  });
   const lost = previous.story.cameOut.filter((r) => !fresh.story.cameOut.some((x) => sameText(x.text, r.text)));
   const story = { ...fresh.story, cameOut: carryRevealed(previous, [...fresh.story.cameOut, ...lost.map(({ text }) => ({ text }))]) };
   const { mystery: _given, ...rest } = fresh, mystery = lockMystery(previous.mystery, revised.mystery, options.newMystery === true);
@@ -891,6 +896,8 @@ function withoutTimes(notebook) {
 }
 function stamp(notebook, now) {
   const m = moment(now), reply = m.reply;
+  if (reply !== undefined && notebook.people.some((p) => p.drift && p.driftAt === undefined))
+    notebook = { ...notebook, people: notebook.people.map((p) => p.drift && p.driftAt === undefined ? { ...p, driftAt: reply } : p) };
   const seeds = reply === undefined ? notebook.seeds : notebook.seeds.map((seed) => ({
     ...seed,
     ...(seed.status === "planted" || seed.status === "paid") && seed.plantedAt === undefined ? { plantedAt: reply } : {},
@@ -1632,6 +1639,8 @@ function fit(text, max) {
   return stop > max * 0.5 ? cut.slice(0, stop + 1) : `${cut.slice(0, cut.lastIndexOf(" ") > 0 ? cut.lastIndexOf(" ") : max).replace(/[,;:\s]+$/, "")}\u2026`;
 }
 var ROOM = 3600;
+var DRIFT_SHOW = 15;
+var SHEET_SHORT = 700;
 function buildNote(input) {
   const { notebook, pace, now } = input, lines = [], vital = new Set;
   const must = (text) => {
@@ -1743,6 +1752,16 @@ function buildNote(input) {
   }
   if (seeds.plant)
     lines.push(`A small detail to mention in passing, without drawing attention to it: ${end2(seeds.plant.detail)}`);
+  const heavy = developments.length > 0 || mystery.vital.some((l) => l.startsWith("A clue is within reach") || l.startsWith("The mystery has been quiet"));
+  if (!heavy && !guided && present.length) {
+    const reply = m.reply;
+    for (const person of present.slice(0, 4))
+      if (person.drift && (reply === undefined || person.driftAt === undefined || reply - person.driftAt <= DRIFT_SHOW))
+        must(`${person.name} has been slipping. Bring them back: ${end2(person.drift)}`);
+    const voiced = present.filter((p) => p.voice).slice(0, 4);
+    if (voiced.length >= 2)
+      lines.push(`Before writing lines for ${voiced.map((p) => p.name).join(", ").replace(/, ([^,]*)$/, " and $1")}, check each sounds like their own voice above and not like the others, and that each still shows more than their one most obvious trait.`);
+  }
   for (const line of mystery.suspects.slice(0, 3))
     lines.push(line);
   for (const line of mystery.lines)
@@ -1770,7 +1789,10 @@ function buildNote(input) {
     const bare = (t) => t.trim().replace(/[.!?]+$/, "");
     lines.push(`The player character told ${heard}: "${bare(c.said)}"${c.hides ? `, to cover ${bare(c.hides)}` : ""}. They remember it${c.status === "strained" ? " and are starting to doubt it" : ""}; it can come up, and details should stay consistent with it.`);
   }
-  const sheets = present.filter((p) => p.sheet || p.own).slice(0, 3).map((p) => `${p.name}:${p.own ? ` ${end2(p.own)}` : ""}${p.sheet ? ` ${end2(p.sheet)}` : ""}`.slice(0, 2600));
+  const sheets = present.filter((p) => p.sheet || p.own).slice(0, heavy ? 2 : 3).map((p) => {
+    const whole = `${p.own ? ` ${end2(p.own)}` : ""}${p.sheet ? ` ${end2(p.sheet)}` : ""}`.trim();
+    return `${p.name}: ${heavy ? fit(whole, SHEET_SHORT) : whole.slice(0, 2600)}`;
+  });
   const rules = `The latest messages decide what actually happened; skip anything they have made impossible. Never write the player character's actions, words, thoughts, or feelings. Keep secrets hidden and let them show only through small details.
 ` + PROBLEMS + " " + GROUND;
   while (lines.join(`
@@ -1978,6 +2000,7 @@ function tidyNotebook(value, previous) {
       depth: plain2(p.depth, 400) || (previous?.people.find((x) => x.id === id)?.depth ?? ""),
       sheet: plain2(p.sheet, LIMITS.sheet) || (previous?.people.find((x) => x.id === id)?.sheet ?? ""),
       own: plain2(p.own, LIMITS.own) || (previous?.people.find((x) => x.id === id)?.own ?? ""),
+      ...plain2(p.drift, 300) ? { drift: plain2(p.drift, 300) } : {},
       met: truthy(p.met),
       status: pick(p.status, ["active", "gone"], PERSON, "active")
     };
@@ -2574,7 +2597,7 @@ var SHAPE = `{
  "story": {"question": "one sentence: what this part of the story is about, as a question. It stays the same for the whole part; never rewrite it into what is happening in the current scene", "stakes": "what can be won or lost", "direction": "roughly where it could end, as possibilities", "hiddenTruth": ["established background facts the player does not know yet"], "twist": "a twist, or empty", "cameOut": ["hidden truths the player has since learned, moved here word for word from hiddenTruth or twist"]},
  "arc": {"shape": "conflict|kishotenketsu", "stage": "setup|rising|climax|resolution for conflict; ki|sho|ten|ketsu for kishotenketsu", "turn": "kishotenketsu only: what the turn is, or empty", "main": "the id of the thread that is this part's main storyline"},
  "seeds": [{"id": "green-wax", "detail": "an ordinary-looking detail the narrator can mention in passing", "payoff": "what it turns out to mean later", "pays": "the thread id, beat id, or turn it pays into", "status": "waiting|planted|paid|echo|dropped"}],
- "people": [{"id": "cole", "name": "Cole", "aliases": [], "role": "short role", "wants": "what they want", "doing": "what they are doing about it right now, on or off screen", "hint": "a narrator-safe note on how to play them, with no secrets", "voice": "how they talk: word choice, sentence length and rhythm, habits and tics, what they never say, and one short sample line that shows the sound (an example, not a catchphrase); no secrets", "depth": "what keeps them from being a stock type: a contradiction (a want that pulls against a fear or a habit), one specific detail that is not the obvious one for their role, and a tie to the world; no secrets", "sheet": "only for the few who matter most: a fuller character sheet, like a short character card (personality, history, habits, relationships, how they treat the player character, what they are like when pushed); no appearance, no secrets; empty for everyone else", "met": false, "status": "active"}],
+ "people": [{"id": "cole", "name": "Cole", "aliases": [], "role": "short role", "wants": "what they want", "doing": "what they are doing about it right now, on or off screen", "hint": "a narrator-safe note on how to play them, with no secrets", "voice": "how they talk: word choice, sentence length and rhythm, habits and tics, what they never say, and one short sample line that shows the sound (an example, not a catchphrase); no secrets", "depth": "what keeps them from being a stock type: a contradiction (a want that pulls against a fear or a habit), one specific detail that is not the obvious one for their role, a tie to the world, and the other side of them (how they are when they are not doing their signature thing); no secrets", "drift": "", "sheet": "only for the few who matter most: a fuller character sheet, like a short character card (personality, history, habits, relationships, how they treat the player character, what they are like when pushed); no appearance, no secrets; empty for everyone else", "met": false, "status": "active"}],
  "threads": [{"id": "stolen-ring", "title": "The stolen ring", "speed": "urgent|steady|slow", "why": "why it matters, including hidden causes", "hint": "why it matters, in one or two narrator-safe sentences with no secrets (not a recap of the current scene)", "people": ["cole"], "status": "open", "closedReason": "", "outcome": "once closed: won|lost|faded (how it ended for the player)", "scar": "once lost: how it still shows, in narrator-safe words", "ifFollowed": "what following it leads to", "ifIgnored": "what happens if it is left alone", "steps": [{"id": "owner-notices", "text": "what happens", "sign": "how it reaches the player, as something they can act on: a thing in their hands, an offer, a question put to them, someone waiting on their answer", "afterHours": 24, "status": "waiting"}]}],
  "buildings": [{"id": "vance-house", "name": "the Vance house", "aliases": ["Vance Residence", "home"], "floors": [{"name": "Upstairs", "rooms": [{"name": "Master bedroom", "aliases": [], "near": ["Hall bathroom", "Landing"]}]}, {"name": "Downstairs", "rooms": [{"name": "Kitchen", "aliases": ["breakfast nook"], "near": ["Living room", "Patio door"]}]}]}],
  "covers": [{"id": "upset-stomach", "by": "player, or the id of the person who told it", "told": ["ids of the people who were told it"], "said": "the lie as it was told", "hides": "what it covers up", "status": "holding|strained|exposed"}],
@@ -2678,6 +2701,7 @@ ${input.notebook.mystery ? MYSTERY_KEEP : ""}- Lies: record new lies that matter
 - Secrets that came out: once the chat shows the player has learned a hidden truth (or the twist), or it came out where they could see, move it word for word to story.cameOut and out of hiddenTruth (empty twist if it was the twist). From then on it is an established fact: rewrite people's "hint" and "doing", thread hints, and beats so nobody keeps acting as if it were still secret, and plan no more clues or reveal moments for it; build on it instead. A suspicion or a guess is not learning it. Never move anything back out of cameOut.
 - Sheets: keep each "sheet" true to how the person has actually been in the chat, and add what has changed (what they learned, how they now feel about the player character, what they did). Return a sheet only when it changes; leave it empty to keep it as it is. Someone who has become important gets a sheet; never more than six. Fill in "depth" for anyone who has none.
 - Voices: fill in "voice" for anyone who has none, and keep each one steady once set. Base it on who the person is (age, background, job, temperament, the card) and the moments where they sounded most like themselves, not on how the narrator has been writing everyone lately: narrators drift into one shared voice, and the notebook is how to pull them back out. If several people have started to sound alike, give each a clearly different voice.
+- Drift: compare how each person in the recent chat talks and behaves with their voice, depth, sheet, and the card. Two failures to catch: sounding like everyone else (the narrator's default voice), and being shrunk to one trait played louder and louder (always teasing, always shy, always angry) while the rest of them goes missing. If someone has slipped, set their "drift" to one or two narrator-safe sentences naming what slipped and what they are really like, in how they talk and how they act ("Dina has gone warm and wordy. She is dry and clipped, teases rather than explains, and makes people earn a yes."). Keep it as it is while it still applies; set it to "" once they sound like themselves again. Leave it empty for anyone who is fine; most people are fine most of the time.
 - Seeds: mark a seed "planted" once the chat has mentioned its detail, and "paid" once it came back with its meaning. When a thread ends where the player can't see, or a seed's story is left behind, consider an "echo" (as above in shape: detail is how the player could hear of it) so it can surface later; that makes the world feel alive. Never move a seed back to waiting. When the narrator mentions a striking detail in passing that isn't a seed, consider making it one and planning where it pays off; that is how the story stays cohesive.
 - Arc stage: move it on when the story has: ki to sho once people and place are established; sho to ten only after development has had room and the turn's seeds are planted; ten to ketsu once the turn has landed; for conflict, setup to rising to climax to resolution the same way.
 - arc.main is this part's main storyline. Keep it pointing at the thread that carries the story; when it ends, the part's story is usually ready to come to a head or end.
@@ -4130,7 +4154,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.32.1";
+var VERSION = "0.33.0";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
