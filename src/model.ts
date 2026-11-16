@@ -2,7 +2,7 @@ import type { SpindleAPI, GenerationRequestDTO } from 'lumiverse-spindle-types';
 
 export type Message = { role: 'system' | 'user' | 'assistant'; content: string };
 export type ReasoningMode = 'inherit' | 'off' | 'low';
-export interface ModelSettings { connectionId: string; maxOutputTokens: number; reasoningMode: ReasoningMode }
+export interface ModelSettings { connectionId: string; maxOutputTokens: number; reasoningMode: ReasoningMode; /** Another model on the same connection, by its exact ID; empty uses the connection's. */ model?: string }
 export type Ask = (messages: Message[], signal?: AbortSignal) => Promise<string>;
 // Lumiverse 1.2's raw worker API requires provider and model even with connection_id.
 type RawRequest = GenerationRequestDTO & { provider: string; model: string };
@@ -32,7 +32,7 @@ export async function askModel(api: SpindleAPI, userId: string | undefined, sett
   if (!connection) throw new ModelError('NO_CONNECTION', 'Choose a connection in Grimoire settings.');
   if (!connection.model?.trim() || !connection.provider?.trim()) throw new ModelError('NO_MODEL', 'The chosen connection has no model set. Pick one in Lumiverse.');
   const deadline = AbortSignal.timeout(600_000), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
-  const request: RawRequest = { type: 'raw', connection_id: connection.id, provider: connection.provider, model: connection.model, userId, messages, parameters: { temperature: 0.4, max_tokens: settings.maxOutputTokens }, signal: combined };
+  const request: RawRequest = { type: 'raw', connection_id: connection.id, provider: connection.provider, model: settings.model?.trim() || connection.model, userId, messages, parameters: { temperature: 0.4, max_tokens: settings.maxOutputTokens }, signal: combined };
   if (settings.reasoningMode !== 'inherit') request.reasoning = settings.reasoningMode === 'off' && connection.provider !== 'openrouter' ? { source: 'off' } : { source: 'custom', apiReasoning: true, effort: settings.reasoningMode === 'off' ? 'none' : 'low' };
   let result: unknown;
   let onAbort: (() => void) | undefined;

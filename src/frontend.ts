@@ -21,7 +21,7 @@ export const nextPace = (pace: Pace): Pace => ORDER[(ORDER.indexOf(pace) + 1) % 
 
 type Rpc = Pick<SpindleFrontendContext, 'sendToBackend' | 'onBackendMessage'>;
 /** Requests that always finish, even if the backend stops answering. */
-export function createRpc(ctx: Rpc, onChanged: () => void, timeoutMs = 45_000) {
+export function createRpc(ctx: Rpc, onChanged: () => void, defaultTimeoutMs = 45_000) {
   let sequence = 0, closed = false;
   const prefix = Math.random().toString(36).slice(2);
   const pending = new Map<string, { resolve(v: unknown): void; reject(e: Error): void; timer: ReturnType<typeof setTimeout> }>();
@@ -34,7 +34,7 @@ export function createRpc(ctx: Rpc, onChanged: () => void, timeoutMs = 45_000) {
     if (message.error) request.reject(new Error(message.error)); else request.resolve(message.result);
   });
   return {
-    request<T>(action: string, input?: unknown): Promise<T> {
+    request<T>(action: string, input?: unknown, timeoutMs = defaultTimeoutMs): Promise<T> {
       if (closed) return Promise.reject(new Error('Grimoire has closed. Reopen it and try again.'));
       const id = `gm-${prefix}-${++sequence}`;
       return new Promise<T>((resolve, reject) => {
@@ -574,13 +574,15 @@ export function setup(ctx: SpindleFrontendContext) {
     const cardRow = el('label', 'gm-row gm-small'), replyCard = el('input'); replyCard.type = 'checkbox'; replyCard.checked = settings.replyCard !== false; replyCard.style.width = 'auto';
     cardRow.append(replyCard, document.createTextNode('Show the story chronicle under the latest reply'));
     const room = select([['', 'Grimoire’s connection'], ...(snapshot?.connections ?? []).map(c => [c.id, `${c.name}${c.model ? ` · ${c.model}` : ''}`] as [string, string])], settings.roomConnectionId ?? '');
+    const roomModel = el('input'); roomModel.type = 'text'; roomModel.value = settings.roomModel ?? ''; roomModel.placeholder = 'Leave empty to use the connection’s model'; roomModel.spellcheck = false;
     card.append(homeRow, cardRow, el('p', 'gm-hint', 'Attaches a spoiler-free chronicle beneath the newest reply showing what Grimoire is using, callbacks to your choices, found clues, and a collapsible “In Front of You” room reader.'),
-      labeled('Read the Room uses', room, 'Opening Read the Room retells the latest reply in plain words, with things you could do next. One small request each time you open it on a new reply, and none if you don’t. A fast, cheap model is plenty.'));
+      labeled('Read the Room uses', room, 'Opening Read the Room retells the latest reply in plain words, with things you could do next. One small request each time you open it on a new reply, and none if you don’t. A fast, cheap model is plenty.'),
+      labeled('Read the Room model', roomModel, 'To use a different model on that connection without making a new one, type its exact ID as the provider lists it.'));
     // Every change saves on its own, so nothing is lost to a button below the fold.
     const status = el('p', 'gm-hint', 'Changes save on their own.');
     const save = async () => {
       // Saved without redrawing the page, so the next change isn't interrupted.
-      try { await rpc.request('settings', { settings: { connectionId: connection.value, backupId: backup.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, wait: wait.value, homeList: home.checked, replyCard: replyCard.checked, roomConnectionId: room.value, intimate: intimate.value, memories: mem.checked, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } }); }
+      try { await rpc.request('settings', { settings: { connectionId: connection.value, backupId: backup.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, wait: wait.value, homeList: home.checked, replyCard: replyCard.checked, roomConnectionId: room.value, roomModel: roomModel.value.trim(), intimate: intimate.value, memories: mem.checked, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } }); }
       catch (error) { notify(error instanceof Error ? error.message : String(error), 'error'); return; }
       status.textContent = 'Saved.';
       void refresh();
@@ -725,7 +727,8 @@ export function setup(ctx: SpindleFrontendContext) {
   function readRoom(chatId: string, messageId: string, key: string, redraw: () => void) {
     if (rooms.has(key)) return;
     rooms.set(key, { loading: true });
-    rpc.request<{ plain: string; moves: string[] }>('readRoom', { chatId, messageId })
+    // A model answering, maybe thinking first: wait as long as the backend lets it run.
+    rpc.request<{ plain: string; moves: string[] }>('readRoom', { chatId, messageId }, 130_000)
       .then(reading => { rooms.set(key, reading); })
       .catch(error => { rooms.set(key, { error: error instanceof Error ? error.message : String(error) }); })
       .finally(() => {

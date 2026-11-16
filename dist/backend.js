@@ -500,7 +500,7 @@ async function askModel(api, userId, settings, messages, signal) {
   if (!connection.model?.trim() || !connection.provider?.trim())
     throw new ModelError("NO_MODEL", "The chosen connection has no model set. Pick one in Lumiverse.");
   const deadline = AbortSignal.timeout(600000), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
-  const request = { type: "raw", connection_id: connection.id, provider: connection.provider, model: connection.model, userId, messages, parameters: { temperature: 0.4, max_tokens: settings.maxOutputTokens }, signal: combined };
+  const request = { type: "raw", connection_id: connection.id, provider: connection.provider, model: settings.model?.trim() || connection.model, userId, messages, parameters: { temperature: 0.4, max_tokens: settings.maxOutputTokens }, signal: combined };
   if (settings.reasoningMode !== "inherit")
     request.reasoning = settings.reasoningMode === "off" && connection.provider !== "openrouter" ? { source: "off" } : { source: "custom", apiReasoning: true, effort: settings.reasoningMode === "off" ? "none" : "low" };
   let result;
@@ -4174,7 +4174,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.34.2";
+var VERSION = "0.34.3";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -4362,7 +4362,8 @@ function validSettings(value) {
     intimate: v.intimate === "allow" ? "allow" : "protect",
     memories: v.memories !== false,
     replyCard: v.replyCard !== false,
-    roomConnectionId: plainSetting(v.roomConnectionId, 120)
+    roomConnectionId: plainSetting(v.roomConnectionId, 120),
+    roomModel: plainSetting(v.roomModel, 200)
   };
 }
 
@@ -4706,8 +4707,8 @@ class NotebookController {
     const settings = await this.settings(), persona = await this.persona();
     const player = [...live.turns].reverse().find((t) => t.role === "user" && !t.ooc);
     const people = presentPeople(live.version.notebook, this.narrated(live), this.listed(live)).slice(0, 6).map((p) => ({ name: p.name, role: p.role }));
-    const on = (connectionId) => (m, signal) => askModel(this.api, this.userId, { connectionId, maxOutputTokens: ROOM_TOKENS, reasoningMode: settings.reasoningMode }, m, signal);
-    const ask = this.ask ?? withBackup(on(settings.roomConnectionId || settings.connectionId), settings.backupId ? on(settings.backupId) : null);
+    const on = (connectionId, model = "") => (m, signal) => askModel(this.api, this.userId, { connectionId, model, maxOutputTokens: ROOM_TOKENS, reasoningMode: settings.reasoningMode }, m, signal);
+    const ask = this.ask ?? withBackup(on(settings.roomConnectionId || settings.connectionId, settings.roomModel ?? ""), settings.backupId ? on(settings.backupId) : null);
     if (!this.ask && !settings.roomConnectionId && !settings.connectionId)
       throw new Error("Choose a connection in Grimoire settings first.");
     const reading = await askJson(ask, roomMessages({

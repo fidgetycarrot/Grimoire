@@ -189,6 +189,7 @@ export function validSettings(value: unknown): Settings {
     memories: v.memories !== false,
     replyCard: v.replyCard !== false,
     roomConnectionId: plainSetting(v.roomConnectionId, 120),
+    roomModel: plainSetting(v.roomModel, 200),
   };
 }
 
@@ -442,8 +443,8 @@ export class NotebookController {
     const settings = await this.settings(), persona = await this.persona();
     const player = [...live.turns].reverse().find(t => t.role === 'user' && !t.ooc);
     const people = presentPeople(live.version.notebook, this.narrated(live), this.listed(live)).slice(0, 6).map(p => ({ name: p.name, role: p.role }));
-    const on = (connectionId: string): Ask => (m, signal) => askModel(this.api, this.userId, { connectionId, maxOutputTokens: ROOM_TOKENS, reasoningMode: settings.reasoningMode }, m, signal);
-    const ask: Ask = this.ask ?? withBackup(on(settings.roomConnectionId || settings.connectionId), settings.backupId ? on(settings.backupId) : null);
+    const on = (connectionId: string, model = ''): Ask => (m, signal) => askModel(this.api, this.userId, { connectionId, model, maxOutputTokens: ROOM_TOKENS, reasoningMode: settings.reasoningMode }, m, signal);
+    const ask: Ask = this.ask ?? withBackup(on(settings.roomConnectionId || settings.connectionId, settings.roomModel ?? ''), settings.backupId ? on(settings.backupId) : null);
     if (!this.ask && !settings.roomConnectionId && !settings.connectionId) throw new Error('Choose a connection in Grimoire settings first.');
     const reading = await askJson(ask, roomMessages({
       reply: readable(reply.content, 12_000), said: readable(splitOoc(player?.content ?? '').story, 2000),

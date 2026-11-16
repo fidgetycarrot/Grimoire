@@ -174,7 +174,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.34.2";
+var VERSION = "0.34.3";
 var CHAPTER_WORKING = "Starting a new chapter";
 var CHAPTER_DONE = "New chapter ready";
 
@@ -189,7 +189,7 @@ var PACE_LABELS = {
 };
 var ORDER = ["auto", "quiet", "fast"];
 var nextPace = (pace) => ORDER[(ORDER.indexOf(pace) + 1) % ORDER.length];
-function createRpc(ctx, onChanged, timeoutMs = 45000) {
+function createRpc(ctx, onChanged, defaultTimeoutMs = 45000) {
   let sequence = 0, closed = false;
   const prefix = Math.random().toString(36).slice(2);
   const pending = new Map;
@@ -212,7 +212,7 @@ function createRpc(ctx, onChanged, timeoutMs = 45000) {
       request.resolve(message.result);
   });
   return {
-    request(action, input) {
+    request(action, input, timeoutMs = defaultTimeoutMs) {
       if (closed)
         return Promise.reject(new Error("Grimoire has closed. Reopen it and try again."));
       const id = `gm-${prefix}-${++sequence}`;
@@ -1167,11 +1167,16 @@ function setup(ctx) {
     replyCard.style.width = "auto";
     cardRow.append(replyCard, document.createTextNode("Show the story chronicle under the latest reply"));
     const room = select([["", "Grimoire’s connection"], ...(snapshot?.connections ?? []).map((c) => [c.id, `${c.name}${c.model ? ` · ${c.model}` : ""}`])], settings.roomConnectionId ?? "");
-    card.append(homeRow, cardRow, el("p", "gm-hint", "Attaches a spoiler-free chronicle beneath the newest reply showing what Grimoire is using, callbacks to your choices, found clues, and a collapsible “In Front of You” room reader."), labeled("Read the Room uses", room, "Opening Read the Room retells the latest reply in plain words, with things you could do next. One small request each time you open it on a new reply, and none if you don’t. A fast, cheap model is plenty."));
+    const roomModel = el("input");
+    roomModel.type = "text";
+    roomModel.value = settings.roomModel ?? "";
+    roomModel.placeholder = "Leave empty to use the connection’s model";
+    roomModel.spellcheck = false;
+    card.append(homeRow, cardRow, el("p", "gm-hint", "Attaches a spoiler-free chronicle beneath the newest reply showing what Grimoire is using, callbacks to your choices, found clues, and a collapsible “In Front of You” room reader."), labeled("Read the Room uses", room, "Opening Read the Room retells the latest reply in plain words, with things you could do next. One small request each time you open it on a new reply, and none if you don’t. A fast, cheap model is plenty."), labeled("Read the Room model", roomModel, "To use a different model on that connection without making a new one, type its exact ID as the provider lists it."));
     const status = el("p", "gm-hint", "Changes save on their own.");
     const save = async () => {
       try {
-        await rpc.request("settings", { settings: { connectionId: connection.value, backupId: backup.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, wait: wait.value, homeList: home.checked, replyCard: replyCard.checked, roomConnectionId: room.value, intimate: intimate.value, memories: mem.checked, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } });
+        await rpc.request("settings", { settings: { connectionId: connection.value, backupId: backup.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, wait: wait.value, homeList: home.checked, replyCard: replyCard.checked, roomConnectionId: room.value, roomModel: roomModel.value.trim(), intimate: intimate.value, memories: mem.checked, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } });
       } catch (error) {
         notify(error instanceof Error ? error.message : String(error), "error");
         return;
@@ -1391,7 +1396,7 @@ function setup(ctx) {
     if (rooms.has(key))
       return;
     rooms.set(key, { loading: true });
-    rpc.request("readRoom", { chatId, messageId }).then((reading) => {
+    rpc.request("readRoom", { chatId, messageId }, 130000).then((reading) => {
       rooms.set(key, reading);
     }).catch((error) => {
       rooms.set(key, { error: error instanceof Error ? error.message : String(error) });

@@ -231,7 +231,7 @@ describe('the quick check settings', () => {
     expect(h.root.textContent).toContain('Quick check after each reply');
     expect(h.root.textContent).toContain('Your default: Jev · ~typesafe/jev-latest');
     const toggle = Array.from(h.root.querySelectorAll('input[type=checkbox]')).at(-1) as unknown as HTMLInputElement; toggle.checked = true;
-    const model = h.root.querySelector('input[type=text]') as unknown as HTMLInputElement; model.value = 'openai/some-decider';
+    const model = [...h.root.querySelectorAll('input[type=text]')].find(i => i.closest('section')?.textContent?.includes('Quick check after each reply')) as unknown as HTMLInputElement; model.value = 'openai/some-decider';
     model.dispatchEvent(new h.window.Event('change', { bubbles: true }) as any); await tick();
     expect(h.requests.filter(r => r.action === 'settings').at(-1)!.input.settings.quick).toEqual({ enabled: true, connectionId: '', model: 'openai/some-decider' });
   });
@@ -432,3 +432,18 @@ describe('the under-reply chronicle tome', () => {
     expect(intimate.bubble.textContent).toContain('Grimoire has stepped back');
   });
 });
+
+describe('read the room settings', () => {
+  test('a different model on the same connection can be typed in, and is saved', async () => {
+    const h = harness();
+    await tick();
+    Array.from(h.root.querySelectorAll('button')).find(b => b.textContent === 'Settings')!.click(); await tick();
+    const label = [...h.root.querySelectorAll('label')].find(l => l.textContent === 'Read the Room model') as unknown as HTMLLabelElement;
+    const input = h.root.querySelector(`#${label?.htmlFor}`) as unknown as HTMLInputElement;
+    expect(input).toBeTruthy();
+    input.value = ' google/some-flash-model ';
+    input.dispatchEvent(new h.window.Event('change', { bubbles: true }) as any); await tick();
+    expect(h.requests.filter(r => r.action === 'settings').at(-1)!.input.settings.roomModel).toBe('google/some-flash-model');
+  });
+});
+
