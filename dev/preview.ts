@@ -46,7 +46,10 @@ const ctx = {
     registerInputBarAction: () => ({ actionId: 'x', onClick: () => () => {}, destroy: () => {}, setLabel: () => {}, setSubtitle: () => {}, setEnabled: () => {} }),
     mount: () => actions,
   },
-  dom: { addStyle: (css: string) => { const s = document.createElement('style'); s.textContent = css; document.head.append(s); return () => s.remove(); } },
+  dom: { addStyle: (css: string) => { const s = document.createElement('style'); s.textContent = css; document.head.append(s); return () => s.remove(); },
+    // A mocked reply bubble, so the chronicle under the latest reply shows in the preview.
+    inject: (target: Element, html: string, where: InsertPosition) => { target.insertAdjacentHTML(where, html); return (where === 'beforeend' ? target.lastElementChild : target.firstElementChild) as HTMLElement; },
+    listMessageElements: () => { let b = document.getElementById('bubble'); if (!b) { b = document.createElement('div'); b.id = 'bubble'; b.style.cssText = 'width:640px;color:#ddd;border:1px solid #333;border-radius:12px;padding:14px;margin:30px'; b.textContent = 'The narrator’s reply would be here.'; document.body.append(b); } return [{ messageId: 'preview-msg-12', element: b }]; } },
   events: { on: () => () => {} }, getActiveChat: () => ({ chatId: 'preview', characterId: 'card' }), ready: () => {},
   onBackendMessage: (handler: (p: unknown) => void) => { receive = handler; return () => {}; },
   sendToBackend: (request: any) => setTimeout(() => {
