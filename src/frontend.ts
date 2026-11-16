@@ -744,7 +744,7 @@ export function setup(ctx: SpindleFrontendContext) {
     // Lumiverse's chat follows the newest reply as it grows, which pulled the page to the bottom. Its own
     // disclosures (reasoning, long replies) say "the reader opened this" with this event, and the chat then holds
     // still for that reply. Grimoire's chronicle says the same.
-    try { pressed.dispatchEvent(new CustomEvent('lumiverse:collapsible-toggle-layout', { bubbles: true, composed: true })); } catch { /* an older Lumiverse */ }
+    try { const Made = pressed.ownerDocument.defaultView?.CustomEvent ?? CustomEvent; pressed.dispatchEvent(new Made('lumiverse:collapsible-toggle-layout', { bubbles: true, composed: true })); } catch { /* nothing to tell */ }
     let scroller: HTMLElement | null = null, before = 0;
     try { scroller = scrollParent(pressed); before = pressed.getBoundingClientRect().top; } catch { /* nothing to measure: just redraw */ }
     redraw();
