@@ -15,8 +15,12 @@ export interface RoomInput {
   place: string;
 }
 
-/** Short answers come back fast: no thinking, little room to ramble. */
-export const ROOM_TOKENS = 700;
+/**
+ * Room for the answer. The connection's own thinking setting is used, like Grimoire's other requests: forcing
+ * thinking off made some models (Gemini on OpenRouter) refuse the request outright, and a thinking model needs
+ * room to think before it answers.
+ */
+export const ROOM_TOKENS = 4000;
 
 export function roomMessages(input: RoomInput): Message[] {
   const you = input.persona?.name || 'the player character';

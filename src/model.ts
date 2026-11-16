@@ -22,7 +22,7 @@ function explain(error: unknown): ModelError {
   if (status === 429 || status === 402 || /rate.limit|quota|credits/i.test(message)) return new ModelError('RATE_LIMIT', 'The provider reported a rate or credit limit.');
   if (/context|too.long|maximum.*token/i.test(message)) return new ModelError('CONTEXT_LIMIT', 'The request was too long for this model.');
   if (status >= 500) return new ModelError('PROVIDER_UNAVAILABLE', 'The provider had a server error. Try again later.');
-  return new ModelError('REQUEST_FAILED', 'The model request failed.');
+  return new ModelError(Number.isFinite(status) && status >= 400 ? `REQUEST_FAILED ${status}` : 'REQUEST_FAILED', 'The model request failed.');
 }
 
 /** Send one raw request on the chosen connection. */

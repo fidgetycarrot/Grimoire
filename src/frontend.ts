@@ -741,6 +741,10 @@ export function setup(ctx: SpindleFrontendContext) {
    * The button that was pressed is kept where it was on screen, for long enough to outlast the chat's own scrolling.
    */
   function keepInPlace(pressed: HTMLElement, find: string, redraw: () => void) {
+    // Lumiverse's chat follows the newest reply as it grows, which pulled the page to the bottom. Its own
+    // disclosures (reasoning, long replies) say "the reader opened this" with this event, and the chat then holds
+    // still for that reply. Grimoire's chronicle says the same.
+    try { pressed.dispatchEvent(new CustomEvent('lumiverse:collapsible-toggle-layout', { bubbles: true, composed: true })); } catch { /* an older Lumiverse */ }
     let scroller: HTMLElement | null = null, before = 0;
     try { scroller = scrollParent(pressed); before = pressed.getBoundingClientRect().top; } catch { /* nothing to measure: just redraw */ }
     redraw();

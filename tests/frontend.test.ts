@@ -398,8 +398,10 @@ describe('the under-reply chronicle tome', () => {
     expect(host.textContent).toContain('Read the Room ▾');
     expect(host.querySelector('.gm-tome-compass-drawer')).toBeNull();
 
-    // Unfold the Hook Whisper clasp
+    // Unfold the Hook Whisper clasp. Lumiverse is told the reader opened something, so the chat doesn't follow the reply's growth to the bottom.
+    let toggles = 0; h.bubble.addEventListener('lumiverse:collapsible-toggle-layout', () => { toggles++; });
     (host.querySelector('.gm-tome-clasp') as unknown as HTMLButtonElement).click();
+    expect(toggles).toBe(1);
     expect(host.querySelector('.gm-tome-compass-drawer')).not.toBeNull();
     expect(host.textContent).toContain('The Moment in Plain Sight');
     // The plain retelling is asked for when Read the Room opens, once, and shown with things to do.

@@ -489,7 +489,7 @@ function explain(error) {
     return new ModelError("CONTEXT_LIMIT", "The request was too long for this model.");
   if (status >= 500)
     return new ModelError("PROVIDER_UNAVAILABLE", "The provider had a server error. Try again later.");
-  return new ModelError("REQUEST_FAILED", "The model request failed.");
+  return new ModelError(Number.isFinite(status) && status >= 400 ? `REQUEST_FAILED ${status}` : "REQUEST_FAILED", "The model request failed.");
 }
 async function askModel(api, userId, settings, messages, signal) {
   if (!api.permissions.has("generation"))
@@ -3881,7 +3881,7 @@ function buildTome(input) {
 }
 
 // src/room.ts
-var ROOM_TOKENS = 700;
+var ROOM_TOKENS = 4000;
 function roomMessages(input) {
   const you = input.persona?.name || "the player character";
   const system = `You help someone playing a roleplay story keep up with it. Stories are often written in dense, flowery prose; your job is to say plainly what just happened, so they can decide what their character does next.
@@ -4174,7 +4174,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.34.0";
+var VERSION = "0.34.1";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -4706,7 +4706,7 @@ class NotebookController {
     const settings = await this.settings(), persona = await this.persona();
     const player = [...live.turns].reverse().find((t) => t.role === "user" && !t.ooc);
     const people = presentPeople(live.version.notebook, this.narrated(live), this.listed(live)).slice(0, 6).map((p) => ({ name: p.name, role: p.role }));
-    const on = (connectionId) => (m, signal) => askModel(this.api, this.userId, { connectionId, maxOutputTokens: ROOM_TOKENS, reasoningMode: "off" }, m, signal);
+    const on = (connectionId) => (m, signal) => askModel(this.api, this.userId, { connectionId, maxOutputTokens: ROOM_TOKENS, reasoningMode: settings.reasoningMode }, m, signal);
     const ask = this.ask ?? withBackup(on(settings.roomConnectionId || settings.connectionId), settings.backupId ? on(settings.backupId) : null);
     if (!this.ask && !settings.roomConnectionId && !settings.connectionId)
       throw new Error("Choose a connection in Grimoire settings first.");

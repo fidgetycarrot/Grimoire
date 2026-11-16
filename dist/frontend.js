@@ -174,7 +174,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.34.0";
+var VERSION = "0.34.1";
 var CHAPTER_WORKING = "Starting a new chapter";
 var CHAPTER_DONE = "New chapter ready";
 
@@ -1406,6 +1406,9 @@ function setup(ctx) {
     });
   }
   function keepInPlace(pressed, find, redraw) {
+    try {
+      pressed.dispatchEvent(new CustomEvent("lumiverse:collapsible-toggle-layout", { bubbles: true, composed: true }));
+    } catch {}
     let scroller = null, before = 0;
     try {
       scroller = scrollParent(pressed);

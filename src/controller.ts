@@ -442,7 +442,7 @@ export class NotebookController {
     const settings = await this.settings(), persona = await this.persona();
     const player = [...live.turns].reverse().find(t => t.role === 'user' && !t.ooc);
     const people = presentPeople(live.version.notebook, this.narrated(live), this.listed(live)).slice(0, 6).map(p => ({ name: p.name, role: p.role }));
-    const on = (connectionId: string): Ask => (m, signal) => askModel(this.api, this.userId, { connectionId, maxOutputTokens: ROOM_TOKENS, reasoningMode: 'off' }, m, signal);
+    const on = (connectionId: string): Ask => (m, signal) => askModel(this.api, this.userId, { connectionId, maxOutputTokens: ROOM_TOKENS, reasoningMode: settings.reasoningMode }, m, signal);
     const ask: Ask = this.ask ?? withBackup(on(settings.roomConnectionId || settings.connectionId), settings.backupId ? on(settings.backupId) : null);
     if (!this.ask && !settings.roomConnectionId && !settings.connectionId) throw new Error('Choose a connection in Grimoire settings first.');
     const reading = await askJson(ask, roomMessages({
