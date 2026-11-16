@@ -90,7 +90,7 @@ var styles = `
 .gm-tome-tab-dot{width:7px;height:7px;border-radius:50%;background:#f0b954;box-shadow:0 0 8px #f0b954;flex:none}
 .gm-tome-card{position:relative;z-index:2;padding:13px 15px;border-radius:12px;background:linear-gradient(180deg,rgba(255,248,230,.04),rgba(255,248,230,.015));border:1px solid rgba(228,186,108,.24)}
 .gm-tome-card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:6px}
-.gm-tome-kicker{font-size:10px;font-weight:750;letter-spacing:.15em;text-transform:uppercase;color:#e5c178}
+.gm-tome-kicker{font-size:10px;font-weight:750;letter-spacing:.15em;text-transform:uppercase;color:#e5c178}.gm-tome-info{all:unset;cursor:pointer;margin-left:6px;font-size:12px;letter-spacing:0;text-transform:none;color:rgba(229,193,120,.7)}.gm-tome-info:hover{color:#e5c178}.gm-tome-about{margin:6px 0 0;font-size:12px;line-height:1.45;color:rgba(235,225,205,.68)}
 .gm-tome-title{margin:2px 0 0;font:700 15.5px/1.3 "Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;color:#fff8eb}
 .gm-tome-body{margin:4px 0 10px;font-size:12.5px;color:#dbd1c0;line-height:1.5}
 .gm-tome-seal{flex:none;width:34px;height:34px;border-radius:50%;background:radial-gradient(circle at 32% 30%,#c93b4b,#741622 72%);border:1.5px solid #e6be74;box-shadow:0 3px 10px rgba(0,0,0,.45),inset 0 1px 2px rgba(255,215,150,.45);display:inline-flex;align-items:center;justify-content:center;color:#fde6b0;font-size:14px;font-weight:700}
@@ -103,7 +103,7 @@ var styles = `
 .gm-tome-badge{flex:none;font-size:9.5px;font-weight:750;letter-spacing:.1em;text-transform:uppercase;padding:2px 6px;border-radius:5px;background:rgba(228,186,108,.15);color:#f3d286;border:1px solid rgba(228,186,108,.3)}
 .gm-tome-item-text{min-width:0;flex:1;color:#d6ccb9}
 .gm-tome-item-label{font-weight:700;color:#fff6e5;margin-right:6px}
-.gm-tome-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 14px;margin-top:11px;padding-top:9px;border-top:1px solid rgba(228,186,108,.14);font-size:11px;color:var(--gm-muted)}
+.gm-tome-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:6px 14px;margin-top:10px;font-size:11px;color:var(--gm-muted)}
 .gm-tome-pulse{display:inline-flex;align-items:center;gap:6px;font-weight:650;color:#efe5d4}
 .gm-tome-pulse-dot{width:7px;height:7px;border-radius:50%;flex:none}
 .gm-tome-spine{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;border-radius:13px;background:linear-gradient(90deg,#171420,#121018);border:1px solid rgba(218,175,97,.26);box-shadow:0 8px 22px rgba(0,0,0,.36)}
@@ -174,7 +174,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.33.0";
+var VERSION = "0.33.1";
 var CHAPTER_WORKING = "Starting a new chapter";
 var CHAPTER_DONE = "New chapter ready";
 
@@ -1385,6 +1385,42 @@ function setup(ctx) {
       return null;
     }
   }
+  function keepInPlace(pressed, find, redraw) {
+    let scroller = null, before = 0;
+    try {
+      scroller = scrollParent(pressed);
+      before = pressed.getBoundingClientRect().top;
+    } catch {}
+    redraw();
+    if (!scroller)
+      return;
+    const hold = () => {
+      try {
+        const now = tomeHost?.querySelector(find);
+        if (!now)
+          return;
+        const drift = now.getBoundingClientRect().top - before;
+        if (Math.abs(drift) > 1)
+          scroller.scrollTop += drift;
+      } catch {}
+    };
+    hold();
+    if (typeof requestAnimationFrame === "function")
+      requestAnimationFrame(() => {
+        hold();
+        requestAnimationFrame(hold);
+      });
+    for (const ms of [60, 160, 320, 600])
+      setTimeout(hold, ms);
+  }
+  function scrollParent(node) {
+    for (let at = node.parentElement;at; at = at.parentElement) {
+      const style = getComputedStyle(at);
+      if (/(auto|scroll|overlay)/.test(style.overflowY) && at.scrollHeight > at.clientHeight)
+        return at;
+    }
+    return document.scrollingElement ?? document.documentElement;
+  }
   function buildOpenTome(view, tome, ui, redraw) {
     const box = el("section", "gm-tome");
     box.setAttribute("aria-label", "Grimoire story chronicle");
@@ -1415,7 +1451,7 @@ function setup(ctx) {
       clasp.append(left, btn);
       clasp.addEventListener("click", () => {
         ui.compassOpen = !ui.compassOpen;
-        redraw();
+        keepInPlace(clasp, ".gm-tome-clasp", redraw);
       });
       comp.append(clasp);
       if (ui.compassOpen) {
@@ -1432,7 +1468,7 @@ function setup(ctx) {
           const grid = el("div", "gm-tome-footholds");
           for (const fh of tome.compass.footholds) {
             const card = el("div", "gm-tome-foothold");
-            card.append(el("div", "gm-tome-foothold-kind", fh.kind), el("div", "gm-tome-foothold-label", fh.label), el("div", "gm-tome-foothold-prompt", fh.prompt));
+            card.append(el("div", "gm-tome-foothold-label", fh.label), el("div", "gm-tome-foothold-prompt", fh.prompt));
             grid.append(card);
           }
           drawer.append(grid);
@@ -1450,7 +1486,7 @@ function setup(ctx) {
       b.setAttribute("aria-selected", String(ui.tab === t.id));
       b.dataset.tabId = t.id;
       const words = el("span", "gm-tome-tab-words");
-      words.append(el("span", "gm-tome-tab-short", t.short), el("span", "gm-tome-tab-sub", t.subLabel));
+      words.append(el("span", "gm-tome-tab-short", t.short));
       b.append(el("span", "gm-tome-tab-icon", t.icon), words);
       if (t.isNew) {
         const dot = el("span", "gm-tome-tab-dot");
@@ -1459,7 +1495,7 @@ function setup(ctx) {
       }
       b.addEventListener("click", () => {
         ui.tab = t.id;
-        redraw();
+        keepInPlace(b, `.gm-tome-tab[data-tab-id="${t.id}"]`, redraw);
       });
       tabBar.append(b);
     }
@@ -1470,6 +1506,19 @@ function setup(ctx) {
       const top = el("div", "gm-tome-card-top"), head = el("div");
       head.append(el("div", "gm-tome-kicker", active.kicker), el("h4", "gm-tome-title", active.title));
       top.append(head);
+      let about = null;
+      if (active.about) {
+        const info = el("button", "gm-tome-info", "ⓘ");
+        info.type = "button";
+        info.title = active.about;
+        info.setAttribute("aria-label", "What is this?");
+        about = el("p", "gm-tome-about", active.about);
+        about.hidden = true;
+        info.addEventListener("click", () => {
+          about.hidden = !about.hidden;
+        });
+        head.querySelector(".gm-tome-kicker").append(info);
+      }
       if (active.seal) {
         const seal = el("span", "gm-tome-seal", "✦");
         seal.title = "Earned from your earlier move";
@@ -1481,27 +1530,24 @@ function setup(ctx) {
           pips.append(el("span", `gm-tome-pip${i < active.pips.found ? " found" : ""}`));
         top.append(pips);
       }
-      card.append(top, el("p", "gm-tome-body", active.body));
+      card.append(top);
+      if (about)
+        card.append(about);
+      if (active.body)
+        card.append(el("p", "gm-tome-body", active.body));
       if (active.items.length) {
         const list = el("div", "gm-tome-items");
         for (const item of active.items) {
           const row = el("div", `gm-tome-item${item.highlight ? " highlight" : ""}`);
           const text = el("div", "gm-tome-item-text");
-          text.append(el("span", "gm-tome-item-label", item.label), document.createTextNode(item.detail));
+          text.append(el("span", "gm-tome-item-label", item.label), ...item.detail ? [document.createTextNode(item.detail)] : []);
           row.append(el("span", "gm-tome-badge", item.badge), text);
           list.append(row);
         }
         card.append(list);
       }
-      const foot = el("div", "gm-tome-foot");
-      const pulse = el("span", "gm-tome-pulse");
-      const dot = el("span", "gm-tome-pulse-dot");
-      dot.style.background = tome.pulse.color;
-      dot.style.boxShadow = `0 0 8px ${tome.pulse.color}`;
-      pulse.append(dot, document.createTextNode(`${tome.pulse.label} · ${active.footerLeft}`));
-      const right = el("span", "", active.footerRight);
-      foot.append(pulse, right);
       if (tome.mode !== "active") {
+        const foot = el("div", "gm-tome-foot");
         const foldBtn = el("button", "gm-tome-pill subtle", "Fold Chronicle ▴");
         foldBtn.type = "button";
         foldBtn.addEventListener("click", () => {
@@ -1509,8 +1555,8 @@ function setup(ctx) {
           redraw();
         });
         foot.append(foldBtn);
+        card.append(foot);
       }
-      card.append(foot);
       box.append(card);
     }
     return box;

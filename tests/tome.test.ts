@@ -144,3 +144,27 @@ describe('buildTome spoiler safety and modes', () => {
     }
   });
 });
+
+describe('the chronicle says each thing once', () => {
+  const tomeAt = (notebook = makeBook()) => buildTome({
+    messageId: 'msg-10', reply: 10, latestReply: 'Mira studies the empty hook. "Someone knew where the spare key hung," she says.',
+    recentChat: 'Mira studies the empty hook.', narrated: 'Mira studies the empty hook.', location: 'The Chapel Vestry', notebook, pace: 'auto',
+    clock: { day: 2, hour: 20, label: 'Day 2, 20:00' }, sources: { day: 'tracker', hour: 'tracker', exact: true }, moment: { hours: 44, reply: 10 },
+    intimate: false, seen: { mira: 10 }, quick: { at: Date.now(), ok: true, error: '' }, memory: { people: 5, ties: 3, summaries: 1, last: { at: Date.now(), found: 2, to: 'note' } }, skipOffer: null,
+  });
+  test('the newest clue is the title, not repeated in the list, and counts live in the pips', () => {
+    const clue = tomeAt().tabs.find(t => t.id === 'clue')!;
+    expect(clue.title).toBe('The alms sack is missing from its hook.');
+    expect(clue.items.some(i => i.detail === clue.title)).toBe(false);
+    expect(clue.kicker).toBe('MYSTERY LEDGER');
+    expect(clue.pips).toEqual({ found: 1, total: 6 });
+  });
+  test('how Grimoire works is kept behind ⓘ, and the plumbing is left to the drawer', () => {
+    const tome = tomeAt(), all = JSON.stringify(tome.tabs.map(t => ({ ...t, about: undefined })));
+    expect(all).not.toContain('Grimoire only loads');
+    expect(all).not.toContain('UNDER THE HOOD');
+    expect(all).not.toContain('memories added');
+    expect(tome.tabs.find(t => t.id === 'cast')!.about).toContain('only for people in the scene');
+    expect(tome.tabs.find(t => t.id === 'world')!.about).toContain('Story time is read from your preset’s tracker');
+  });
+});

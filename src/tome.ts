@@ -44,6 +44,8 @@ export interface TomeTab {
   kicker: string;
   title: string;
   body: string;
+  /** How this part of Grimoire works, in one plain sentence. Shown only when the player taps ⓘ, so it isn't read every reply. */
+  about?: string;
   items: TomeItem[];
   footerLeft: string;
   footerRight: string;
@@ -220,7 +222,7 @@ export function distillScene(
     footholds.push({
       kind: isQuestion ? 'QUESTION IN THE AIR' : 'SPOKEN IN THE SCENE',
       label: speaker ? `${speaker.name}’s Words` : isQuestion ? 'Question Put to You' : 'Spoken to You',
-      prompt: `“${cleanQuote}” — ${isQuestion ? 'Waiting on your answer, or you can turn the question back.' : 'You can answer, press further, or act on what is around you.'}`,
+      prompt: `“${cleanQuote}”${isQuestion ? ' Waiting on your answer.' : ''}`,
     });
   }
 
@@ -230,7 +232,7 @@ export function distillScene(
     footholds.push({
       kind: 'CLUE IN REACH',
       label: newClue.where || 'New Clue Noticed',
-      prompt: `${end(newClue.text)} You can inspect it closer, ask someone here about it, or keep it to yourself.`,
+      prompt: end(newClue.text),
     });
   } else {
     const shownNow = notebook.threads
@@ -239,7 +241,7 @@ export function distillScene(
       footholds.push({
         kind: 'WHAT JUST LANDED',
         label: shownNow.thread.title,
-        prompt: `${end(shownNow.step.sign || shownNow.step.text)} What you do with it next is yours.`,
+        prompt: end(shownNow.step.sign || shownNow.step.text),
       });
     }
   }
@@ -248,11 +250,11 @@ export function distillScene(
   for (const person of present) {
     if (footholds.length >= 3) break;
     if (footholds.some(f => f.label.startsWith(person.name))) continue;
-    const doing = person.doing ? end(person.doing) : 'Here with you in the scene.';
+    const doing = person.doing ? end(person.doing) : 'Here with you.';
     footholds.push({
       kind: 'IN THE ROOM',
       label: `${person.name}${person.role ? ` · ${person.role}` : ''}`,
-      prompt: `${doing} You can talk with ${person.name}, watch their reaction, or make a move.`,
+      prompt: doing,
     });
   }
 
@@ -262,7 +264,7 @@ export function distillScene(
     footholds.push({
       kind: 'LAY OF THE LAND',
       label: location || atBuilding?.building.name || 'Where You Stand',
-      prompt: `${placeSentence} You can stay in the moment or move somewhere new.`,
+      prompt: placeSentence,
     });
   }
   if (footholds.length < 3 && notebook.recap) {
@@ -366,14 +368,15 @@ export function buildTome(input: TomeInput): TomeView {
     : truthNow
     ? {
         sub: 'Secret came out',
-        kicker: 'NOW ESTABLISHED · OUT IN THE OPEN',
+        kicker: 'OUT IN THE OPEN',
         title: end(truthNow.text),
-        body: 'Grimoire marked this as known to you now, so people stop acting as if it were still secret.',
+        body: '',
+        about: 'Grimoire marked this as known to you now, so people stop acting as if it were still secret.',
       }
     : paidSeeds[0]
     ? {
         sub: `${paidSeeds.length} paid · ${plantedCount} planted`,
-        kicker: 'CONTINUITY & CALLBACKS · WHAT CAME BACK',
+        kicker: 'WHAT CAME BACK',
         title: end(paidSeeds[0].detail),
         body: end(paidSeeds[0].payoff),
       }
@@ -389,15 +392,17 @@ export function buildTome(input: TomeInput): TomeView {
         sub: `${playerCovers.length} cover ${playerCovers.length === 1 ? 'story' : 'stories'}`,
         kicker: 'WHAT PEOPLE REMEMBER YOU SAID',
         title: `“${end(playerCovers[0].said)}”`,
-        body: 'Grimoire reminds the narrator of cover stories and promises you have made whenever those people are in the scene.',
+        body: '',
+        about: 'Grimoire reminds the narrator of cover stories and promises you have made whenever those people are in the scene.',
       }
     : {
         sub: plantedCount ? `${plantedCount} planted so far` : 'Watching your choices',
-        kicker: 'CONTINUITY & CONSEQUENCES',
+        kicker: 'WHAT COMES BACK',
         title: plantedCount
           ? `${plantedCount} small ${plantedCount === 1 ? 'detail has' : 'details have'} been planted in passing`
           : 'Grimoire is watching what you say and do',
-        body: 'When an earlier detail, promise, or choice comes back later in the story, this seal lights up with the reply it came from.',
+        body: '',
+        about: 'When an earlier detail, promise, or choice comes back later in the story, it shows here with the reply it came from.',
       };
 
   const becauseTab: TomeTab = {
@@ -409,7 +414,9 @@ export function buildTome(input: TomeInput): TomeView {
     kicker: topBecause.kicker,
     title: topBecause.title,
     body: topBecause.body,
-    items: becauseItems.slice(0, 4),
+    ...('about' in topBecause && topBecause.about ? { about: topBecause.about } : {}),
+    // The headline item is already the card's title.
+    items: becauseItems.filter(i => i.label !== topBecause.title).slice(0, 3),
     footerLeft: paidSeeds.length ? `${paidSeeds.length} ${paidSeeds.length === 1 ? 'callback' : 'callbacks'} paid off` : 'No callbacks paid off yet',
     footerRight: plantedCount ? `${plantedCount} earlier ${plantedCount === 1 ? 'detail' : 'details'} waiting in the wings` : 'Spoiler-safe continuity',
     seal: true,
@@ -460,7 +467,7 @@ export function buildTome(input: TomeInput): TomeView {
         ? 'MYSTERY SOLVED · CASE CLOSED'
         : m.status === 'revealed'
         ? 'MYSTERY ENDED · TRUTH CAME OUT'
-        : `MYSTERY LEDGER · ${found.length} OF ${m.clues.length} CLUES DISCOVERED`,
+        : 'MYSTERY LEDGER',
       title: m.status !== 'open'
         ? end(m.question)
         : newest
@@ -470,10 +477,12 @@ export function buildTome(input: TomeInput): TomeView {
         ? m.status === 'solved'
           ? 'You pieced together the mystery in the chat. The full truth is now in play.'
           : 'The mystery has come out in the story, and everyone in the scene can now react to it.'
-        : newest
-        ? `${newest.where ? `Noticed at ${end(newest.where)} ` : ''}Grimoire recorded this clue from the chat. What it points to stays hidden until you work it out.`
-        : 'A mystery is woven into this story. Its subject and answer stay hidden until you come across its clues in play.',
-      items,
+        : newest?.where
+        ? `Found at ${end(newest.where)}`
+        : '',
+      about: m.status === 'open' ? 'Clues are recorded as you find them in the chat. What they point to, and the answer, stay hidden until you work it out; the narrator doesn’t know the answer either.' : undefined,
+      // The newest clue is already the card's title.
+      items: items.filter(i => i.detail !== (newest ? end(newest.text) : '')).slice(0, 3),
       footerLeft: m.status === 'open' ? 'The narrator does not know the answer while open' : `Mystery ${m.status}`,
       footerRight: `${found.length} of ${m.clues.length} clues found`,
       pips: { found: found.length, total: m.clues.length },
@@ -499,14 +508,11 @@ export function buildTome(input: TomeInput): TomeView {
       short: 'Story Beats',
       subLabel: shownNow ? 'New beat shown' : `${shownSteps.length} shown · ${openCount} open`,
       isNew: !!shownNow,
-      kicker: `STORY DEVELOPMENTS · ${openCount} OPEN ${openCount === 1 ? 'STORYLINE' : 'STORYLINES'}`,
+      kicker: 'STORY BEATS',
       title: latest ? end(latest.step.sign || latest.step.text) : 'Storylines are in motion',
-      body: latest
-        ? `From storyline “${latest.thread.title}”. Grimoire marked this development as shown so the narrator moves on to what comes next.`
-        : notebook.recap
-        ? end(notebook.recap)
-        : 'Grimoire is pacing the open storylines in the background; developments appear here once they play out in the chat.',
-      items,
+      body: latest ? `From “${latest.thread.title}”.` : notebook.recap ? end(notebook.recap) : '',
+      about: 'Developments show here once they play out in the chat, so the narrator moves on to what comes next.',
+      items: items.filter(i => !(latest && i.detail === end(latest.step.sign || latest.step.text))).slice(0, 3),
       footerLeft: mainHasShown && mainThread ? `Main storyline: ${mainThread.title}` : `${openCount} ${openCount === 1 ? 'storyline' : 'storylines'} in play`,
       footerRight: `${shownSteps.length} ${shownSteps.length === 1 ? 'development' : 'developments'} shown so far`,
     };
@@ -517,17 +523,17 @@ export function buildTome(input: TomeInput): TomeView {
   for (const p of present) {
     const hasSheet = !!(p.sheet || p.own);
     castItems.push({
-      badge: hasSheet ? 'SHEET IN NOTE' : 'VOICE IN NOTE',
+      badge: 'HERE',
       label: `${p.name}${p.role ? ` · ${p.role}` : ''}`,
-      detail: `${p.doing ? end(p.doing) : 'In the scene.'}${hasSheet ? ' Full character sheet active.' : ' Voice and goals active.'}`,
+      detail: p.doing ? end(p.doing) : '',
       highlight: true,
     });
   }
   for (const p of named.slice(0, 3)) {
     castItems.push({
-      badge: 'KEPT OFF-SCREEN',
+      badge: 'ELSEWHERE',
       label: `${p.name}${p.role ? ` · ${p.role}` : ''}`,
-      detail: `Mentioned only — Grimoire told the narrator they stay busy elsewhere (${p.doing || 'with their own day'}) so a name being said doesn’t walk them in.`,
+      detail: p.doing ? end(p.doing) : 'Busy with their own day.',
     });
   }
 
@@ -544,15 +550,12 @@ export function buildTome(input: TomeInput): TomeView {
     short: 'Who’s Here',
     subLabel: castSub,
     isNew: false,
-    kicker: `IN THE SCENE · ${present.length} PRESENT${named.length ? ` · ${named.length} KEPT OFF-SCREEN` : ''}`,
+    kicker: 'IN THE SCENE',
     title: present.length
       ? `${present.map(p => p.name).join(', ')} in the room`
-      : 'No other tracked characters are in the room right now',
-    body: present.length
-      ? 'Grimoire only loads character sheets and voices for people actually in the scene. Anyone merely talked about is kept busy elsewhere.'
-      : named.length
-      ? 'You talked about people who aren’t here; Grimoire told the narrator what they are busy with elsewhere so they don’t appear out of nowhere.'
-      : 'Grimoire is watching for when known faces or new ones enter the scene.',
+      : 'Nobody else is in the room',
+    body: '',
+    about: 'Grimoire gives the narrator voices and character sheets only for people in the scene. Anyone just talked about stays busy elsewhere, so saying a name doesn’t bring them in.',
     items: castItems,
     footerLeft: `${present.filter(p => p.sheet || p.own).length} full character ${present.filter(p => p.sheet || p.own).length === 1 ? 'sheet' : 'sheets'} in this note`,
     footerRight: `${metCount} known ${metCount === 1 ? 'person' : 'people'} in your story`,
@@ -573,46 +576,20 @@ export function buildTome(input: TomeInput): TomeView {
     : 'Kept by Grimoire’s story clock';
 
   const worldItems: TomeItem[] = [
-    {
-      badge: sources.day === 'tracker' || sources.hour === 'tracker' ? 'TRACKER SYNC' : 'STORY CLOCK',
-      label: `${clockLabel}${input.location ? ` · ${input.location}` : ''}`,
-      detail: `${clockSourceText}.${atBuilding ? ` Room layout loaded for ${atBuilding.building.name}.` : ''}`,
-      highlight: true,
-    },
-    {
-      badge: `PACE: ${PACE_NAMES[pace].toUpperCase()}`,
-      label: `${rMeta.label} · ${notebook.arc.shape === 'kishotenketsu' ? 'Kishōtenketsu' : 'Conflict'} (${stageName})`,
-      detail: rMeta.desc,
-    },
+    { badge: 'NOW', label: `${clockLabel}${input.location ? ` · ${input.location}` : ''}`, detail: '' },
+    { badge: 'PACE', label: PACE_NAMES[pace], detail: '' },
   ];
 
   if (worldMovedNow || offscreenSteps.length > 0) {
     worldItems.push({
       badge: worldMovedNow ? 'MOVED THIS TURN' : 'OFF-SCREEN',
       label: worldMovedNow ? 'The World Moved Off-Screen' : `${offscreenSteps.length} Off-Screen ${offscreenSteps.length === 1 ? 'Step' : 'Steps'} So Far`,
-      detail: 'Something shifted elsewhere while you were here. Grimoire keeps the details hidden until they cross your path in the story.',
+      detail: '',
       highlight: worldMovedNow,
     });
   }
 
-  if (input.memory?.last || input.quick) {
-    const memPart = input.memory?.last
-      ? input.memory.last.to === 'note'
-        ? `${input.memory.last.found} Lumiverse ${input.memory.last.found === 1 ? 'memory' : 'memories'} added to the note`
-        : input.memory.last.to === 'preset'
-        ? 'Your preset already included Lumiverse memories'
-        : 'No extra memories needed for this turn'
-      : '';
-    const quickPart = input.quick?.ok ? 'Quick check read this reply' : '';
-    const combined = [quickPart, memPart].filter(Boolean).join(' · ');
-    if (combined) {
-      worldItems.push({
-        badge: 'UNDER THE HOOD',
-        label: 'What Fed This Turn',
-        detail: `${combined}.`,
-      });
-    }
-  }
+  // What fed the note (memories, the quick check) is in the drawer's Behind the scenes, not under every reply.
 
   const worldTab: TomeTab = {
     id: 'world',
@@ -621,14 +598,15 @@ export function buildTome(input: TomeInput): TomeView {
     subLabel: worldMovedNow ? 'Off-screen shift' : `${rMeta.label} · ${PACE_NAMES[pace]}`,
     isNew: worldMovedNow,
     kicker: worldMovedNow
-      ? 'UNSEEN CURRENTS · SOMETHING SHIFTED OFF-SCREEN'
-      : `STORY PULSE & SOURCES · ${rMeta.label.toUpperCase()}`,
+      ? 'UNSEEN CURRENTS'
+      : 'STORY PULSE',
     title: worldMovedNow
       ? 'Something moved beyond the scene on this turn'
       : `${rMeta.title} (${stageName})`,
     body: worldMovedNow
-      ? 'While you were in this scene, an open thread moved a step forward off-screen. Nothing is spoiled here—you will only learn what happened when word reaches you or you run into it.'
-      : `${rMeta.desc} Grimoire is guiding the narrator using ${clockSourceText.toLowerCase()}.`,
+      ? 'You’ll learn what happened when word reaches you or you run into it.'
+      : rMeta.desc,
+    about: `Story time is ${clockSourceText.toLowerCase()}.${atBuilding ? ` Grimoire knows the layout of ${atBuilding.building.name}, to keep rooms consistent.` : ''}`,
     items: worldItems,
     footerLeft: `Story time: ${clockLabel}`,
     footerRight: `${offscreenSteps.length} off-screen ${offscreenSteps.length === 1 ? 'step' : 'steps'} recorded`,

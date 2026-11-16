@@ -407,7 +407,7 @@ describe('the under-reply chronicle tome', () => {
     // Switch to Who's Here tab
     const castTab = [...host.querySelectorAll('.gm-tome-tab')].find(b => b.textContent?.includes('Who’s Here')) as unknown as HTMLButtonElement;
     castTab.click();
-    expect(host.textContent).toContain('IN THE SCENE · 1 PRESENT');
+    expect(host.textContent).toContain('IN THE SCENE');
     expect(host.textContent).toContain('Mira in the room');
   });
 

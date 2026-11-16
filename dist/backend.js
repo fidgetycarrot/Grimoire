@@ -3561,7 +3561,7 @@ function distillScene(latestReply, notebook, present, reply, location, atBuildin
     footholds.push({
       kind: isQuestion ? "QUESTION IN THE AIR" : "SPOKEN IN THE SCENE",
       label: speaker ? `${speaker.name}\u2019s Words` : isQuestion ? "Question Put to You" : "Spoken to You",
-      prompt: `\u201C${cleanQuote}\u201D \u2014 ${isQuestion ? "Waiting on your answer, or you can turn the question back." : "You can answer, press further, or act on what is around you."}`
+      prompt: `\u201C${cleanQuote}\u201D${isQuestion ? " Waiting on your answer." : ""}`
     });
   }
   const newClue = notebook.mystery?.clues.find((c) => c.status === "found" && c.foundAt === reply);
@@ -3569,7 +3569,7 @@ function distillScene(latestReply, notebook, present, reply, location, atBuildin
     footholds.push({
       kind: "CLUE IN REACH",
       label: newClue.where || "New Clue Noticed",
-      prompt: `${end3(newClue.text)} You can inspect it closer, ask someone here about it, or keep it to yourself.`
+      prompt: end3(newClue.text)
     });
   } else {
     const shownNow = notebook.threads.flatMap((t) => t.steps.filter((s) => s.status === "shown" && s.atReply === reply).map((s) => ({ thread: t, step: s })))[0];
@@ -3577,7 +3577,7 @@ function distillScene(latestReply, notebook, present, reply, location, atBuildin
       footholds.push({
         kind: "WHAT JUST LANDED",
         label: shownNow.thread.title,
-        prompt: `${end3(shownNow.step.sign || shownNow.step.text)} What you do with it next is yours.`
+        prompt: end3(shownNow.step.sign || shownNow.step.text)
       });
     }
   }
@@ -3586,11 +3586,11 @@ function distillScene(latestReply, notebook, present, reply, location, atBuildin
       break;
     if (footholds.some((f) => f.label.startsWith(person.name)))
       continue;
-    const doing = person.doing ? end3(person.doing) : "Here with you in the scene.";
+    const doing = person.doing ? end3(person.doing) : "Here with you.";
     footholds.push({
       kind: "IN THE ROOM",
       label: `${person.name}${person.role ? ` \xB7 ${person.role}` : ""}`,
-      prompt: `${doing} You can talk with ${person.name}, watch their reaction, or make a move.`
+      prompt: doing
     });
   }
   const placeSentence = describeWhereabouts(atBuilding ?? null, location);
@@ -3598,7 +3598,7 @@ function distillScene(latestReply, notebook, present, reply, location, atBuildin
     footholds.push({
       kind: "LAY OF THE LAND",
       label: location || atBuilding?.building.name || "Where You Stand",
-      prompt: `${placeSentence} You can stay in the moment or move somewhere new.`
+      prompt: placeSentence
     });
   }
   if (footholds.length < 3 && notebook.recap) {
@@ -3684,12 +3684,13 @@ function buildTome(input) {
     body: end3(paidNow.payoff)
   } : truthNow ? {
     sub: "Secret came out",
-    kicker: "NOW ESTABLISHED \xB7 OUT IN THE OPEN",
+    kicker: "OUT IN THE OPEN",
     title: end3(truthNow.text),
-    body: "Grimoire marked this as known to you now, so people stop acting as if it were still secret."
+    body: "",
+    about: "Grimoire marked this as known to you now, so people stop acting as if it were still secret."
   } : paidSeeds[0] ? {
     sub: `${paidSeeds.length} paid \xB7 ${plantedCount} planted`,
-    kicker: "CONTINUITY & CALLBACKS \xB7 WHAT CAME BACK",
+    kicker: "WHAT CAME BACK",
     title: end3(paidSeeds[0].detail),
     body: end3(paidSeeds[0].payoff)
   } : scars[0] ? {
@@ -3701,12 +3702,14 @@ function buildTome(input) {
     sub: `${playerCovers.length} cover ${playerCovers.length === 1 ? "story" : "stories"}`,
     kicker: "WHAT PEOPLE REMEMBER YOU SAID",
     title: `\u201C${end3(playerCovers[0].said)}\u201D`,
-    body: "Grimoire reminds the narrator of cover stories and promises you have made whenever those people are in the scene."
+    body: "",
+    about: "Grimoire reminds the narrator of cover stories and promises you have made whenever those people are in the scene."
   } : {
     sub: plantedCount ? `${plantedCount} planted so far` : "Watching your choices",
-    kicker: "CONTINUITY & CONSEQUENCES",
+    kicker: "WHAT COMES BACK",
     title: plantedCount ? `${plantedCount} small ${plantedCount === 1 ? "detail has" : "details have"} been planted in passing` : "Grimoire is watching what you say and do",
-    body: "When an earlier detail, promise, or choice comes back later in the story, this seal lights up with the reply it came from."
+    body: "",
+    about: "When an earlier detail, promise, or choice comes back later in the story, it shows here with the reply it came from."
   };
   const becauseTab = {
     id: "because",
@@ -3717,7 +3720,8 @@ function buildTome(input) {
     kicker: topBecause.kicker,
     title: topBecause.title,
     body: topBecause.body,
-    items: becauseItems.slice(0, 4),
+    ..."about" in topBecause && topBecause.about ? { about: topBecause.about } : {},
+    items: becauseItems.filter((i) => i.label !== topBecause.title).slice(0, 3),
     footerLeft: paidSeeds.length ? `${paidSeeds.length} ${paidSeeds.length === 1 ? "callback" : "callbacks"} paid off` : "No callbacks paid off yet",
     footerRight: plantedCount ? `${plantedCount} earlier ${plantedCount === 1 ? "detail" : "details"} waiting in the wings` : "Spoiler-safe continuity",
     seal: true
@@ -3751,10 +3755,11 @@ function buildTome(input) {
       short: "Clue Found",
       subLabel: m.status === "solved" ? "Mystery solved" : m.status === "revealed" ? "Truth came out" : found.length ? `${found.length} of ${m.clues.length} found` : "None found yet",
       isNew,
-      kicker: m.status === "solved" ? "MYSTERY SOLVED \xB7 CASE CLOSED" : m.status === "revealed" ? "MYSTERY ENDED \xB7 TRUTH CAME OUT" : `MYSTERY LEDGER \xB7 ${found.length} OF ${m.clues.length} CLUES DISCOVERED`,
+      kicker: m.status === "solved" ? "MYSTERY SOLVED \xB7 CASE CLOSED" : m.status === "revealed" ? "MYSTERY ENDED \xB7 TRUTH CAME OUT" : "MYSTERY LEDGER",
       title: m.status !== "open" ? end3(m.question) : newest ? end3(newest.text) : "No clues discovered yet",
-      body: m.status !== "open" ? m.status === "solved" ? "You pieced together the mystery in the chat. The full truth is now in play." : "The mystery has come out in the story, and everyone in the scene can now react to it." : newest ? `${newest.where ? `Noticed at ${end3(newest.where)} ` : ""}Grimoire recorded this clue from the chat. What it points to stays hidden until you work it out.` : "A mystery is woven into this story. Its subject and answer stay hidden until you come across its clues in play.",
-      items,
+      body: m.status !== "open" ? m.status === "solved" ? "You pieced together the mystery in the chat. The full truth is now in play." : "The mystery has come out in the story, and everyone in the scene can now react to it." : newest?.where ? `Found at ${end3(newest.where)}` : "",
+      about: m.status === "open" ? "Clues are recorded as you find them in the chat. What they point to, and the answer, stay hidden until you work it out; the narrator doesn\u2019t know the answer either." : undefined,
+      items: items.filter((i) => i.detail !== (newest ? end3(newest.text) : "")).slice(0, 3),
       footerLeft: m.status === "open" ? "The narrator does not know the answer while open" : `Mystery ${m.status}`,
       footerRight: `${found.length} of ${m.clues.length} clues found`,
       pips: { found: found.length, total: m.clues.length }
@@ -3776,10 +3781,11 @@ function buildTome(input) {
       short: "Story Beats",
       subLabel: shownNow ? "New beat shown" : `${shownSteps.length} shown \xB7 ${openCount} open`,
       isNew: !!shownNow,
-      kicker: `STORY DEVELOPMENTS \xB7 ${openCount} OPEN ${openCount === 1 ? "STORYLINE" : "STORYLINES"}`,
+      kicker: "STORY BEATS",
       title: latest ? end3(latest.step.sign || latest.step.text) : "Storylines are in motion",
-      body: latest ? `From storyline \u201C${latest.thread.title}\u201D. Grimoire marked this development as shown so the narrator moves on to what comes next.` : notebook.recap ? end3(notebook.recap) : "Grimoire is pacing the open storylines in the background; developments appear here once they play out in the chat.",
-      items,
+      body: latest ? `From \u201C${latest.thread.title}\u201D.` : notebook.recap ? end3(notebook.recap) : "",
+      about: "Developments show here once they play out in the chat, so the narrator moves on to what comes next.",
+      items: items.filter((i) => !(latest && i.detail === end3(latest.step.sign || latest.step.text))).slice(0, 3),
       footerLeft: mainHasShown && mainThread ? `Main storyline: ${mainThread.title}` : `${openCount} ${openCount === 1 ? "storyline" : "storylines"} in play`,
       footerRight: `${shownSteps.length} ${shownSteps.length === 1 ? "development" : "developments"} shown so far`
     };
@@ -3788,17 +3794,17 @@ function buildTome(input) {
   for (const p of present) {
     const hasSheet = !!(p.sheet || p.own);
     castItems.push({
-      badge: hasSheet ? "SHEET IN NOTE" : "VOICE IN NOTE",
+      badge: "HERE",
       label: `${p.name}${p.role ? ` \xB7 ${p.role}` : ""}`,
-      detail: `${p.doing ? end3(p.doing) : "In the scene."}${hasSheet ? " Full character sheet active." : " Voice and goals active."}`,
+      detail: p.doing ? end3(p.doing) : "",
       highlight: true
     });
   }
   for (const p of named.slice(0, 3)) {
     castItems.push({
-      badge: "KEPT OFF-SCREEN",
+      badge: "ELSEWHERE",
       label: `${p.name}${p.role ? ` \xB7 ${p.role}` : ""}`,
-      detail: `Mentioned only \u2014 Grimoire told the narrator they stay busy elsewhere (${p.doing || "with their own day"}) so a name being said doesn\u2019t walk them in.`
+      detail: p.doing ? end3(p.doing) : "Busy with their own day."
     });
   }
   const metCount = notebook.people.filter((p) => p.status === "active" && p.met).length;
@@ -3809,9 +3815,10 @@ function buildTome(input) {
     short: "Who\u2019s Here",
     subLabel: castSub,
     isNew: false,
-    kicker: `IN THE SCENE \xB7 ${present.length} PRESENT${named.length ? ` \xB7 ${named.length} KEPT OFF-SCREEN` : ""}`,
-    title: present.length ? `${present.map((p) => p.name).join(", ")} in the room` : "No other tracked characters are in the room right now",
-    body: present.length ? "Grimoire only loads character sheets and voices for people actually in the scene. Anyone merely talked about is kept busy elsewhere." : named.length ? "You talked about people who aren\u2019t here; Grimoire told the narrator what they are busy with elsewhere so they don\u2019t appear out of nowhere." : "Grimoire is watching for when known faces or new ones enter the scene.",
+    kicker: "IN THE SCENE",
+    title: present.length ? `${present.map((p) => p.name).join(", ")} in the room` : "Nobody else is in the room",
+    body: "",
+    about: "Grimoire gives the narrator voices and character sheets only for people in the scene. Anyone just talked about stays busy elsewhere, so saying a name doesn\u2019t bring them in.",
     items: castItems,
     footerLeft: `${present.filter((p) => p.sheet || p.own).length} full character ${present.filter((p) => p.sheet || p.own).length === 1 ? "sheet" : "sheets"} in this note`,
     footerRight: `${metCount} known ${metCount === 1 ? "person" : "people"} in your story`
@@ -3824,37 +3831,16 @@ function buildTome(input) {
   const clockLabel = describeClock(clock);
   const clockSourceText = sources.day === "tracker" && sources.hour === "tracker" ? "Read from your preset\u2019s tracker" : sources.day === "tracker" || sources.hour === "tracker" ? "Partly from your tracker, rest kept by Grimoire" : "Kept by Grimoire\u2019s story clock";
   const worldItems = [
-    {
-      badge: sources.day === "tracker" || sources.hour === "tracker" ? "TRACKER SYNC" : "STORY CLOCK",
-      label: `${clockLabel}${input.location ? ` \xB7 ${input.location}` : ""}`,
-      detail: `${clockSourceText}.${atBuilding ? ` Room layout loaded for ${atBuilding.building.name}.` : ""}`,
-      highlight: true
-    },
-    {
-      badge: `PACE: ${PACE_NAMES[pace].toUpperCase()}`,
-      label: `${rMeta.label} \xB7 ${notebook.arc.shape === "kishotenketsu" ? "Kish\u014Dtenketsu" : "Conflict"} (${stageName})`,
-      detail: rMeta.desc
-    }
+    { badge: "NOW", label: `${clockLabel}${input.location ? ` \xB7 ${input.location}` : ""}`, detail: "" },
+    { badge: "PACE", label: PACE_NAMES[pace], detail: "" }
   ];
   if (worldMovedNow || offscreenSteps.length > 0) {
     worldItems.push({
       badge: worldMovedNow ? "MOVED THIS TURN" : "OFF-SCREEN",
       label: worldMovedNow ? "The World Moved Off-Screen" : `${offscreenSteps.length} Off-Screen ${offscreenSteps.length === 1 ? "Step" : "Steps"} So Far`,
-      detail: "Something shifted elsewhere while you were here. Grimoire keeps the details hidden until they cross your path in the story.",
+      detail: "",
       highlight: worldMovedNow
     });
-  }
-  if (input.memory?.last || input.quick) {
-    const memPart = input.memory?.last ? input.memory.last.to === "note" ? `${input.memory.last.found} Lumiverse ${input.memory.last.found === 1 ? "memory" : "memories"} added to the note` : input.memory.last.to === "preset" ? "Your preset already included Lumiverse memories" : "No extra memories needed for this turn" : "";
-    const quickPart = input.quick?.ok ? "Quick check read this reply" : "";
-    const combined = [quickPart, memPart].filter(Boolean).join(" \xB7 ");
-    if (combined) {
-      worldItems.push({
-        badge: "UNDER THE HOOD",
-        label: "What Fed This Turn",
-        detail: `${combined}.`
-      });
-    }
   }
   const worldTab = {
     id: "world",
@@ -3862,9 +3848,10 @@ function buildTome(input) {
     short: worldMovedNow ? "World Moved" : "World & Pulse",
     subLabel: worldMovedNow ? "Off-screen shift" : `${rMeta.label} \xB7 ${PACE_NAMES[pace]}`,
     isNew: worldMovedNow,
-    kicker: worldMovedNow ? "UNSEEN CURRENTS \xB7 SOMETHING SHIFTED OFF-SCREEN" : `STORY PULSE & SOURCES \xB7 ${rMeta.label.toUpperCase()}`,
+    kicker: worldMovedNow ? "UNSEEN CURRENTS" : "STORY PULSE",
     title: worldMovedNow ? "Something moved beyond the scene on this turn" : `${rMeta.title} (${stageName})`,
-    body: worldMovedNow ? "While you were in this scene, an open thread moved a step forward off-screen. Nothing is spoiled here\u2014you will only learn what happened when word reaches you or you run into it." : `${rMeta.desc} Grimoire is guiding the narrator using ${clockSourceText.toLowerCase()}.`,
+    body: worldMovedNow ? "You\u2019ll learn what happened when word reaches you or you run into it." : rMeta.desc,
+    about: `Story time is ${clockSourceText.toLowerCase()}.${atBuilding ? ` Grimoire knows the layout of ${atBuilding.building.name}, to keep rooms consistent.` : ""}`,
     items: worldItems,
     footerLeft: `Story time: ${clockLabel}`,
     footerRight: `${offscreenSteps.length} off-screen ${offscreenSteps.length === 1 ? "step" : "steps"} recorded`,
@@ -4154,7 +4141,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.33.0";
+var VERSION = "0.33.1";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };

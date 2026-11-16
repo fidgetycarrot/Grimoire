@@ -718,6 +718,36 @@ export function setup(ctx: SpindleFrontendContext) {
     } catch { return null; }
   }
 
+  /**
+   * Redraw without moving the page. Opening Read the Room or switching tabs changes the height of the latest reply,
+   * and the chat then jumped to the bottom, so the player had to scroll back up to read what they had just opened.
+   * The button that was pressed is kept where it was on screen, for long enough to outlast the chat's own scrolling.
+   */
+  function keepInPlace(pressed: HTMLElement, find: string, redraw: () => void) {
+    let scroller: HTMLElement | null = null, before = 0;
+    try { scroller = scrollParent(pressed); before = pressed.getBoundingClientRect().top; } catch { /* nothing to measure: just redraw */ }
+    redraw();
+    if (!scroller) return;
+    const hold = () => {
+      try {
+        const now = tomeHost?.querySelector(find) as HTMLElement | null;
+        if (!now) return;
+        const drift = now.getBoundingClientRect().top - before;
+        if (Math.abs(drift) > 1) scroller!.scrollTop += drift;
+      } catch { /* the reply was redrawn away */ }
+    };
+    hold();
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => { hold(); requestAnimationFrame(hold); });
+    for (const ms of [60, 160, 320, 600]) setTimeout(hold, ms);
+  }
+  function scrollParent(node: HTMLElement): HTMLElement | null {
+    for (let at = node.parentElement; at; at = at.parentElement) {
+      const style = getComputedStyle(at);
+      if (/(auto|scroll|overlay)/.test(style.overflowY) && at.scrollHeight > at.clientHeight) return at;
+    }
+    return (document.scrollingElement as HTMLElement | null) ?? document.documentElement;
+  }
+
   function buildOpenTome(view: ChatView, tome: TomeView, ui: { tab: TomeTab['id']; compassOpen: boolean; expanded: boolean }, redraw: () => void): HTMLElement {
     const box = el('section', 'gm-tome');
     box.setAttribute('aria-label', 'Grimoire story chronicle');
@@ -745,7 +775,7 @@ export function setup(ctx: SpindleFrontendContext) {
       left.append(words);
       const btn = el('span', 'gm-tome-clasp-btn', ui.compassOpen ? 'Fold ▴' : 'Read the Room ▾');
       clasp.append(left, btn);
-      clasp.addEventListener('click', () => { ui.compassOpen = !ui.compassOpen; redraw(); });
+      clasp.addEventListener('click', () => { ui.compassOpen = !ui.compassOpen; keepInPlace(clasp, '.gm-tome-clasp', redraw); });
       comp.append(clasp);
       if (ui.compassOpen) {
         const drawer = el('div', 'gm-tome-compass-drawer');
@@ -760,7 +790,7 @@ export function setup(ctx: SpindleFrontendContext) {
           const grid = el('div', 'gm-tome-footholds');
           for (const fh of tome.compass.footholds) {
             const card = el('div', 'gm-tome-foothold');
-            card.append(el('div', 'gm-tome-foothold-kind', fh.kind), el('div', 'gm-tome-foothold-label', fh.label), el('div', 'gm-tome-foothold-prompt', fh.prompt));
+            card.append(el('div', 'gm-tome-foothold-label', fh.label), el('div', 'gm-tome-foothold-prompt', fh.prompt));
             grid.append(card);
           }
           drawer.append(grid);
@@ -776,10 +806,10 @@ export function setup(ctx: SpindleFrontendContext) {
       b.setAttribute('aria-selected', String(ui.tab === t.id));
       b.dataset.tabId = t.id;
       const words = el('span', 'gm-tome-tab-words');
-      words.append(el('span', 'gm-tome-tab-short', t.short), el('span', 'gm-tome-tab-sub', t.subLabel));
+      words.append(el('span', 'gm-tome-tab-short', t.short));
       b.append(el('span', 'gm-tome-tab-icon', t.icon), words);
       if (t.isNew) { const dot = el('span', 'gm-tome-tab-dot'); dot.title = 'New on this reply'; b.append(dot); }
-      b.addEventListener('click', () => { ui.tab = t.id; redraw(); });
+      b.addEventListener('click', () => { ui.tab = t.id; keepInPlace(b, `.gm-tome-tab[data-tab-id="${t.id}"]`, redraw); });
       tabBar.append(b);
     }
     box.append(tabBar);
@@ -790,6 +820,14 @@ export function setup(ctx: SpindleFrontendContext) {
       const top = el('div', 'gm-tome-card-top'), head = el('div');
       head.append(el('div', 'gm-tome-kicker', active.kicker), el('h4', 'gm-tome-title', active.title));
       top.append(head);
+      // How this part works, once, when asked: not read every reply.
+      let about: HTMLElement | null = null;
+      if (active.about) {
+        const info = el('button', 'gm-tome-info', 'ⓘ'); info.type = 'button'; info.title = active.about; info.setAttribute('aria-label', 'What is this?');
+        about = el('p', 'gm-tome-about', active.about); about.hidden = true;
+        info.addEventListener('click', () => { about!.hidden = !about!.hidden; });
+        head.querySelector('.gm-tome-kicker')!.append(info);
+      }
       if (active.seal) {
         const seal = el('span', 'gm-tome-seal', '✦'); seal.title = 'Earned from your earlier move';
         top.append(seal);
@@ -798,30 +836,28 @@ export function setup(ctx: SpindleFrontendContext) {
         for (let i = 0; i < active.pips.total; i++) pips.append(el('span', `gm-tome-pip${i < active.pips.found ? ' found' : ''}`));
         top.append(pips);
       }
-      card.append(top, el('p', 'gm-tome-body', active.body));
+      card.append(top);
+      if (about) card.append(about);
+      if (active.body) card.append(el('p', 'gm-tome-body', active.body));
       if (active.items.length) {
         const list = el('div', 'gm-tome-items');
         for (const item of active.items) {
           const row = el('div', `gm-tome-item${item.highlight ? ' highlight' : ''}`);
           const text = el('div', 'gm-tome-item-text');
-          text.append(el('span', 'gm-tome-item-label', item.label), document.createTextNode(item.detail));
+          text.append(el('span', 'gm-tome-item-label', item.label), ...(item.detail ? [document.createTextNode(item.detail)] : []));
           row.append(el('span', 'gm-tome-badge', item.badge), text);
           list.append(row);
         }
         card.append(list);
       }
-      const foot = el('div', 'gm-tome-foot');
-      const pulse = el('span', 'gm-tome-pulse');
-      const dot = el('span', 'gm-tome-pulse-dot'); dot.style.background = tome.pulse.color; dot.style.boxShadow = `0 0 8px ${tome.pulse.color}`;
-      pulse.append(dot, document.createTextNode(`${tome.pulse.label} · ${active.footerLeft}`));
-      const right = el('span', '', active.footerRight);
-      foot.append(pulse, right);
+      // The tabs and card already say it all; the foot only folds the chronicle back up.
       if (tome.mode !== 'active') {
+        const foot = el('div', 'gm-tome-foot');
         const foldBtn = el('button', 'gm-tome-pill subtle', 'Fold Chronicle ▴'); foldBtn.type = 'button';
         foldBtn.addEventListener('click', () => { ui.expanded = false; redraw(); });
         foot.append(foldBtn);
+        card.append(foot);
       }
-      card.append(foot);
       box.append(card);
     }
     return box;

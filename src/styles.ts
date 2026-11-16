@@ -89,7 +89,7 @@ export const styles = `
 .gm-tome-tab-dot{width:7px;height:7px;border-radius:50%;background:#f0b954;box-shadow:0 0 8px #f0b954;flex:none}
 .gm-tome-card{position:relative;z-index:2;padding:13px 15px;border-radius:12px;background:linear-gradient(180deg,rgba(255,248,230,.04),rgba(255,248,230,.015));border:1px solid rgba(228,186,108,.24)}
 .gm-tome-card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:6px}
-.gm-tome-kicker{font-size:10px;font-weight:750;letter-spacing:.15em;text-transform:uppercase;color:#e5c178}
+.gm-tome-kicker{font-size:10px;font-weight:750;letter-spacing:.15em;text-transform:uppercase;color:#e5c178}.gm-tome-info{all:unset;cursor:pointer;margin-left:6px;font-size:12px;letter-spacing:0;text-transform:none;color:rgba(229,193,120,.7)}.gm-tome-info:hover{color:#e5c178}.gm-tome-about{margin:6px 0 0;font-size:12px;line-height:1.45;color:rgba(235,225,205,.68)}
 .gm-tome-title{margin:2px 0 0;font:700 15.5px/1.3 "Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;color:#fff8eb}
 .gm-tome-body{margin:4px 0 10px;font-size:12.5px;color:#dbd1c0;line-height:1.5}
 .gm-tome-seal{flex:none;width:34px;height:34px;border-radius:50%;background:radial-gradient(circle at 32% 30%,#c93b4b,#741622 72%);border:1.5px solid #e6be74;box-shadow:0 3px 10px rgba(0,0,0,.45),inset 0 1px 2px rgba(255,215,150,.45);display:inline-flex;align-items:center;justify-content:center;color:#fde6b0;font-size:14px;font-weight:700}
@@ -102,7 +102,7 @@ export const styles = `
 .gm-tome-badge{flex:none;font-size:9.5px;font-weight:750;letter-spacing:.1em;text-transform:uppercase;padding:2px 6px;border-radius:5px;background:rgba(228,186,108,.15);color:#f3d286;border:1px solid rgba(228,186,108,.3)}
 .gm-tome-item-text{min-width:0;flex:1;color:#d6ccb9}
 .gm-tome-item-label{font-weight:700;color:#fff6e5;margin-right:6px}
-.gm-tome-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 14px;margin-top:11px;padding-top:9px;border-top:1px solid rgba(228,186,108,.14);font-size:11px;color:var(--gm-muted)}
+.gm-tome-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:6px 14px;margin-top:10px;font-size:11px;color:var(--gm-muted)}
 .gm-tome-pulse{display:inline-flex;align-items:center;gap:6px;font-weight:650;color:#efe5d4}
 .gm-tome-pulse-dot{width:7px;height:7px;border-radius:50%;flex:none}
 .gm-tome-spine{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;border-radius:13px;background:linear-gradient(90deg,#171420,#121018);border:1px solid rgba(218,175,97,.26);box-shadow:0 8px 22px rgba(0,0,0,.36)}
