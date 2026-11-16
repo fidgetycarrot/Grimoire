@@ -18,6 +18,7 @@ export async function handle(controller: NotebookController, action: string, inp
     case 'enable': return controller.setEnabled(string(data.chatId, 'Chat'), data.enabled === true);
     case 'pace': return controller.setPace(string(data.chatId, 'Chat'), data.pace);
     case 'skip': return controller.skipTime(string(data.chatId, 'Chat'), data.amount, data.unit);
+    case 'readRoom': return controller.readRoom(string(data.chatId, 'Chat'), typeof data.messageId === 'string' ? data.messageId : '');
     case 'edit': return controller.editNotebook(string(data.chatId, 'Chat'), data.notebook);
     case 'remove': return controller.remove(string(data.chatId, 'Chat'));
     case 'stories': return controller.stories();

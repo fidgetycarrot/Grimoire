@@ -90,7 +90,7 @@ var styles = `
 .gm-tome-tab-dot{width:7px;height:7px;border-radius:50%;background:#f0b954;box-shadow:0 0 8px #f0b954;flex:none}
 .gm-tome-card{position:relative;z-index:2;padding:13px 15px;border-radius:12px;background:linear-gradient(180deg,rgba(255,248,230,.04),rgba(255,248,230,.015));border:1px solid rgba(228,186,108,.24)}
 .gm-tome-card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:6px}
-.gm-tome-kicker{font-size:10px;font-weight:750;letter-spacing:.15em;text-transform:uppercase;color:#e5c178}.gm-tome-info{all:unset;cursor:pointer;margin-left:6px;font-size:12px;letter-spacing:0;text-transform:none;color:rgba(229,193,120,.7)}.gm-tome-info:hover{color:#e5c178}.gm-tome-about{margin:6px 0 0;font-size:12px;line-height:1.45;color:rgba(235,225,205,.68)}
+.gm-tome-kicker{font-size:10px;font-weight:750;letter-spacing:.15em;text-transform:uppercase;color:#e5c178}.gm-tome-info{all:unset;cursor:pointer;margin-left:6px;font-size:12px;letter-spacing:0;text-transform:none;color:rgba(229,193,120,.7)}.gm-tome-info:hover{color:#e5c178}.gm-tome-moves{margin:6px 0 0;padding-left:18px;display:grid;gap:5px;font-size:13px;line-height:1.45;color:rgba(240,232,214,.9)}.gm-tome-moves li::marker{color:#e5c178}.gm-tome-about{margin:6px 0 0;font-size:12px;line-height:1.45;color:rgba(235,225,205,.68)}
 .gm-tome-title{margin:2px 0 0;font:700 15.5px/1.3 "Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;color:#fff8eb}
 .gm-tome-body{margin:4px 0 10px;font-size:12.5px;color:#dbd1c0;line-height:1.5}
 .gm-tome-seal{flex:none;width:34px;height:34px;border-radius:50%;background:radial-gradient(circle at 32% 30%,#c93b4b,#741622 72%);border:1.5px solid #e6be74;box-shadow:0 3px 10px rgba(0,0,0,.45),inset 0 1px 2px rgba(255,215,150,.45);display:inline-flex;align-items:center;justify-content:center;color:#fde6b0;font-size:14px;font-weight:700}
@@ -174,7 +174,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.33.1";
+var VERSION = "0.34.0";
 var CHAPTER_WORKING = "Starting a new chapter";
 var CHAPTER_DONE = "New chapter ready";
 
@@ -1166,11 +1166,12 @@ function setup(ctx) {
     replyCard.checked = settings.replyCard !== false;
     replyCard.style.width = "auto";
     cardRow.append(replyCard, document.createTextNode("Show the story chronicle under the latest reply"));
-    card.append(homeRow, cardRow, el("p", "gm-hint", "Attaches a spoiler-free chronicle beneath the newest reply showing what Grimoire is using, callbacks to your choices, found clues, and a collapsible “In Front of You” room reader."));
+    const room = select([["", "Grimoire’s connection"], ...(snapshot?.connections ?? []).map((c) => [c.id, `${c.name}${c.model ? ` · ${c.model}` : ""}`])], settings.roomConnectionId ?? "");
+    card.append(homeRow, cardRow, el("p", "gm-hint", "Attaches a spoiler-free chronicle beneath the newest reply showing what Grimoire is using, callbacks to your choices, found clues, and a collapsible “In Front of You” room reader."), labeled("Read the Room uses", room, "Opening Read the Room retells the latest reply in plain words, with things you could do next. One small request each time you open it on a new reply, and none if you don’t. A fast, cheap model is plenty."));
     const status = el("p", "gm-hint", "Changes save on their own.");
     const save = async () => {
       try {
-        await rpc.request("settings", { settings: { connectionId: connection.value, backupId: backup.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, wait: wait.value, homeList: home.checked, replyCard: replyCard.checked, intimate: intimate.value, memories: mem.checked, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } });
+        await rpc.request("settings", { settings: { connectionId: connection.value, backupId: backup.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, wait: wait.value, homeList: home.checked, replyCard: replyCard.checked, roomConnectionId: room.value, intimate: intimate.value, memories: mem.checked, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } });
       } catch (error) {
         notify(error instanceof Error ? error.message : String(error), "error");
         return;
@@ -1385,6 +1386,25 @@ function setup(ctx) {
       return null;
     }
   }
+  const rooms = new Map;
+  function readRoom(chatId, messageId, key, redraw) {
+    if (rooms.has(key))
+      return;
+    rooms.set(key, { loading: true });
+    rpc.request("readRoom", { chatId, messageId }).then((reading) => {
+      rooms.set(key, reading);
+    }).catch((error) => {
+      rooms.set(key, { error: error instanceof Error ? error.message : String(error) });
+    }).finally(() => {
+      if (destroyed)
+        return;
+      const clasp = tomeHost?.querySelector(".gm-tome-clasp");
+      if (clasp)
+        keepInPlace(clasp, ".gm-tome-clasp", redraw);
+      else
+        redraw();
+    });
+  }
   function keepInPlace(pressed, find, redraw) {
     let scroller = null, before = 0;
     try {
@@ -1458,20 +1478,30 @@ function setup(ctx) {
         const drawer = el("div", "gm-tome-compass-drawer");
         const head = el("div", "gm-tome-compass-head");
         head.append(el("span", "", "The Moment in Plain Sight"), el("span", "", `Reply ${tome.reply}`));
-        const gist = el("p", "gm-tome-gist");
-        const first = tome.compass.gist.charAt(0), rest = tome.compass.gist.slice(1);
-        if (first)
-          gist.append(el("span", "gm-tome-dropcap", first), document.createTextNode(rest));
-        drawer.append(head, gist);
-        if (tome.compass.footholds.length) {
-          drawer.append(el("div", "gm-tome-foothold-title", "Waiting on Your Move"));
-          const grid = el("div", "gm-tome-footholds");
-          for (const fh of tome.compass.footholds) {
-            const card = el("div", "gm-tome-foothold");
-            card.append(el("div", "gm-tome-foothold-label", fh.label), el("div", "gm-tome-foothold-prompt", fh.prompt));
-            grid.append(card);
+        drawer.append(head);
+        const roomKey = `${view.chatId}:${tome.messageId}:${tome.compass.gist}`, reading = rooms.get(roomKey);
+        if (reading && "plain" in reading) {
+          drawer.append(el("p", "gm-tome-gist", reading.plain));
+          if (reading.moves.length) {
+            drawer.append(el("div", "gm-tome-foothold-title", "What you could do"));
+            const list = el("ul", "gm-tome-moves");
+            for (const move of reading.moves)
+              list.append(el("li", "", move));
+            drawer.append(list);
           }
-          drawer.append(grid);
+        } else if (reading && "error" in reading) {
+          drawer.append(el("p", "gm-tome-about", `Couldn’t read the scene this time: ${reading.error}`));
+          const again = el("button", "gm-tome-pill subtle", "Try again");
+          again.type = "button";
+          again.addEventListener("click", () => {
+            rooms.delete(roomKey);
+            readRoom(view.chatId, tome.messageId, roomKey, redraw);
+            redraw();
+          });
+          drawer.append(again);
+        } else {
+          drawer.append(el("p", "gm-tome-about", "Reading the scene…"));
+          readRoom(view.chatId, tome.messageId, roomKey, redraw);
         }
         comp.append(drawer);
       }

@@ -1591,3 +1591,26 @@ describe('replies that failed', () => {
     expect(used.model + used.quick).toBeGreaterThan(0);
   });
 });
+
+describe('read the room', () => {
+  test('retells the latest reply from what the player can see, never the notebook, and only once per reply', async () => {
+    const h = host(); const { c } = await ready(h);
+    h.add('user', 'I ask Mira where the key went.'); h.add('assistant', `Mira turns the lantern down, slow as a held breath. "Someone knew where it hung," she says.${tracker('Day 1, 18:20', 'The chapel')}`);
+    const asked: any[] = [];
+    const reader = new NotebookController(h.api, undefined, () => {}, async messages => { asked.push(JSON.parse(messages[1].content)); return JSON.stringify({ plain: 'Mira says someone knew where the key hung.', moves: ['Ask Mira who could have known', 'Look at the empty hook'] }); });
+    const state = await (c as any).load('chat-1'); await (reader as any).save(state);
+    const id = h.messages.at(-1)!.id;
+    const reading = await reader.readRoom('chat-1', id);
+    expect(reading).toEqual({ plain: 'Mira says someone knew where the key hung.', moves: ['Ask Mira who could have known', 'Look at the empty hook'] });
+    expect(asked[0].task).toBe('grimoire-room-v1');
+    expect(asked[0].playerWrote).toBe('I ask Mira where the key went.');
+    expect(asked[0].latestReply).toContain('Someone knew where it hung');
+    const sent = JSON.stringify(asked[0]);
+    const nb = state.versions.at(-1).notebook;
+    for (const secret of [...nb.story.hiddenTruth, nb.story.twist].filter(Boolean)) expect(sent).not.toContain(secret);
+    await reader.readRoom('chat-1', id);
+    expect(asked.length).toBe(1);
+    await expect(reader.readRoom('chat-1', 'an-older-reply')).rejects.toThrow('moved on');
+  });
+});
+

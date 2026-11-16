@@ -48,7 +48,7 @@ function harness(chat: Partial<NonNullable<Snapshot['chat']>> | null = {}, setti
     sendToBackend: (m: any) => { requests.push(m); queueMicrotask(() => {
       if (m.action === 'pace' && state.chat) state.chat.pace = m.input.pace;
       if (m.action === 'enable' && state.chat) state.chat.enabled = m.input.enabled;
-      receive({ type: 'grimoire:response', id: m.id, result: m.action === 'snapshot' ? structuredClone(state) : m.action === 'skip' ? 24 : m.action === 'stories' ? structuredClone(storyList) : null });
+      receive({ type: 'grimoire:response', id: m.id, result: m.action === 'snapshot' ? structuredClone(state) : m.action === 'skip' ? 24 : m.action === 'stories' ? structuredClone(storyList) : m.action === 'readRoom' ? { plain: 'Mira found the spare key gone and asked you what to tell Oswin.', moves: ['Tell Mira the truth about the key', 'Search the vestry for other signs'] } : null });
     }); },
   } as unknown as SpindleFrontendContext;
   cleanups.push(setup(ctx));
@@ -402,7 +402,16 @@ describe('the under-reply chronicle tome', () => {
     (host.querySelector('.gm-tome-clasp') as unknown as HTMLButtonElement).click();
     expect(host.querySelector('.gm-tome-compass-drawer')).not.toBeNull();
     expect(host.textContent).toContain('The Moment in Plain Sight');
-    expect(host.textContent).toContain('Waiting on Your Move');
+    // The plain retelling is asked for when Read the Room opens, once, and shown with things to do.
+    expect(host.textContent).toContain('Reading the scene…');
+    await tick(20);
+    expect(h.requests.filter(r => r.action === 'readRoom').map(r => r.input)).toEqual([{ chatId: 'chat-1', messageId: expect.any(String) }]);
+    expect(host.textContent).toContain('Mira found the spare key gone and asked you what to tell Oswin.');
+    expect(host.textContent).toContain('What you could do');
+    expect(host.textContent).toContain('Search the vestry for other signs');
+    (host.querySelector('.gm-tome-clasp') as unknown as HTMLButtonElement).click();
+    (host.querySelector('.gm-tome-clasp') as unknown as HTMLButtonElement).click(); await tick(20);
+    expect(h.requests.filter(r => r.action === 'readRoom').length).toBe(1);
 
     // Switch to Who's Here tab
     const castTab = [...host.querySelectorAll('.gm-tome-tab')].find(b => b.textContent?.includes('Who’s Here')) as unknown as HTMLButtonElement;

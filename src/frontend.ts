@@ -573,12 +573,14 @@ export function setup(ctx: SpindleFrontendContext) {
     homeRow.append(home, document.createTextNode('Mark my stories on the home page'));
     const cardRow = el('label', 'gm-row gm-small'), replyCard = el('input'); replyCard.type = 'checkbox'; replyCard.checked = settings.replyCard !== false; replyCard.style.width = 'auto';
     cardRow.append(replyCard, document.createTextNode('Show the story chronicle under the latest reply'));
-    card.append(homeRow, cardRow, el('p', 'gm-hint', 'Attaches a spoiler-free chronicle beneath the newest reply showing what Grimoire is using, callbacks to your choices, found clues, and a collapsible “In Front of You” room reader.'));
+    const room = select([['', 'Grimoire’s connection'], ...(snapshot?.connections ?? []).map(c => [c.id, `${c.name}${c.model ? ` · ${c.model}` : ''}`] as [string, string])], settings.roomConnectionId ?? '');
+    card.append(homeRow, cardRow, el('p', 'gm-hint', 'Attaches a spoiler-free chronicle beneath the newest reply showing what Grimoire is using, callbacks to your choices, found clues, and a collapsible “In Front of You” room reader.'),
+      labeled('Read the Room uses', room, 'Opening Read the Room retells the latest reply in plain words, with things you could do next. One small request each time you open it on a new reply, and none if you don’t. A fast, cheap model is plenty.'));
     // Every change saves on its own, so nothing is lost to a button below the fold.
     const status = el('p', 'gm-hint', 'Changes save on their own.');
     const save = async () => {
       // Saved without redrawing the page, so the next change isn't interrupted.
-      try { await rpc.request('settings', { settings: { connectionId: connection.value, backupId: backup.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, wait: wait.value, homeList: home.checked, replyCard: replyCard.checked, intimate: intimate.value, memories: mem.checked, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } }); }
+      try { await rpc.request('settings', { settings: { connectionId: connection.value, backupId: backup.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, wait: wait.value, homeList: home.checked, replyCard: replyCard.checked, roomConnectionId: room.value, intimate: intimate.value, memories: mem.checked, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } }); }
       catch (error) { notify(error instanceof Error ? error.message : String(error), 'error'); return; }
       status.textContent = 'Saved.';
       void refresh();
@@ -718,6 +720,21 @@ export function setup(ctx: SpindleFrontendContext) {
     } catch { return null; }
   }
 
+  /** Plain retellings by chat, reply and its text, so a swipe gets a fresh one. */
+  const rooms = new Map<string, { plain: string; moves: string[] } | { loading: true } | { error: string }>();
+  function readRoom(chatId: string, messageId: string, key: string, redraw: () => void) {
+    if (rooms.has(key)) return;
+    rooms.set(key, { loading: true });
+    rpc.request<{ plain: string; moves: string[] }>('readRoom', { chatId, messageId })
+      .then(reading => { rooms.set(key, reading); })
+      .catch(error => { rooms.set(key, { error: error instanceof Error ? error.message : String(error) }); })
+      .finally(() => {
+        if (destroyed) return;
+        // The retelling makes the reply taller: keep Read the Room where it is on screen.
+        const clasp = tomeHost?.querySelector('.gm-tome-clasp') as HTMLElement | null;
+        if (clasp) keepInPlace(clasp, '.gm-tome-clasp', redraw); else redraw();
+      });
+  }
   /**
    * Redraw without moving the page. Opening Read the Room or switching tabs changes the height of the latest reply,
    * and the chat then jumped to the bottom, so the player had to scroll back up to read what they had just opened.
@@ -781,19 +798,25 @@ export function setup(ctx: SpindleFrontendContext) {
         const drawer = el('div', 'gm-tome-compass-drawer');
         const head = el('div', 'gm-tome-compass-head');
         head.append(el('span', '', 'The Moment in Plain Sight'), el('span', '', `Reply ${tome.reply}`));
-        const gist = el('p', 'gm-tome-gist');
-        const first = tome.compass.gist.charAt(0), rest = tome.compass.gist.slice(1);
-        if (first) gist.append(el('span', 'gm-tome-dropcap', first), document.createTextNode(rest));
-        drawer.append(head, gist);
-        if (tome.compass.footholds.length) {
-          drawer.append(el('div', 'gm-tome-foothold-title', 'Waiting on Your Move'));
-          const grid = el('div', 'gm-tome-footholds');
-          for (const fh of tome.compass.footholds) {
-            const card = el('div', 'gm-tome-foothold');
-            card.append(el('div', 'gm-tome-foothold-label', fh.label), el('div', 'gm-tome-foothold-prompt', fh.prompt));
-            grid.append(card);
+        drawer.append(head);
+        // The plain retelling is written on request: one small model call, kept for this reply.
+        const roomKey = `${view.chatId}:${tome.messageId}:${tome.compass.gist}`, reading = rooms.get(roomKey);
+        if (reading && 'plain' in reading) {
+          drawer.append(el('p', 'gm-tome-gist', reading.plain));
+          if (reading.moves.length) {
+            drawer.append(el('div', 'gm-tome-foothold-title', 'What you could do'));
+            const list = el('ul', 'gm-tome-moves');
+            for (const move of reading.moves) list.append(el('li', '', move));
+            drawer.append(list);
           }
-          drawer.append(grid);
+        } else if (reading && 'error' in reading) {
+          drawer.append(el('p', 'gm-tome-about', `Couldn’t read the scene this time: ${reading.error}`));
+          const again = el('button', 'gm-tome-pill subtle', 'Try again'); again.type = 'button';
+          again.addEventListener('click', () => { rooms.delete(roomKey); readRoom(view.chatId, tome.messageId, roomKey, redraw); redraw(); });
+          drawer.append(again);
+        } else {
+          drawer.append(el('p', 'gm-tome-about', 'Reading the scene…'));
+          readRoom(view.chatId, tome.messageId, roomKey, redraw);
         }
         comp.append(drawer);
       }

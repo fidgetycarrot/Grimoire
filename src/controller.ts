@@ -21,6 +21,7 @@ import { plain, plainBlock, tidyNotebook } from './tidy';
 import { applyQuick, quickError, quickQuestions, quickState } from './quick';
 import { glance, skipOffer } from './skip';
 import { buildTome } from './tome';
+import { checkRoom, ROOM_TOKENS, roomMessages, type RoomReading } from './room';
 import type { DecisionResult } from 'lumiverse-spindle-types';
 import { checkRecipe, guessRecipe, readField, readTracker, trackerText, validateRecipe, type FieldType, type Recipe } from './tracker';
 import { CHAPTER_DONE, CHAPTER_WORKING, DEFAULT_PREFERENCES, DEFAULT_SETTINGS, MAX_VERSIONS, QUICK_LOG, TALK_LIMITS, type QuickRecord, VERSION, type ChatState, type PlayerNote, type TalkLine, type ChatView, type MemoryView, type Job, type Settings, type Snapshot, type StoryListing, type Version } from './types';
@@ -187,6 +188,7 @@ export function validSettings(value: unknown): Settings {
     intimate: v.intimate === 'allow' ? 'allow' : 'protect',
     memories: v.memories !== false,
     replyCard: v.replyCard !== false,
+    roomConnectionId: plainSetting(v.roomConnectionId, 120),
   };
 }
 
@@ -419,6 +421,36 @@ export class NotebookController {
     const character = await this.api.characters.get(characterId, this.userId);
     if (!character) throw new Error('This chat’s character could not be read.');
     return character;
+  }
+  /** Read the Room retellings already written, by chat and reply text, so reopening costs nothing. */
+  private rooms = new Map<string, { key: string; reading: RoomReading }>();
+  /**
+   * The latest reply retold in plain words, with things the player's character could do next. Runs only when the
+   * player opens Read the Room, outside the chat's queue so a long check-up doesn't hold it up. It is given only
+   * what the player can already see, never the notebook, so it cannot give anything away.
+   */
+  async readRoom(chatId: string, messageId: string): Promise<RoomReading> {
+    const state = await this.load(chatId);
+    if (!state?.versions.length) throw new Error('Write a notebook for this chat first.');
+    const messages = await this.api.chat.getMessages(chatId);
+    const live = await this.live(state, messages);
+    const reply = live && [...live.turns].reverse().find(t => t.role === 'assistant' && !t.ooc);
+    if (!live || !reply) throw new Error('There is no reply to read yet.');
+    if (messageId && reply.id !== messageId) throw new Error('The chat has moved on. Open Read the Room on the newest reply.');
+    const key = `${reply.id}:${(await fingerprints([reply]))[0]}`, kept = this.rooms.get(chatId);
+    if (kept?.key === key) return kept.reading;
+    const settings = await this.settings(), persona = await this.persona();
+    const player = [...live.turns].reverse().find(t => t.role === 'user' && !t.ooc);
+    const people = presentPeople(live.version.notebook, this.narrated(live), this.listed(live)).slice(0, 6).map(p => ({ name: p.name, role: p.role }));
+    const on = (connectionId: string): Ask => (m, signal) => askModel(this.api, this.userId, { connectionId, maxOutputTokens: ROOM_TOKENS, reasoningMode: 'off' }, m, signal);
+    const ask: Ask = this.ask ?? withBackup(on(settings.roomConnectionId || settings.connectionId), settings.backupId ? on(settings.backupId) : null);
+    if (!this.ask && !settings.roomConnectionId && !settings.connectionId) throw new Error('Choose a connection in Grimoire settings first.');
+    const reading = await askJson(ask, roomMessages({
+      reply: readable(reply.content, 12_000), said: readable(splitOoc(player?.content ?? '').story, 2000),
+      persona: persona ? { name: persona.name, description: persona.description.slice(0, 1500) } : null, people, place: live.values.location ?? '',
+    }), checkRoom, AbortSignal.timeout(120_000));
+    this.rooms.set(chatId, { key, reading });
+    return reading;
   }
   private async persona(): Promise<Material['persona']> {
     if (!this.api.permissions.has('personas')) return null;

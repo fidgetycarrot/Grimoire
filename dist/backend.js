@@ -3880,6 +3880,39 @@ function buildTome(input) {
   };
 }
 
+// src/room.ts
+var ROOM_TOKENS = 700;
+function roomMessages(input) {
+  const you = input.persona?.name || "the player character";
+  const system = `You help someone playing a roleplay story keep up with it. Stories are often written in dense, flowery prose; your job is to say plainly what just happened, so they can decide what their character does next.
+
+You get the latest reply, what the player last wrote, who they play, who else is here, and where, as JSON.
+Return only JSON: {"plain": "\u2026", "moves": ["\u2026", "\u2026", "\u2026"]}
+
+"plain": what just happened and where things stand now, in 3 to 5 short sentences of everyday words. Write to the player as "you" (they play ${you}). Say who did what, what was said or asked of you, what changed, and anything left hanging. Only what the reply actually shows: no guessing at hidden motives, no predictions, no judging. No flowery language and no quotes longer than a few words.
+"moves": 3 or 4 different, concrete things ${you} could do next, each one short line starting with a verb. Base them on what is really in the scene: someone to answer, a question to ask, something to look at or take, somewhere to go. Make them different in kind (say something, do something, look closer, leave or change course), and fit them to who ${you} is. These are options, not advice; never say which is best.
+
+Apart from the short options in "moves", do not continue the story or write anything ${you} says, does, thinks, or feels.`;
+  const material = {
+    task: "grimoire-room-v1",
+    player: input.persona ? { plays: input.persona.name, about: input.persona.description } : null,
+    place: input.place,
+    others: input.people,
+    playerWrote: input.said,
+    latestReply: input.reply
+  };
+  return [{ role: "system", content: system }, { role: "user", content: JSON.stringify(material) }];
+}
+var line = (v, max) => typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, max) : "";
+function checkRoom(value) {
+  const v = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const plain = line(v.plain, 1200);
+  const moves = (Array.isArray(v.moves) ? v.moves : []).map((m) => line(m, 200)).filter(Boolean).slice(0, 4);
+  if (plain.length < 20)
+    throw new Error('Return "plain": what just happened, in a few plain sentences.');
+  return { plain, moves };
+}
+
 // src/tracker.ts
 var TAG = /^[A-Za-z][\w:.-]{0,40}$/;
 var VARIABLE = /^[\w.:-]{1,80}$/;
@@ -4141,7 +4174,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.33.1";
+var VERSION = "0.34.0";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -4328,7 +4361,8 @@ function validSettings(value) {
     homeList: v.homeList !== false,
     intimate: v.intimate === "allow" ? "allow" : "protect",
     memories: v.memories !== false,
-    replyCard: v.replyCard !== false
+    replyCard: v.replyCard !== false,
+    roomConnectionId: plainSetting(v.roomConnectionId, 120)
   };
 }
 
@@ -4653,6 +4687,38 @@ class NotebookController {
     if (!character)
       throw new Error("This chat\u2019s character could not be read.");
     return character;
+  }
+  rooms = new Map;
+  async readRoom(chatId, messageId) {
+    const state = await this.load(chatId);
+    if (!state?.versions.length)
+      throw new Error("Write a notebook for this chat first.");
+    const messages = await this.api.chat.getMessages(chatId);
+    const live = await this.live(state, messages);
+    const reply = live && [...live.turns].reverse().find((t) => t.role === "assistant" && !t.ooc);
+    if (!live || !reply)
+      throw new Error("There is no reply to read yet.");
+    if (messageId && reply.id !== messageId)
+      throw new Error("The chat has moved on. Open Read the Room on the newest reply.");
+    const key = `${reply.id}:${(await fingerprints([reply]))[0]}`, kept = this.rooms.get(chatId);
+    if (kept?.key === key)
+      return kept.reading;
+    const settings = await this.settings(), persona = await this.persona();
+    const player = [...live.turns].reverse().find((t) => t.role === "user" && !t.ooc);
+    const people = presentPeople(live.version.notebook, this.narrated(live), this.listed(live)).slice(0, 6).map((p) => ({ name: p.name, role: p.role }));
+    const on = (connectionId) => (m, signal) => askModel(this.api, this.userId, { connectionId, maxOutputTokens: ROOM_TOKENS, reasoningMode: "off" }, m, signal);
+    const ask = this.ask ?? withBackup(on(settings.roomConnectionId || settings.connectionId), settings.backupId ? on(settings.backupId) : null);
+    if (!this.ask && !settings.roomConnectionId && !settings.connectionId)
+      throw new Error("Choose a connection in Grimoire settings first.");
+    const reading = await askJson(ask, roomMessages({
+      reply: readable(reply.content, 12000),
+      said: readable(splitOoc(player?.content ?? "").story, 2000),
+      persona: persona ? { name: persona.name, description: persona.description.slice(0, 1500) } : null,
+      people,
+      place: live.values.location ?? ""
+    }), checkRoom, AbortSignal.timeout(120000));
+    this.rooms.set(chatId, { key, reading });
+    return reading;
   }
   async persona() {
     if (!this.api.permissions.has("personas"))
@@ -5688,6 +5754,8 @@ async function handle(controller, action, input) {
       return controller.setPace(string(data.chatId, "Chat"), data.pace);
     case "skip":
       return controller.skipTime(string(data.chatId, "Chat"), data.amount, data.unit);
+    case "readRoom":
+      return controller.readRoom(string(data.chatId, "Chat"), typeof data.messageId === "string" ? data.messageId : "");
     case "edit":
       return controller.editNotebook(string(data.chatId, "Chat"), data.notebook);
     case "remove":
