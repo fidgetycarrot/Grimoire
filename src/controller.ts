@@ -332,7 +332,11 @@ export class NotebookController {
   /** Who is in the scene now: listed by the tracker, or named in the narrator's latest writing. */
   private narrated(live: Live) { return live.turns.slice(-2).filter(t => t.role === 'assistant').map(t => t.content).join('\n'); }
   /** The tracker's list of who is present, only when the newest reply carries it: an older list may be out of date. */
-  private listed(live: Live) { const value = live.values.present?.trim(); return value && spaces(live.replies[0] ?? '').includes(value) ? value : undefined; }
+  private listed(live: Live) {
+    const value = live.values.present?.trim(), newest = spaces(live.replies[0] ?? '');
+    // A list read from separate tags is joined with commas: each name has to be in the newest reply.
+    return value && (newest.includes(value) || value.split(/\s*,\s*/).filter(Boolean).every(name => newest.includes(name))) ? value : undefined;
+  }
   private presentNow(live: Live) { return presentPeople(live.version.notebook, this.narrated(live), this.listed(live)); }
   private repliesSince(live: Live) { const from = this.fullVersion(live).covered.length, skipped = new Set(live.state.intimate); return live.turns.filter((t, i) => i >= from && t.role === 'assistant' && !t.ooc && !skipped.has(live.prints[i])).length; }
 

@@ -112,6 +112,12 @@ export function readField(field: RecipeField, raw: string, variables: Record<str
       const value = found ? plain(found[1] ?? found[2] ?? '') : '';
       if (value) return value;
     } else if (from.kind === 'tag') {
+      // A list can be one tag per item (<name>Dina</name><name>Katy</name>): every one counts, not just the first.
+      if (field.type === 'list') {
+        const all = [...new Set([...part.matchAll(new RegExp(`<${escape(from.tag)}(?:\\s[^>]*)?>([\\s\\S]*?)</${escape(from.tag)}>`, 'gi'))].map(m => plain(m[1])).filter(Boolean))];
+        if (all.length) return all.join(', ');
+        continue;
+      }
       const tag = new RegExp(`<${escape(from.tag)}(?:\\s[^>]*)?>([\\s\\S]*?)</${escape(from.tag)}>`, 'i').exec(part);
       if (tag && plain(tag[1])) return plain(tag[1]);
     } else {

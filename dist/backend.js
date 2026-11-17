@@ -1642,52 +1642,56 @@ var ROOM = 3600;
 var DRIFT_SHOW = 15;
 var SHEET_SHORT = 700;
 function lightNote(input) {
-  const { notebook } = input, lines = [];
+  const { notebook } = input;
   const present = presentPeople(notebook, input.narrated ?? input.recent, input.trackerPresent);
   const guided = !!input.guided, m = typeof input.now === "number" ? { hours: input.now } : input.now;
-  lines.push("Grimoire: private notes on the people in this story, for the narrator. Never mention, quote, or explain them. They do not plan anything: the story goes where it is going.");
+  const parts = [];
+  const head = ["Grimoire: private notes on the people in this story, for the narrator. Never mention, quote, or explain them. They do not plan anything: the story goes where it is going."];
   if (guided)
-    lines.push(GUIDED);
+    head.push(GUIDED);
   const wishes = (input.notes ?? []).map((n) => n.trim()).filter(Boolean).slice(0, 8);
   if (wishes.length)
-    lines.push(`The player's standing wishes for this story: ${wishes.map(end2).join(" ")}`.slice(0, 900));
+    head.push(`The player's standing wishes for this story: ${wishes.map(end2).join(" ")}`.slice(0, 900));
+  parts.push(head);
   if (present.length) {
-    lines.push("People here and what drives them (give each one their own voice; nobody should sound like anyone else; a sample line shows how someone sounds, never repeat it word for word):");
+    const people = ["People here and what drives them (give each one their own voice; nobody should sound like anyone else; a sample line shows how someone sounds, never repeat it word for word):"];
     for (const person of present.slice(0, 4))
-      lines.push(`- ${person.name}${person.role ? ` (${person.role})` : ""}: wants ${end2(person.wants || "nothing stated yet")}${person.doing ? ` Currently: ${end2(person.doing)}` : ""}${person.hint ? ` Play them as: ${end2(person.hint)}` : ""}${person.voice ? ` Voice: ${end2(person.voice)}` : ""}${person.depth ? ` More than their role: ${end2(person.depth)}` : ""}`);
+      people.push(`- ${person.name}${person.role ? ` (${fit(person.role, 80)})` : ""}: wants ${fit(end2(person.wants || "nothing stated yet"), 160)}${person.doing ? ` Currently: ${fit(end2(person.doing), 160)}` : ""}${person.voice ? ` Voice: ${fit(end2(person.voice), 200)}` : ""}`);
     if (!guided) {
       for (const person of present.slice(0, 4))
         if (person.drift && (m.reply === undefined || person.driftAt === undefined || m.reply - person.driftAt <= DRIFT_SHOW))
-          lines.push(`${person.name} has been slipping. Bring them back: ${end2(person.drift)}`);
-      const voiced = present.filter((p) => p.voice).slice(0, 4);
-      if (voiced.length >= 2)
-        lines.push(`Before writing lines for ${voiced.map((p) => p.name).join(", ").replace(/, ([^,]*)$/, " and $1")}, check each sounds like their own voice above and not like the others, and that each still shows more than their one most obvious trait.`);
+          people.push(`${person.name} has been slipping. Bring them back: ${end2(person.drift)}`);
     }
-  }
-  const named = guided ? [] : spokenOf(notebook, input.recent, present).slice(0, 3);
-  if (named.length) {
-    lines.push("Named in the chat but not in the scene. Unless the latest messages already show them here, a name being said does not bring anyone in: they carry on with their own day elsewhere, until the player goes to them or they have a reason of their own to come.");
-    for (const person of named)
-      lines.push(`- ${person.name}: ${end2(fit(person.doing || `wants ${person.wants || "something of their own"}`, 160))}`);
+    parts.push(people);
   }
   const told = guided ? [] : (notebook.covers ?? []).filter((c) => c.by === "player" && c.status !== "exposed" && c.told.some((id) => present.some((p) => p.id === id))).slice(0, 2);
-  for (const c of told) {
-    const heard = notebook.people.filter((p) => c.told.includes(p.id) && present.includes(p)).map((p) => p.name).join(" and ");
-    const bare = (t) => t.trim().replace(/[.!?]+$/, "");
-    lines.push(`The player character told ${heard}: "${bare(c.said)}"${c.hides ? `, to cover ${bare(c.hides)}` : ""}. They remember it${c.status === "strained" ? " and are starting to doubt it" : ""}; details should stay consistent with it.`);
-  }
-  const known = notebook.story.cameOut.slice(-3).map((r) => end2(r.text));
+  if (told.length)
+    parts.push(told.map((c) => {
+      const heard = notebook.people.filter((p) => c.told.includes(p.id) && present.includes(p)).map((p) => p.name).join(" and ");
+      const bare = (t) => t.trim().replace(/[.!?]+$/, "");
+      return `The player character told ${heard}: "${fit(bare(c.said), 240)}"${c.hides ? `, to cover ${fit(bare(c.hides), 160)}` : ""}. They remember it${c.status === "strained" ? " and are starting to doubt it" : ""}; details should stay consistent with it.`;
+    }));
+  const known = notebook.story.cameOut.slice(-3).map((r) => fit(end2(r.text), 260));
   if (known.length)
-    lines.push(`Already out in the open (people know it now; keep to it): ${known.join(" ")}`);
+    parts.push([`Already out in the open (people know it now; keep to it): ${known.join(" ")}`]);
+  const named = guided ? [] : spokenOf(notebook, input.recent, present).slice(0, 3);
+  if (named.length)
+    parts.push([
+      "Named in the chat but not in the scene. Unless the latest messages already show them here, a name being said does not bring anyone in: they carry on with their own day elsewhere, until the player goes to them or they have a reason of their own to come.",
+      ...named.map((person) => `- ${person.name}: ${end2(fit(person.doing || `wants ${person.wants || "something of their own"}`, 160))}`)
+    ]);
+  const voiced = guided ? [] : present.filter((p) => p.voice).slice(0, 4);
+  if (voiced.length >= 2)
+    parts.push([`Before writing lines for ${voiced.map((p) => p.name).join(", ").replace(/, ([^,]*)$/, " and $1")}, check each sounds like their own voice above and not like the others, and that each still shows more than their one most obvious trait.`]);
+  while (parts.length > 1 && parts.flat().join(`
+`).length > ROOM)
+    parts.pop();
   const sheets = present.filter((p) => p.sheet || p.own).slice(0, 3).map((p) => `${p.name}: ${`${p.own ? ` ${end2(p.own)}` : ""}${p.sheet ? ` ${end2(p.sheet)}` : ""}`.trim().slice(0, 2600)}`);
-  while (lines.join(`
-`).length > ROOM && lines.length > 1)
-    lines.pop();
   const cast = sheets.length ? `
 Who they are, in full (play them true to this, and let it show in what they do, not in explanations):
 ${sheets.join(`
 `)}` : "";
-  return `${lines.join(`
+  return `${parts.flat().join(`
 `)}${cast}
 The latest messages decide what actually happened. Keep secrets hidden and let them show only through small details.`;
 }
@@ -4099,6 +4103,12 @@ function readField(field, raw, variables) {
       if (value)
         return value;
     } else if (from.kind === "tag") {
+      if (field.type === "list") {
+        const all = [...new Set([...part.matchAll(new RegExp(`<${escape2(from.tag)}(?:\\s[^>]*)?>([\\s\\S]*?)</${escape2(from.tag)}>`, "gi"))].map((m) => plain3(m[1])).filter(Boolean))];
+        if (all.length)
+          return all.join(", ");
+        continue;
+      }
       const tag = new RegExp(`<${escape2(from.tag)}(?:\\s[^>]*)?>([\\s\\S]*?)</${escape2(from.tag)}>`, "i").exec(part);
       if (tag && plain3(tag[1]))
         return plain3(tag[1]);
@@ -4247,7 +4257,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.35.0";
+var VERSION = "0.35.1";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -4615,8 +4625,8 @@ class NotebookController {
 `);
   }
   listed(live) {
-    const value = live.values.present?.trim();
-    return value && spaces(live.replies[0] ?? "").includes(value) ? value : undefined;
+    const value = live.values.present?.trim(), newest = spaces(live.replies[0] ?? "");
+    return value && (newest.includes(value) || value.split(/\s*,\s*/).filter(Boolean).every((name) => newest.includes(name))) ? value : undefined;
   }
   presentNow(live) {
     return presentPeople(live.version.notebook, this.narrated(live), this.listed(live));

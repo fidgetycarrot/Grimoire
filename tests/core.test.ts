@@ -927,3 +927,12 @@ describe('a backup planner', () => {
     expect(validSettings({ connectionId: 'a', backupId: 'a' }).backupId).toBe('');
   });
 });
+
+describe('a list kept one tag per item', () => {
+  test('every name counts, not only the first (Vexa lists who is on screen this way)', () => {
+    const field = { name: 'present', type: 'list' as const, source: { kind: 'tag' as const, tag: 'name', region: { kind: 'tag' as const, tag: 'state:onscreen' } } };
+    const reply = 'Katy laughs.\n<internal_states><state:onscreen><entity><name>Dina⠀Moreau</name></entity><entity><name>Katy⠀Callahan</name></entity></state:onscreen><state:offscreen><name>Chloe Callahan</name></state:offscreen></internal_states>';
+    expect(readField(field, reply, {})).toBe('Dina Moreau, Katy Callahan');
+    expect(readField({ ...field, type: 'text' }, reply, {})).toBe('Dina Moreau');
+  });
+});
