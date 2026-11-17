@@ -150,7 +150,7 @@ describe('the panel', () => {
   test('a chat without a notebook offers to write one, and needs a connection first', async () => {
     const h = harness({ hasNotebook: false, notebook: null }); await tick();
     h.button('Write the notebook')!.click(); await tick();
-    expect(h.requests.find(r => r.action === 'create')!.input).toEqual({ chatId: 'chat-1', preferences: { tone: 'balanced', twist: true, shape: 'auto', lockShape: false, size: 'auto', mystery: false }, ideas: '', keepIdeas: false });
+    expect(h.requests.find(r => r.action === 'create')!.input).toEqual({ chatId: 'chat-1', preferences: { tone: 'balanced', twist: true, shape: 'auto', lockShape: false, size: 'auto', mystery: false, planner: 'grimoire' }, ideas: '', keepIdeas: false });
     const none = harness({ hasNotebook: false, notebook: null }, { connectionId: '' }); await tick();
     expect(none.button('Write the notebook')!.disabled).toBe(true);
     expect(none.root.textContent).toContain('Choose a model connection in Settings first.');
@@ -447,3 +447,15 @@ describe('read the room settings', () => {
   });
 });
 
+
+describe('who plans the story', () => {
+  test('can be switched in More, and the Mystery section steps aside when the preset plans', async () => {
+    const h = harness({ preferences: { tone: 'balanced', twist: true, shape: 'auto', lockShape: false, size: 'auto', planner: 'preset' } as any }); await tick();
+    expect([...h.root.querySelectorAll('summary')].some(s => s.textContent?.startsWith('Mystery'))).toBe(false);
+    const label = [...h.root.querySelectorAll('label')].find(l => l.textContent === 'Who plans the story') as unknown as HTMLLabelElement;
+    const box = h.root.querySelector(`#${label.htmlFor}`) as unknown as HTMLSelectElement;
+    expect(box.value).toBe('preset');
+    box.value = 'grimoire'; box.dispatchEvent(new h.window.Event('change', { bubbles: true }) as any); await tick();
+    expect(h.requests.find(r => r.action === 'planner')!.input).toEqual({ chatId: 'chat-1', planner: 'grimoire' });
+  });
+});

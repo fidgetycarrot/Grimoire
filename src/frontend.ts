@@ -102,7 +102,8 @@ export function setup(ctx: SpindleFrontendContext) {
     const result = await rpc.request<T>(action, input); await refresh(true); return result;
   }
 
-  const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally'], ['wide', 'A big world: new places and people often'], ['close', 'Keep it close: a few places and people']];
+  const PLANNER_CHOICES: Array<[string, string]> = [['grimoire', 'Grimoire'], ['preset', 'My preset (Grimoire keeps people and memory)']];
+const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally'], ['wide', 'A big world: new places and people often'], ['close', 'Keep it close: a few places and people']];
   const SHAPE_CHOICES: Array<[string, string]> = [['auto', 'Let Grimoire choose'], ['conflict', 'Conflict: a problem that builds to a climax'], ['kishotenketsu', 'Kishōtenketsu: people and discovery, with a turn instead of a fight']];
   // ----- This chat -----
   function renderStart(view: ChatView) {
@@ -120,6 +121,8 @@ export function setup(ctx: SpindleFrontendContext) {
     grid.append(labeled('How the story is built', shape, 'Grimoire can switch shapes between parts of the story as it goes, unless you keep one.'), lockRow);
     const size = select(SIZE_CHOICES, view.preferences.size ?? 'auto');
     grid.append(labeled('How big the world gets', size, 'Grow naturally: new people and places now and then, and people you’ve met come back. A big world: more of both, more often. Keep it close: the story stays with the places and people it has.'));
+    const planner = select(PLANNER_CHOICES, view.preferences.planner ?? 'grimoire');
+    grid.append(labeled('Who plans the story', planner, 'Grimoire: it plans where the story goes and steers the narrator there. Your preset: for presets that plan the story themselves (their own arc, foreshadowing, off-screen events). Grimoire then leaves the plot alone and keeps the people true and the long memory: voices, who’s here, what came out, what you’ve told people.'));
     const ideas = el('textarea', 'gm-talk-input'); ideas.rows = 4; ideas.maxLength = 3000; ideas.placeholder = 'Like “a slow-burn romance, trouble with old friends, a trip that goes sideways”, or someone you’d like to meet';
     const keepIdeas = el('input'); keepIdeas.type = 'checkbox'; keepIdeas.style.width = 'auto';
     const keepRow = el('label', 'gm-row gm-small'); keepRow.append(keepIdeas, document.createTextNode('Keep these as lasting notes'));
@@ -130,7 +133,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const noConnection = !snapshot?.settings.connectionId;
     const parts = view.earlierParts ?? 0;
     const write = button('Write the notebook', async () => {
-      await act('create', { chatId: view.chatId, preferences: { tone: tone.value, twist: twist.checked, shape: shape.value, lockShape: lock.checked, size: size.value, mystery: mystery.checked }, ideas: ideas.value.trim(), keepIdeas: keepIdeas.checked });
+      await act('create', { chatId: view.chatId, preferences: { tone: tone.value, twist: twist.checked, shape: shape.value, lockShape: lock.checked, size: size.value, mystery: mystery.checked && planner.value !== 'preset', planner: planner.value }, ideas: ideas.value.trim(), keepIdeas: keepIdeas.checked });
       notify(parts ? `Reading the chat, then writing the notebook. This uses ${parts + 1} model requests and can take a few minutes.` : 'Writing the notebook. This uses one model request and can take a minute.');
     }, 'primary');
     write.classList.add('gm-wide'); write.disabled = noConnection || view.job?.status === 'running';
@@ -295,6 +298,11 @@ export function setup(ctx: SpindleFrontendContext) {
     const keep = button('Save', async () => { await act('shape', { chatId: view.chatId, shape: kept.value === 'off' ? 'auto' : kept.value, lockShape: kept.value !== 'off' }); notify(kept.value === 'off' ? 'Grimoire will choose the shape of each part.' : 'Saved. Every part of the story will use this shape.'); });
     const size = select(SIZE_CHOICES, view.preferences.size ?? 'auto');
     size.addEventListener('change', async () => { await act('size', { chatId: view.chatId, size: size.value }); notify('Saved. Check-ups use it from now on.'); });
+    const planner = select(PLANNER_CHOICES, view.preferences.planner ?? 'grimoire');
+    planner.addEventListener('change', async () => {
+      try { await act('planner', { chatId: view.chatId, planner: planner.value }); notify(planner.value === 'preset' ? 'Saved. Grimoire now leaves the plot to your preset, from the next reply.' : 'Saved. Grimoire plans the story again, from the next reply.'); }
+      catch (error) { planner.value = view.preferences.planner ?? 'grimoire'; notify(error instanceof Error ? error.message : String(error)); }
+    });
     const amount = el('input'); amount.type = 'number'; amount.min = '1'; amount.max = '999'; amount.value = '1';
     const unit = select([['hours', 'hours'], ['days', 'days'], ['weeks', 'weeks']], 'days');
     const busy = view.job?.status === 'running';
@@ -309,6 +317,7 @@ export function setup(ctx: SpindleFrontendContext) {
     d.body.append(check, el('p', 'gm-hint', 'Reads the latest chat and updates the plan. Check-ups also run on their own when a scene changes, time jumps, or enough replies pass.'),
       el('div', 'gm-sub'), skipRow, skip, el('div', 'gm-sub'),
       labeled('Keep one story shape for this chat', kept, 'If this part of the story already has the other shape, the change starts with the next part.'), keep, el('div', 'gm-sub'),
+      labeled('Who plans the story', planner, 'Grimoire: it plans where the story goes and steers the narrator there. Your preset: for presets that plan the story themselves (their own arc, foreshadowing, off-screen events). Grimoire then leaves the plot alone and keeps the people true and the long memory: voices, who’s here, what came out, what you’ve told people.'),
       labeled('How big the world gets', size, 'Grow naturally: new people and places now and then, and people you’ve met come back. A big world: more of both, more often. Keep it close: the story stays with the places and people it has.'), el('div', 'gm-sub'), remove);
     return d.root;
   }
@@ -529,7 +538,7 @@ export function setup(ctx: SpindleFrontendContext) {
     if (view.reworking && view.enabled) body.append(el('p', 'gm-hint', 'The story changed direction. Grimoire is reworking its plans to fit, and holds older plans back meanwhile. Nothing it already set up is forgotten.'));
     body.append(renderNow(view, toggle));
     if (view.skipOffer && view.enabled) body.append(renderSkipOffer(view));
-    body.append(renderSteer(view), ...(view.hasNotebook ? [renderMystery(view), renderTaste(view)] : []), renderBehind(view), renderSpoilers(view), renderMore(view));
+    body.append(renderSteer(view), ...(view.hasNotebook ? [...(view.preferences.planner === 'preset' && view.mystery?.status !== 'open' ? [] : [renderMystery(view)]), renderTaste(view)] : []), renderBehind(view), renderSpoilers(view), renderMore(view));
   }
 
   // ----- Settings -----

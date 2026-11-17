@@ -1641,7 +1641,59 @@ function fit(text, max) {
 var ROOM = 3600;
 var DRIFT_SHOW = 15;
 var SHEET_SHORT = 700;
+function lightNote(input) {
+  const { notebook } = input, lines = [];
+  const present = presentPeople(notebook, input.narrated ?? input.recent, input.trackerPresent);
+  const guided = !!input.guided, m = typeof input.now === "number" ? { hours: input.now } : input.now;
+  lines.push("Grimoire: private notes on the people in this story, for the narrator. Never mention, quote, or explain them. They do not plan anything: the story goes where it is going.");
+  if (guided)
+    lines.push(GUIDED);
+  const wishes = (input.notes ?? []).map((n) => n.trim()).filter(Boolean).slice(0, 8);
+  if (wishes.length)
+    lines.push(`The player's standing wishes for this story: ${wishes.map(end2).join(" ")}`.slice(0, 900));
+  if (present.length) {
+    lines.push("People here and what drives them (give each one their own voice; nobody should sound like anyone else; a sample line shows how someone sounds, never repeat it word for word):");
+    for (const person of present.slice(0, 4))
+      lines.push(`- ${person.name}${person.role ? ` (${person.role})` : ""}: wants ${end2(person.wants || "nothing stated yet")}${person.doing ? ` Currently: ${end2(person.doing)}` : ""}${person.hint ? ` Play them as: ${end2(person.hint)}` : ""}${person.voice ? ` Voice: ${end2(person.voice)}` : ""}${person.depth ? ` More than their role: ${end2(person.depth)}` : ""}`);
+    if (!guided) {
+      for (const person of present.slice(0, 4))
+        if (person.drift && (m.reply === undefined || person.driftAt === undefined || m.reply - person.driftAt <= DRIFT_SHOW))
+          lines.push(`${person.name} has been slipping. Bring them back: ${end2(person.drift)}`);
+      const voiced = present.filter((p) => p.voice).slice(0, 4);
+      if (voiced.length >= 2)
+        lines.push(`Before writing lines for ${voiced.map((p) => p.name).join(", ").replace(/, ([^,]*)$/, " and $1")}, check each sounds like their own voice above and not like the others, and that each still shows more than their one most obvious trait.`);
+    }
+  }
+  const named = guided ? [] : spokenOf(notebook, input.recent, present).slice(0, 3);
+  if (named.length) {
+    lines.push("Named in the chat but not in the scene. Unless the latest messages already show them here, a name being said does not bring anyone in: they carry on with their own day elsewhere, until the player goes to them or they have a reason of their own to come.");
+    for (const person of named)
+      lines.push(`- ${person.name}: ${end2(fit(person.doing || `wants ${person.wants || "something of their own"}`, 160))}`);
+  }
+  const told = guided ? [] : (notebook.covers ?? []).filter((c) => c.by === "player" && c.status !== "exposed" && c.told.some((id) => present.some((p) => p.id === id))).slice(0, 2);
+  for (const c of told) {
+    const heard = notebook.people.filter((p) => c.told.includes(p.id) && present.includes(p)).map((p) => p.name).join(" and ");
+    const bare = (t) => t.trim().replace(/[.!?]+$/, "");
+    lines.push(`The player character told ${heard}: "${bare(c.said)}"${c.hides ? `, to cover ${bare(c.hides)}` : ""}. They remember it${c.status === "strained" ? " and are starting to doubt it" : ""}; details should stay consistent with it.`);
+  }
+  const known = notebook.story.cameOut.slice(-3).map((r) => end2(r.text));
+  if (known.length)
+    lines.push(`Already out in the open (people know it now; keep to it): ${known.join(" ")}`);
+  const sheets = present.filter((p) => p.sheet || p.own).slice(0, 3).map((p) => `${p.name}: ${`${p.own ? ` ${end2(p.own)}` : ""}${p.sheet ? ` ${end2(p.sheet)}` : ""}`.trim().slice(0, 2600)}`);
+  while (lines.join(`
+`).length > ROOM && lines.length > 1)
+    lines.pop();
+  const cast = sheets.length ? `
+Who they are, in full (play them true to this, and let it show in what they do, not in explanations):
+${sheets.join(`
+`)}` : "";
+  return `${lines.join(`
+`)}${cast}
+The latest messages decide what actually happened. Keep secrets hidden and let them show only through small details.`;
+}
 function buildNote(input) {
+  if (input.light)
+    return lightNote(input);
   const { notebook, pace, now } = input, lines = [], vital = new Set;
   const must = (text) => {
     vital.add(text);
@@ -2695,7 +2747,8 @@ ${LORE(input.lore) ? `- ${LORE(input.lore)}` : ""}${MEMORY(input.memory) ? `- ${
 - ${WORLD(input.preferences.size)}${input.preferences.size !== "close" && input.away.length ? ' "away" lists people the player has met who have not been seen for a while: give one or two of them a reason to come back soon, through what they want.' : ""}
 ${input.preferences.size !== "close" ? `- Where the story goes: "places" lists where recent scenes took place. If the story has spent a long stretch in the same place or the same few rooms, let one storyline's next step give the player a reason to go somewhere else. It should grow out of how these people live and what they want: a shift at work, a class, an errand, an appointment or event people have already mentioned, a favor someone asks, trouble that needs them elsewhere. Give it a place and a time, and let the step after it happen there. Set it up ahead where you can (a breadcrumb, a mention a day or two earlier) so it feels like part of their lives rather than something dropped in. Vary the kind of pull, never the same shape twice running and never on a schedule; some stretches stay home, and that is fine. It stays the player's choice: if they don't go, the world goes on without them (ifIgnored).
 ` : ""}- Places: if the story has spent time in a building that has no layout in "buildings" yet, add one (see 3g). Keep every layout, and add rooms the chat has shown; never move rooms the chat has already used.
-- What the player enjoys: ${input.preferences.likes ? '"preferences.likes" is the player telling you what they enjoy, in their own words. It comes first: plan by it, and never let "taste" contradict it. Beyond that, keep' : "keep"} "taste" current, from how they actually play. It is shown to the player, so it holds only things they have seen, never plans or secrets. Which storylines and people do they go after, which scenes do they stay in and write the most for, what do they skip past or cut short? Short plain lines ("lingers in quiet scenes with Mira", "skips combat", "keeps poking at the ring mystery"). Judge it against what is normal for this chat: something the card delivers all the time anyway (in an erotic card, sex; in a war story, fighting) is not a taste and needs no planning toward, and a long intimate scene says nothing by its length, since those run long by nature. Look for what stands out instead: which people and dynamics they pick, what kind of tension they enjoy around those scenes (the risk, the slow build, the banter), and what they go for outside them. Plan toward it as one ingredient among others: more of what they lean into, less of what they pass over, never the same thing every time.
+${input.preferences.planner === "preset" ? `- This chat's preset plans the story itself (its own arc, foreshadowing, off-screen events). Grimoire does not plan here; its notes only keep the narrator true to the people and to what has happened. So in this update: keep "people" accurate (who they are, what they want and are doing now, voice, depth, sheet, drift; add people who now matter), record what came out and what the player character told people, and keep "recap" and "summary" current. Do not invent new storylines, steps, beats, or seeds to push the story anywhere; let threads simply record what is going on, and close them when the chat closes them.
+` : ""}- What the player enjoys: ${input.preferences.likes ? '"preferences.likes" is the player telling you what they enjoy, in their own words. It comes first: plan by it, and never let "taste" contradict it. Beyond that, keep' : "keep"} "taste" current, from how they actually play. It is shown to the player, so it holds only things they have seen, never plans or secrets. Which storylines and people do they go after, which scenes do they stay in and write the most for, what do they skip past or cut short? Short plain lines ("lingers in quiet scenes with Mira", "skips combat", "keeps poking at the ring mystery"). Judge it against what is normal for this chat: something the card delivers all the time anyway (in an erotic card, sex; in a war story, fighting) is not a taste and needs no planning toward, and a long intimate scene says nothing by its length, since those run long by nature. Look for what stands out instead: which people and dynamics they pick, what kind of tension they enjoy around those scenes (the risk, the slow build, the banter), and what they go for outside them. Plan toward it as one ingredient among others: more of what they lean into, less of what they pass over, never the same thing every time.
 - Recap: keep "recap" current (see its description). It is shown to the player, so it holds no secrets and no plans.
 ${input.notebook.mystery ? MYSTERY_KEEP : ""}- Lies: record new lies that matter in "covers" (see 3f), and keep every one there. Mark one "strained" when someone in the chat starts to doubt it and "exposed" once it comes apart in the chat; an exposed lie never goes back. When a lie has held for a while, plan a step or beat where it needs upkeep.
 - Secrets that came out: once the chat shows the player has learned a hidden truth (or the twist), or it came out where they could see, move it word for word to story.cameOut and out of hiddenTruth (empty twist if it was the twist). From then on it is an established fact: rewrite people's "hint" and "doing", thread hints, and beats so nobody keeps acting as if it were still secret, and plan no more clues or reveal moments for it; build on it instead. A suspicion or a guess is not learning it. Never move anything back out of cameOut.
@@ -3139,7 +3192,9 @@ var RHYTHMS = {
   aftermath: "Aftermath: just after a big moment; people are catching their breath.",
   stalled: "Stalled: the scene is circling; nothing has changed for a while."
 };
-function quickQuestions(notebook, now, scene = "") {
+function quickQuestions(notebook, now, scene = "", light = false) {
+  if (light)
+    return lightQuestions(notebook);
   const questions = {}, marks = {};
   dueThreads(notebook, now).forEach(({ thread, step }, i) => {
     const key = `due_${i + 1}`;
@@ -3267,6 +3322,24 @@ function quickQuestions(notebook, now, scene = "") {
   questions.new_turn = {
     type: "noul",
     instructions: "Did the latest exchange bring in something the story notes do not cover yet: a new named person who matters, a new problem or goal, a big change of place or time, or a choice that changes where the story is heading?",
+    criteria: { true: "Yes, something important is new.", false: "No, it continues what the notes already cover." }
+  };
+  return { questions, marks };
+}
+function lightQuestions(notebook) {
+  const questions = {}, marks = {};
+  notebook.story.hiddenTruth.slice(0, QUICK.maxTruths).forEach((truth, i) => {
+    const key = `truth_${i + 1}`;
+    questions[key] = {
+      type: "noul",
+      instructions: `In the latest exchange, does the player learn this, or does it come out where they can see? A hint or a suspicion does not count. Hidden truth: ${truth}`,
+      criteria: { true: "Yes, it comes out plainly.", false: "No, it stays hidden or only hinted at." }
+    };
+    marks[key] = { kind: "truth" };
+  });
+  questions.new_turn = {
+    type: "noul",
+    instructions: "Did the latest exchange bring in something the story notes do not cover yet: a new named person who matters, a new problem or goal, a big change of situation or place?",
     criteria: { true: "Yes, something important is new.", false: "No, it continues what the notes already cover." }
   };
   return { questions, marks };
@@ -4174,7 +4247,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.34.3";
+var VERSION = "0.35.0";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -4268,7 +4341,8 @@ function validPreferences(value) {
     shape,
     lockShape: shape !== "auto" && v.lockShape === true,
     size: v.size === "close" || v.size === "wide" ? v.size : "auto",
-    ...v.mystery === true ? { mystery: true } : {},
+    ...v.mystery === true && v.planner !== "preset" ? { mystery: true } : {},
+    ...v.planner === "preset" ? { planner: "preset" } : {},
     ...typeof v.likes === "string" && v.likes.trim() ? { likes: v.likes.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "").trim().slice(0, 600) } : {}
   };
 }
@@ -4304,6 +4378,8 @@ function recentPlaces(versions, now) {
 var CALM = 3;
 var SOFT_RANK = ["A problem was solved too easily", "A new problem came up", "Something new happened in the story"];
 function storyRules(previous, revised, round, pace, prefs, checkup = false) {
+  if (previous && prefs.planner === "preset")
+    return revised;
   if (!previous)
     revised = firstMystery(revised, prefs, round);
   if (round === 1) {
@@ -5161,6 +5237,8 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
       throw new Error("Write a notebook for this chat first.");
     if (notebook.mystery?.status === "open")
       throw new Error("This story already has a mystery. It stays until it is solved.");
+    if (state.preferences.planner === "preset")
+      throw new Error("In this chat your preset plans the story, so Grimoire can\u2019t run a mystery here. Switch \u201CWho plans the story\u201D back to Grimoire to add one.");
     return this.startTalk(chatId, about ? `${PUSH_LABELS.mystery}: ${about}` : PUSH_LABELS.mystery, false, "mystery");
   }
   startTalk(chatId, message, keep, push) {
@@ -5362,6 +5440,19 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
       return state.preferences;
     });
   }
+  async setPlanner(chatId, planner) {
+    return this.serial(chatId, async () => {
+      const state = await this.load(chatId);
+      if (!state)
+        throw new Error("Write a notebook for this chat first.");
+      if (planner === "preset" && state.versions.at(-1)?.notebook.mystery?.status === "open")
+        throw new Error("This story has a mystery under way, which needs Grimoire planning. It can switch once the mystery ends.");
+      state.preferences = validPreferences({ ...state.preferences, planner: planner === "preset" ? "preset" : "grimoire" });
+      await this.save(state);
+      this.changed();
+      return state.preferences;
+    });
+  }
   async setSize(chatId, size) {
     return this.serial(chatId, async () => {
       const state = await this.load(chatId);
@@ -5472,7 +5563,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
       const intimate = state.intimateNow && settings.intimate === "protect" && live.turns.at(-1)?.role === "user";
       const away = awayPeople(live.version.notebook, state.seen, this.presentNow(live), live.moment).map((a) => a.person);
       const at = whereabouts(live.version.notebook.buildings ?? [], live.values.location, state.building);
-      return buildNote({ intimate, blocked: state.blocked ?? [], away, layout: at ? layoutLine(at) : undefined, size: state.preferences.size, sinceNewFace: (live.moment.reply ?? 0) - state.newFaceAt, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, location: live.values.location, narrated: this.narrated(live), trackerPresent: this.listed(live), skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map((n) => n.text) });
+      return buildNote({ light: state.preferences.planner === "preset", intimate, blocked: state.blocked ?? [], away, layout: at ? layoutLine(at) : undefined, size: state.preferences.size, sinceNewFace: (live.moment.reply ?? 0) - state.newFaceAt, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, location: live.values.location, narrated: this.narrated(live), trackerPresent: this.listed(live), skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map((n) => n.text) });
     });
   }
   async macro(name, chatId) {
@@ -5567,13 +5658,13 @@ ${recallNote(recall)}`;
       const settings = await this.settings();
       if (settings.quick.enabled && this.decisionsReady() && !this.quickRunning.has(chatId) && live.turns.at(-1)?.role === "assistant") {
         await this.save(state);
-        return { live, settings };
+        return { live, settings, light: state.preferences.planner === "preset" };
       }
       await this.decide(state, live, settings, "");
       return null;
     });
     if (quick)
-      this.runQuick(chatId, quick.live, quick.settings);
+      this.runQuick(chatId, quick.live, quick.settings, quick.light);
   }
   async decide(state, live, settings, extra, soft = "") {
     const chatId = state.chatId;
@@ -5629,14 +5720,14 @@ ${recallNote(recall)}`;
       return "Grant decisions in Lumiverse\u2019s Extensions panel to use the quick check.";
     return "";
   }
-  runQuick(chatId, live, settings) {
+  runQuick(chatId, live, settings, light = false) {
     this.quickRunning.add(chatId);
     const task = (async () => {
       const reply = live.turns.at(-1), player = [...live.turns].reverse().find((t) => t.role === "user");
       const said = readable(splitOoc(player?.content ?? "").story, 2000);
       const plan = quickQuestions(live.version.notebook, live.moment, `${said}
 ${readable(reply.content, 8000)}
-${live.values.location ?? ""}`);
+${live.values.location ?? ""}`, light);
       let result = null, error = "";
       try {
         result = await this.api.decisions.evaluate({
@@ -5747,6 +5838,8 @@ async function handle(controller, action, input) {
       return controller.setShape(string(data.chatId, "Chat"), data.shape, data.lockShape);
     case "size":
       return controller.setSize(string(data.chatId, "Chat"), data.size);
+    case "planner":
+      return controller.setPlanner(string(data.chatId, "Chat"), data.planner);
     case "likes":
       return controller.setLikes(string(data.chatId, "Chat"), data.likes);
     case "enable":

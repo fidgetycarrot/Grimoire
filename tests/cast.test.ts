@@ -187,3 +187,33 @@ describe('keeping people sounding like themselves', () => {
     expect(checkupMessages(input).map((m: any) => m.content).join('\n')).toContain('being shrunk to one trait');
   });
 });
+
+describe('when the preset plans the story', () => {
+  const nb = () => {
+    const n = validateNotebook(sampleNotebook());
+    const mira = n.people.find(p => p.id === 'mira')!;
+    mira.voice = 'Short, dry sentences.'; mira.sheet = 'Mira runs the ferry and owes nobody.'; mira.drift = 'She has gone soft and chatty.'; mira.driftAt = 10;
+    n.story.cameOut = [{ text: 'The ferry is mortgaged to the harbor office.' }];
+    n.covers = [{ id: 'lie', by: 'player', told: ['mira'], said: 'I was at the inn all night.', hides: 'the docks', status: 'holding' } as any];
+    return n;
+  };
+  const storm = (n: ReturnType<typeof nb>) => { const s = n.threads.find(t => t.id === 'storm')!; s.speed = 'urgent'; s.steps[0].afterHours = 0; return n; };
+  const scene = { recent: 'Mira looks up from the rope. I ask about Cole.', narrated: 'Mira looks up from the rope.' };
+  test('the note leaves the plot alone: no pace, arc, storylines, moments, time, or layout', () => {
+    const full = note(storm(nb()), { ...scene, now: { hours: 400, reply: 12, waits } });
+    const light = note(storm(nb()), { ...scene, now: { hours: 400, reply: 12, waits }, light: true, layout: 'Where things are in the Ferry House: …' });
+    expect(full).toContain('What the story does now:');
+    for (const plot of ['What the story does now:', 'The main storyline is', 'What the story is about', 'Story time', 'Pace:', 'Where things are', 'A possible next moment', 'Problems take time']) expect(light).not.toContain(plot);
+    expect(light.length).toBeLessThan(full.length);
+  });
+  test('it keeps the people true and the long memory', () => {
+    const light = note(nb(), { ...scene, now: { hours: 43, reply: 12, waits }, light: true });
+    expect(light).toContain('People here and what drives them');
+    expect(light).toContain('Voice: Short, dry sentences.');
+    expect(light).toContain('Mira has been slipping. Bring them back: She has gone soft and chatty.');
+    expect(light).toContain('Mira: Mira runs the ferry and owes nobody.');
+    expect(light).toContain('The player character told Mira: "I was at the inn all night"');
+    expect(light).toContain('Already out in the open (people know it now; keep to it): The ferry is mortgaged to the harbor office.');
+    expect(light).toContain('- Cole:');
+  });
+});

@@ -174,7 +174,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.34.3";
+var VERSION = "0.35.0";
 var CHAPTER_WORKING = "Starting a new chapter";
 var CHAPTER_DONE = "New chapter ready";
 
@@ -355,6 +355,7 @@ function setup(ctx) {
     await refresh(true);
     return result;
   }
+  const PLANNER_CHOICES = [["grimoire", "Grimoire"], ["preset", "My preset (Grimoire keeps people and memory)"]];
   const SIZE_CHOICES = [["auto", "Let it grow naturally"], ["wide", "A big world: new places and people often"], ["close", "Keep it close: a few places and people"]];
   const SHAPE_CHOICES = [["auto", "Let Grimoire choose"], ["conflict", "Conflict: a problem that builds to a climax"], ["kishotenketsu", "Kishōtenketsu: people and discovery, with a turn instead of a fight"]];
   function renderStart(view) {
@@ -386,6 +387,8 @@ function setup(ctx) {
     grid.append(labeled("How the story is built", shape, "Grimoire can switch shapes between parts of the story as it goes, unless you keep one."), lockRow);
     const size = select(SIZE_CHOICES, view.preferences.size ?? "auto");
     grid.append(labeled("How big the world gets", size, "Grow naturally: new people and places now and then, and people you’ve met come back. A big world: more of both, more often. Keep it close: the story stays with the places and people it has."));
+    const planner = select(PLANNER_CHOICES, view.preferences.planner ?? "grimoire");
+    grid.append(labeled("Who plans the story", planner, "Grimoire: it plans where the story goes and steers the narrator there. Your preset: for presets that plan the story themselves (their own arc, foreshadowing, off-screen events). Grimoire then leaves the plot alone and keeps the people true and the long memory: voices, who’s here, what came out, what you’ve told people."));
     const ideas = el("textarea", "gm-talk-input");
     ideas.rows = 4;
     ideas.maxLength = 3000;
@@ -406,7 +409,7 @@ function setup(ctx) {
     const noConnection = !snapshot?.settings.connectionId;
     const parts = view.earlierParts ?? 0;
     const write = button("Write the notebook", async () => {
-      await act("create", { chatId: view.chatId, preferences: { tone: tone.value, twist: twist.checked, shape: shape.value, lockShape: lock.checked, size: size.value, mystery: mystery.checked }, ideas: ideas.value.trim(), keepIdeas: keepIdeas.checked });
+      await act("create", { chatId: view.chatId, preferences: { tone: tone.value, twist: twist.checked, shape: shape.value, lockShape: lock.checked, size: size.value, mystery: mystery.checked && planner.value !== "preset", planner: planner.value }, ideas: ideas.value.trim(), keepIdeas: keepIdeas.checked });
       notify(parts ? `Reading the chat, then writing the notebook. This uses ${parts + 1} model requests and can take a few minutes.` : "Writing the notebook. This uses one model request and can take a minute.");
     }, "primary");
     write.classList.add("gm-wide");
@@ -667,6 +670,16 @@ function setup(ctx) {
       await act("size", { chatId: view.chatId, size: size.value });
       notify("Saved. Check-ups use it from now on.");
     });
+    const planner = select(PLANNER_CHOICES, view.preferences.planner ?? "grimoire");
+    planner.addEventListener("change", async () => {
+      try {
+        await act("planner", { chatId: view.chatId, planner: planner.value });
+        notify(planner.value === "preset" ? "Saved. Grimoire now leaves the plot to your preset, from the next reply." : "Saved. Grimoire plans the story again, from the next reply.");
+      } catch (error) {
+        planner.value = view.preferences.planner ?? "grimoire";
+        notify(error instanceof Error ? error.message : String(error));
+      }
+    });
     const amount = el("input");
     amount.type = "number";
     amount.min = "1";
@@ -700,7 +713,7 @@ function setup(ctx) {
       await act("remove", { chatId: view.chatId });
       notify("Notebook deleted for this chat.");
     }, "danger");
-    d.body.append(check, el("p", "gm-hint", "Reads the latest chat and updates the plan. Check-ups also run on their own when a scene changes, time jumps, or enough replies pass."), el("div", "gm-sub"), skipRow, skip, el("div", "gm-sub"), labeled("Keep one story shape for this chat", kept, "If this part of the story already has the other shape, the change starts with the next part."), keep, el("div", "gm-sub"), labeled("How big the world gets", size, "Grow naturally: new people and places now and then, and people you’ve met come back. A big world: more of both, more often. Keep it close: the story stays with the places and people it has."), el("div", "gm-sub"), remove);
+    d.body.append(check, el("p", "gm-hint", "Reads the latest chat and updates the plan. Check-ups also run on their own when a scene changes, time jumps, or enough replies pass."), el("div", "gm-sub"), skipRow, skip, el("div", "gm-sub"), labeled("Keep one story shape for this chat", kept, "If this part of the story already has the other shape, the change starts with the next part."), keep, el("div", "gm-sub"), labeled("Who plans the story", planner, "Grimoire: it plans where the story goes and steers the narrator there. Your preset: for presets that plan the story themselves (their own arc, foreshadowing, off-screen events). Grimoire then leaves the plot alone and keeps the people true and the long memory: voices, who’s here, what came out, what you’ve told people."), labeled("How big the world gets", size, "Grow naturally: new people and places now and then, and people you’ve met come back. A big world: more of both, more often. Keep it close: the story stays with the places and people it has."), el("div", "gm-sub"), remove);
     return d.root;
   }
   const QUICK_WORDS = [[/^due_/, "Planned development shown"], [/^reach_/, "It could reach you here"], [/^moment_/, "Possible moment happened"], [/^detail_mentioned$/, "Breadcrumb mentioned"], [/^echo_heard$/, "Echo heard"], [/^callback_/, "Breadcrumb paid off"], [/^fits_/, "Storyline still fits"], [/^truth_/, "Secret came out"], [/^clue_/, "Clue found"], [/^theory$/, "You named an answer"], [/^story_shift$/, "Change of direction"], [/^rushing$/, "Rushing"], [/^intimate$/, "Intimate scene"], [/^new_turn$/, "Something new"], [/^new_problem$/, "New problem"], [/^easy_fix$/, "Solved too easily"]];
@@ -1106,7 +1119,7 @@ function setup(ctx) {
     body.append(renderNow(view, toggle));
     if (view.skipOffer && view.enabled)
       body.append(renderSkipOffer(view));
-    body.append(renderSteer(view), ...view.hasNotebook ? [renderMystery(view), renderTaste(view)] : [], renderBehind(view), renderSpoilers(view), renderMore(view));
+    body.append(renderSteer(view), ...view.hasNotebook ? [...view.preferences.planner === "preset" && view.mystery?.status !== "open" ? [] : [renderMystery(view)], renderTaste(view)] : [], renderBehind(view), renderSpoilers(view), renderMore(view));
   }
   function renderSettings() {
     const settings = { ...snapshot?.settings ?? { connectionId: "", backupId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true, intimate: "protect", memories: true } };

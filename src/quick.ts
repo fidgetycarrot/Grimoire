@@ -37,7 +37,8 @@ export interface QuickPlan {
   marks: Record<string, { kind: 'step'; thread: string; step: string } | { kind: 'beat'; beat: string } | { kind: 'seed'; seed: string; to: 'planted' | 'paid' } | { kind: 'fits'; thread: string } | { kind: 'truth' } | { kind: 'clue'; clue: string } | { kind: 'reach'; thread: string; step: string }>;
 }
 
-export function quickQuestions(notebook: Notebook, now: number | Moment, /** The latest exchange, to pick which clues to ask about. */ scene = ''): QuickPlan {
+export function quickQuestions(notebook: Notebook, now: number | Moment, /** The latest exchange, to pick which clues to ask about. */ scene = '', /** The preset plans the story: only what keeps the record true is asked. */ light = false): QuickPlan {
+  if (light) return lightQuestions(notebook);
   const questions: Record<string, DecisionQuestion> = {}, marks: QuickPlan['marks'] = {};
   dueThreads(notebook, now).forEach(({ thread, step }, i) => {
     const key = `due_${i + 1}`;
@@ -118,6 +119,24 @@ export function quickQuestions(notebook: Notebook, now: number | Moment, /** The
     criteria: { true: 'Yes, a problem was solved too easily.', false: 'No, or the solution took real effort or cost something.' } };
   questions.rhythm = { type: 'choice', instructions: 'Which best describes the scene at the end of the latest reply?', criteria: RHYTHMS };
   questions.new_turn = { type: 'noul', instructions: 'Did the latest exchange bring in something the story notes do not cover yet: a new named person who matters, a new problem or goal, a big change of place or time, or a choice that changes where the story is heading?',
+    criteria: { true: 'Yes, something important is new.', false: 'No, it continues what the notes already cover.' } };
+  return { questions, marks };
+}
+
+/**
+ * With the preset planning the story there is nothing of Grimoire's to bring in or pace, so the quick check only asks
+ * what keeps its record true: whether a secret came out, and whether something new happened that a check-up should
+ * write down (a new person who matters, a big change).
+ */
+function lightQuestions(notebook: Notebook): QuickPlan {
+  const questions: Record<string, DecisionQuestion> = {}, marks: QuickPlan['marks'] = {};
+  notebook.story.hiddenTruth.slice(0, QUICK.maxTruths).forEach((truth, i) => {
+    const key = `truth_${i + 1}`;
+    questions[key] = { type: 'noul', instructions: `In the latest exchange, does the player learn this, or does it come out where they can see? A hint or a suspicion does not count. Hidden truth: ${truth}`,
+      criteria: { true: 'Yes, it comes out plainly.', false: 'No, it stays hidden or only hinted at.' } };
+    marks[key] = { kind: 'truth' };
+  });
+  questions.new_turn = { type: 'noul', instructions: 'Did the latest exchange bring in something the story notes do not cover yet: a new named person who matters, a new problem or goal, a big change of situation or place?',
     criteria: { true: 'Yes, something important is new.', false: 'No, it continues what the notes already cover.' } };
   return { questions, marks };
 }

@@ -1614,3 +1614,28 @@ describe('read the room', () => {
   });
 });
 
+
+describe('the preset plans the story', () => {
+  test('a chat can switch; the note, the quick check, and check-ups step back from the plot; mysteries are not offered', async () => {
+    const h = host({ decide: (input: any) => ({ model: 'jev', answers: Object.fromEntries(Object.keys(input.questions).map(k => [k, { type: 'noul', noul: 0.1 }])) }) });
+    h.add('assistant', `The ferry bell rings.${tracker('Day 1, 18:00', 'The ferry')}`);
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 30, quick: { enabled: true, connectionId: '', model: '' } }, {});
+    const m = model({ create: created, checkup: input => ({ notebook: input.notebook, tracker: null }) });
+    const c = new NotebookController(h.api, undefined, () => {}, m.ask);
+    await c.create('chat-1', {}); await c.waitForJobs();
+    expect(await c.noteFor('chat-1')).toContain('What the story is about');
+    await c.setPlanner('chat-1', 'preset');
+    expect((await c.view('chat-1'))!.preferences.planner).toBe('preset');
+    const light = await c.noteFor('chat-1');
+    expect(light).toContain('They do not plan anything');
+    expect(light).not.toContain('What the story is about');
+    h.add('user', 'I wave.'); h.add('assistant', `Mira waves back.${tracker('Day 1, 18:10', 'The ferry')}`);
+    await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+    expect(Object.keys(h.decisionCalls.at(-1).questions).filter(k => /^(due_|moment_|reach_|rushing|rhythm)/.test(k))).toEqual([]);
+    await c.checkup('chat-1', 'You asked'); await c.waitForJobs();
+    expect(m.calls.filter(x => x.task === 'grimoire-checkup-v1').at(-1)!.messages[0].content).toContain('This chat\'s preset plans the story itself');
+    await expect(c.addMystery('chat-1')).rejects.toThrow('your preset plans the story');
+    await c.setPlanner('chat-1', 'grimoire');
+    expect(await c.noteFor('chat-1')).toContain('What the story is about');
+  });
+});

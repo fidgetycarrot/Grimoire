@@ -86,7 +86,7 @@ export function validPreferences(value: unknown): Preferences {
   const v = record(value);
   const shape = v.shape === 'conflict' || v.shape === 'kishotenketsu' ? v.shape : 'auto';
   return { tone: ['light', 'balanced', 'dark'].includes(v.tone as string) ? v.tone as Preferences['tone'] : 'balanced', twist: v.twist !== false, shape, lockShape: shape !== 'auto' && v.lockShape === true,
-    size: v.size === 'close' || v.size === 'wide' ? v.size : 'auto', ...(v.mystery === true ? { mystery: true } : {}),
+    size: v.size === 'close' || v.size === 'wide' ? v.size : 'auto', ...(v.mystery === true && v.planner !== 'preset' ? { mystery: true } : {}), ...(v.planner === 'preset' ? { planner: 'preset' as const } : {}),
     ...(typeof v.likes === 'string' && v.likes.trim() ? { likes: v.likes.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim().slice(0, 600) } : {}) };
 }
 /**
@@ -137,6 +137,8 @@ const CALM = 3;
 const SOFT_RANK = ['A problem was solved too easily', 'A new problem came up', 'Something new happened in the story'];
 
 function storyRules(previous: Notebook | null, revised: Notebook, round: number, pace: PaceRules, prefs: Preferences, checkup = false): Notebook {
+  // The preset plans the story: an update is a record of people and what happened, so the plot rules don't apply.
+  if (previous && prefs.planner === 'preset') return revised;
   // A first notebook is a mystery only when the player asked for one; then it has to be a sound one.
   if (!previous) revised = firstMystery(revised, prefs, round);
   if (round === 1) {
@@ -812,6 +814,7 @@ export class NotebookController {
     const notebook = state?.versions.at(-1)?.notebook;
     if (!notebook) throw new Error('Write a notebook for this chat first.');
     if (notebook.mystery?.status === 'open') throw new Error('This story already has a mystery. It stays until it is solved.');
+    if (state!.preferences.planner === 'preset') throw new Error('In this chat your preset plans the story, so Grimoire can’t run a mystery here. Switch “Who plans the story” back to Grimoire to add one.');
     return this.startTalk(chatId, about ? `${PUSH_LABELS.mystery}: ${about}` : PUSH_LABELS.mystery, false, 'mystery');
   }
   private startTalk(chatId: string, message: string, keep: boolean, push: PushKind | null): Promise<Job> {
@@ -980,6 +983,17 @@ export class NotebookController {
     });
   }
   /** How big the story's world gets. Check-ups apply it from now on. */
+  /** Who plans the story in this chat. With the preset planning, Grimoire keeps people and memory and leaves the plot alone. */
+  async setPlanner(chatId: string, planner: unknown) {
+    return this.serial(chatId, async () => {
+      const state = await this.load(chatId);
+      if (!state) throw new Error('Write a notebook for this chat first.');
+      if (planner === 'preset' && state.versions.at(-1)?.notebook.mystery?.status === 'open') throw new Error('This story has a mystery under way, which needs Grimoire planning. It can switch once the mystery ends.');
+      state.preferences = validPreferences({ ...state.preferences, planner: planner === 'preset' ? 'preset' : 'grimoire' });
+      await this.save(state); this.changed();
+      return state.preferences;
+    });
+  }
   async setSize(chatId: string, size: unknown) {
     return this.serial(chatId, async () => {
       const state = await this.load(chatId);
@@ -1070,7 +1084,7 @@ export class NotebookController {
       const intimate = state.intimateNow && settings.intimate === 'protect' && live.turns.at(-1)?.role === 'user';
       const away = awayPeople(live.version.notebook, state.seen, this.presentNow(live), live.moment).map(a => a.person);
       const at = whereabouts(live.version.notebook.buildings ?? [], live.values.location, state.building);
-      return buildNote({ intimate, blocked: state.blocked ?? [], away, layout: at ? layoutLine(at) : undefined, size: state.preferences.size, sinceNewFace: (live.moment.reply ?? 0) - state.newFaceAt, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, location: live.values.location, narrated: this.narrated(live), trackerPresent: this.listed(live), skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map(n => n.text) });
+      return buildNote({ light: state.preferences.planner === 'preset', intimate, blocked: state.blocked ?? [], away, layout: at ? layoutLine(at) : undefined, size: state.preferences.size, sinceNewFace: (live.moment.reply ?? 0) - state.newFaceAt, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, location: live.values.location, narrated: this.narrated(live), trackerPresent: this.listed(live), skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map(n => n.text) });
     });
   }
   async macro(name: 'clock' | 'pace', chatId: string | undefined): Promise<string> {
@@ -1137,11 +1151,11 @@ export class NotebookController {
       if (live.turns.at(-1)?.ooc) { await this.save(state); return null; }
       const settings = await this.settings();
       // The quick check runs outside the chat's queue so the next reply's note never waits on it.
-      if (settings.quick.enabled && this.decisionsReady() && !this.quickRunning.has(chatId) && live.turns.at(-1)?.role === 'assistant') { await this.save(state); return { live, settings }; }
+      if (settings.quick.enabled && this.decisionsReady() && !this.quickRunning.has(chatId) && live.turns.at(-1)?.role === 'assistant') { await this.save(state); return { live, settings, light: state.preferences.planner === 'preset' }; }
       await this.decide(state, live, settings, '');
       return null;
     });
-    if (quick) this.runQuick(chatId, quick.live, quick.settings);
+    if (quick) this.runQuick(chatId, quick.live, quick.settings, quick.light);
   }
   /** Must run inside the chat's queue. Saves the state, then starts a check-up if one is due. */
   /**
@@ -1207,12 +1221,12 @@ export class NotebookController {
     if (!this.api.permissions.has('decisions')) return 'Grant decisions in Lumiverse’s Extensions panel to use the quick check.';
     return '';
   }
-  private runQuick(chatId: string, live: Live, settings: Settings) {
+  private runQuick(chatId: string, live: Live, settings: Settings, light = false) {
     this.quickRunning.add(chatId);
     const task = (async () => {
       const reply = live.turns.at(-1)!, player = [...live.turns].reverse().find(t => t.role === 'user');
       const said = readable(splitOoc(player?.content ?? '').story, 2000);
-      const plan = quickQuestions(live.version.notebook, live.moment, `${said}\n${readable(reply.content, 8000)}\n${live.values.location ?? ''}`);
+      const plan = quickQuestions(live.version.notebook, live.moment, `${said}\n${readable(reply.content, 8000)}\n${live.values.location ?? ''}`, light);
       let result: DecisionResult | null = null, error = '';
       try {
         result = await this.api.decisions.evaluate({

@@ -108,7 +108,7 @@ export function seedPlan(notebook: Notebook, now: number | Moment): { plant: See
 }
 
 export interface NoteInput { notebook: Notebook; pace: Pace; clock: StoryClock; now: number | Moment; /** Threads that no longer fit for now. */ held?: string[]; /** Due steps that cannot believably reach the player in the scene as it stands. */ blocked?: string[]; /** The story just changed direction; old plans are being reworked. */ reworking?: boolean; recent: string; /** Where the scene is, from the preset's tracker. */ location?: string; /** The narrator's part of the recent messages, when the caller can tell it apart from the player's. */ narrated?: string; trackerPresent?: string; skipHours?: number; /** True when the time comes from the last check-up, not from a tracker reading of the latest reply. */ clockMayLag?: boolean; /** The player swiped with guidance: the note steps back so it never argues with them. */ guided?: boolean; /** Standing wishes the player pinned. */ notes?: string[]; /** An intimate scene is under way: the story stays out until it ends. */ intimate?: boolean; /** People the player has met who haven't been around for a while, longest away first. */ away?: Person[];
-  /** Replies since someone new last turned up in a scene. */ sinceNewFace?: number; /** Where things are in the building the player is in. */ layout?: string; /** How big the world gets; a close story doesn't send the player anywhere. */ size?: StorySize }
+  /** Replies since someone new last turned up in a scene. */ sinceNewFace?: number; /** Where things are in the building the player is in. */ layout?: string; /** How big the world gets; a close story doesn't send the player anywhere. */ size?: StorySize; /** The chat's preset plans the story: the note keeps to people and memory. */ light?: boolean }
 /**
  * The short private note added before a reply. Built by code from the
  * notebook; no model call. It carries reasons and narrator-safe hints, never
@@ -132,7 +132,51 @@ const ROOM = 3600;
 export const DRIFT_SHOW = 15;
 /** A sheet's length on a reply that is busy with plot. */
 const SHEET_SHORT = 700;
+/**
+ * The note when the chat's preset plans the story (Vexa and the like). Two planners steering one narrator pull it two
+ * ways, so Grimoire leaves the plot alone: no pace, arc, storylines, moments, callbacks, time or layout. It keeps to
+ * what a planner preset is weaker at over a long chat: who the people here are and how they sound (with fixes for
+ * anyone who has drifted), what has come out and what the player character told people, and that a name being said
+ * doesn't bring anyone in.
+ */
+function lightNote(input: NoteInput): string {
+  const { notebook } = input, lines: string[] = [];
+  const present = presentPeople(notebook, input.narrated ?? input.recent, input.trackerPresent);
+  const guided = !!input.guided, m: Moment = typeof input.now === 'number' ? { hours: input.now } : input.now;
+  lines.push('Grimoire: private notes on the people in this story, for the narrator. Never mention, quote, or explain them. They do not plan anything: the story goes where it is going.');
+  if (guided) lines.push(GUIDED);
+  const wishes = (input.notes ?? []).map(n => n.trim()).filter(Boolean).slice(0, 8);
+  if (wishes.length) lines.push(`The player's standing wishes for this story: ${wishes.map(end).join(' ')}`.slice(0, 900));
+  if (present.length) {
+    lines.push('People here and what drives them (give each one their own voice; nobody should sound like anyone else; a sample line shows how someone sounds, never repeat it word for word):');
+    for (const person of present.slice(0, 4)) lines.push(`- ${person.name}${person.role ? ` (${person.role})` : ''}: wants ${end(person.wants || 'nothing stated yet')}${person.doing ? ` Currently: ${end(person.doing)}` : ''}${person.hint ? ` Play them as: ${end(person.hint)}` : ''}${person.voice ? ` Voice: ${end(person.voice)}` : ''}${person.depth ? ` More than their role: ${end(person.depth)}` : ''}`);
+    if (!guided) {
+      for (const person of present.slice(0, 4)) if (person.drift && (m.reply === undefined || person.driftAt === undefined || m.reply - person.driftAt <= DRIFT_SHOW)) lines.push(`${person.name} has been slipping. Bring them back: ${end(person.drift)}`);
+      const voiced = present.filter(p => p.voice).slice(0, 4);
+      if (voiced.length >= 2) lines.push(`Before writing lines for ${voiced.map(p => p.name).join(', ').replace(/, ([^,]*)$/, ' and $1')}, check each sounds like their own voice above and not like the others, and that each still shows more than their one most obvious trait.`);
+    }
+  }
+  const named = guided ? [] : spokenOf(notebook, input.recent, present).slice(0, 3);
+  if (named.length) {
+    lines.push('Named in the chat but not in the scene. Unless the latest messages already show them here, a name being said does not bring anyone in: they carry on with their own day elsewhere, until the player goes to them or they have a reason of their own to come.');
+    for (const person of named) lines.push(`- ${person.name}: ${end(fit(person.doing || `wants ${person.wants || 'something of their own'}`, 160))}`);
+  }
+  const told = guided ? [] : (notebook.covers ?? []).filter(c => c.by === 'player' && c.status !== 'exposed' && c.told.some(id => present.some(p => p.id === id))).slice(0, 2);
+  for (const c of told) {
+    const heard = notebook.people.filter(p => c.told.includes(p.id) && present.includes(p)).map(p => p.name).join(' and ');
+    const bare = (t: string) => t.trim().replace(/[.!?]+$/, '');
+    lines.push(`The player character told ${heard}: "${bare(c.said)}"${c.hides ? `, to cover ${bare(c.hides)}` : ''}. They remember it${c.status === 'strained' ? ' and are starting to doubt it' : ''}; details should stay consistent with it.`);
+  }
+  // What has come out stays known, however far back in the chat it happened.
+  const known = notebook.story.cameOut.slice(-3).map(r => end(r.text));
+  if (known.length) lines.push(`Already out in the open (people know it now; keep to it): ${known.join(' ')}`);
+  const sheets = present.filter(p => p.sheet || p.own).slice(0, 3).map(p => `${p.name}: ${`${p.own ? ` ${end(p.own)}` : ''}${p.sheet ? ` ${end(p.sheet)}` : ''}`.trim().slice(0, 2600)}`);
+  while (lines.join('\n').length > ROOM && lines.length > 1) lines.pop();
+  const cast = sheets.length ? `\nWho they are, in full (play them true to this, and let it show in what they do, not in explanations):\n${sheets.join('\n')}` : '';
+  return `${lines.join('\n')}${cast}\nThe latest messages decide what actually happened. Keep secrets hidden and let them show only through small details.`;
+}
 export function buildNote(input: NoteInput): string {
+  if (input.light) return lightNote(input);
   const { notebook, pace, now } = input, lines: string[] = [], vital = new Set<string>();
   const must = (text: string) => { vital.add(text); lines.push(text); };
   const present = presentPeople(notebook, input.narrated ?? input.recent, input.trackerPresent);
