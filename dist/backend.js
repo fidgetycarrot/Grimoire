@@ -2783,8 +2783,7 @@ var SHAPE = `{
 var shapeWith = (mystery) => mystery ? SHAPE.replace(/\n\}$/, `,
  ${MYSTERY_SHAPE}
 }`) : SHAPE;
-var MYSTERY_FIRST = `The player asked for a mystery: this story is one. Return "mystery" in the notebook. Its thread is the main storyline (arc.main), the story question is the mystery's question, and the first step is the moment the player learns there is a mystery at all. A twist, if you plan one, must not be the answer itself.
-${MYSTERY_RULES}
+var MYSTERY_AHEAD = `The player asked for a mystery: this story is one. The mystery itself (its answer, suspects, and clues) is written in a second step, not now, so do not return "mystery" and do not decide its answer anywhere in the notebook. Build the notebook for it: the main storyline (arc.main) carries the mystery, and the story question is the mystery's question. Its first step is the moment the player learns there is a mystery at all, and at least two later waiting steps are things that can happen while it stays unsolved (another incident, pressure on someone, a deadline). Give the story at least three active people the player has met or will meet early who could plausibly be behind it, each with something to hide. A twist, if you plan one, must not be the answer to the mystery.
 `;
 var CRAFT = [
   "How to build it:",
@@ -2833,9 +2832,9 @@ function creationMessages(material, preferences, ideas = "", keep = false) {
   return [
     { role: "system", content: `${SAFETY}
 You write a private story notebook for an ongoing roleplay chat. It gives the narrator a story of its own: where it is going, why, and how fast. The player must not see it.
-Return {"notebook": ${shapeWith(!!preferences.mystery)}, "tracker": {"fields": [], "note": ""}${keep ? ', "notes": ["\u2026"]' : ""}${ideas ? ', "playerPeople": []' : ""}}.
+Return {"notebook": ${SHAPE}, "tracker": {"fields": [], "note": ""}${keep ? ', "notes": ["\u2026"]' : ""}${ideas ? ', "playerPeople": []' : ""}}.
 ${CRAFT}
-${preferences.mystery ? MYSTERY_FIRST : ""}${LORE(material.lore)}${MEMORY(material.memory)}Tone: ${preferences.tone}. ${preferences.likes ? '"preferences.likes" is the player telling you what they enjoy, in their own words: plan by it. ' : ""}${twist}${shape}
+${preferences.mystery ? MYSTERY_AHEAD : ""}${LORE(material.lore)}${MEMORY(material.memory)}Tone: ${preferences.tone}. ${preferences.likes ? '"preferences.likes" is the player telling you what they enjoy, in their own words: plan by it. ' : ""}${twist}${shape}
 ${WORLD(preferences.size)}${ideas ? `
 The player, who co-writes this story, shared ideas for it in "ideas". Build the notebook around them where they fit the card: give them threads, people, beats, or breadcrumbs, paced like everything else, so they arrive in time rather than all at once. They are wishes for where the story can go, not events that already happened. If they describe a person (someone they would like to meet, or someone already in their character's life), make that person, give them a "sheet" that builds on what the player wrote without repeating it, and list them in "playerPeople": [{"person": "their id", "from": "the player's description of them, copied word for word from ideas"}]; their words are kept as they wrote them.${keep ? ` Also return "notes": one to four short standing instructions in plain words that keep these wishes in force, as close to the player's own words as you can, with no spoilers.` : ""}` : ""}
 If the chat already has messages, start from what has happened: record it under events, mark people met, and set the clock to now. A long chat comes with "storySoFar", a record of everything before the messages in "chat"; treat it as part of the chat. Keep events compact: at most about 30 short lines, merging older ones. Threads and people the chat already started come first; plan new ones around them.
@@ -2843,6 +2842,21 @@ If the chat already has messages, start from what has happened: record it under 
 Tracker: many presets make the narrator write a status block in each reply (time, place, who is present). Look at the sample replies and saved variables. For each of these fields that is reliably present, describe where it lives: "datetime" or "date" and "time" (the story date and time), "location", "present" (who is in the scene). Use only these methods:
 ${TRACKER_METHODS}Each field: {"name": "datetime|date|time|location|present", "type": "datetime|date|time|text|list", "source": {...}}. If there is no tracker, return an empty fields list. Never guess a format you cannot see.` },
     { role: "user", content: JSON.stringify({ task: "grimoire-create-v1", preferences, ...ideas ? { ideas } : {}, ...material }) }
+  ];
+}
+function firstMysteryMessages(notebook, material, preferences) {
+  return [
+    { role: "system", content: `${SAFETY}
+You write the mystery in a private story notebook behind an ongoing roleplay chat. The player asked for a mystery story, and the notebook was just written for it: its main storyline ("${notebook.arc.main}") carries the mystery and its story question is the mystery's question, but the mystery itself is not written yet. Write it now. The player must not see it.
+Return {"changes": {"mystery": {...}, "people": [...], "threads": [...], "seeds": [...]}}.
+"changes" holds the mystery, plus only what else has to change for it, in the notebook's own shape: ${SHAPE}
+A person, thread, or seed you include replaces the one with the same id, so write it in full; a new id adds one. Leave out everything that stays the same, and keep every id that exists.
+In "changes", the mystery looks like this: {${MYSTERY_SHAPE}}
+- Its "thread" is the main storyline, "${notebook.arc.main}", and its question is the story question. Its first waiting step stays the moment the player learns there is a mystery at all.
+- Fit the answer to the notebook: its people, what they want and hide, story.hiddenTruth, and the main storyline's steps. Change those only where the mystery needs it (a suspect's hidden side, a step that happens while it is unsolved, a person who has to exist).
+- A twist, if the notebook has one, must not be the answer itself.
+${LORE(material.lore)}${MYSTERY_RULES}` },
+    { role: "user", content: JSON.stringify({ task: "grimoire-mystery-first-v1", notebook, preferences, character: material.character, persona: material.persona, lore: material.lore, storySoFar: material.storySoFar, chat: material.chat.slice(-12) }) }
   ];
 }
 var REPLAN = `- The story has been running ahead of its plan: things kept happening sooner than planned. Re-plan the rest of this part so it fills the replies left: spread waiting steps out (raise afterHours), move big moments later, keep at most one urgent storyline, and give quieter stretches room. Do not undo anything that happened, and do not slow down what the player is actively doing; this is about the plan's own timing.
@@ -4422,13 +4436,14 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.36.3";
+var VERSION = "0.36.4";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
 var DEFAULT_SETTINGS = { connectionId: "", backupId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true, intimate: "protect", memories: true, replyCard: true };
 var DEFAULT_PREFERENCES = { tone: "balanced", twist: true, shape: "auto", lockShape: false, size: "auto" };
 var CHAPTER_WORKING = "Starting a new chapter";
+var NO_MYSTERY = "Notebook ready, without the mystery";
 var CHAPTER_DONE = "New chapter ready";
 
 // src/controller.ts
@@ -4584,6 +4599,15 @@ function firstMystery(revised, prefs, round) {
   if (round > 1 && !mysteryPlayable(out))
     throw new NotebookError("The mystery is still not complete.", MYSTERY_THIN);
   return out;
+}
+function mysteryOnto(revised, round, prefs) {
+  const out = firstMystery(revised, prefs, round);
+  if (round === 1) {
+    const problems = mysteryProblems(out);
+    if (problems.length)
+      throw new NotebookError(problems.join(" "), "The mystery was not solid enough yet, so it was sent back once.");
+  }
+  return fixSpecific(fixLead(null, round > 1 ? scrubLeaks(out, null) : out, prefs));
 }
 function prune(versions) {
   if (versions.length <= MAX_VERSIONS)
@@ -5236,14 +5260,36 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
           await this.loadGreetings(chatId);
           const material = await this.material(chatId, info.characterId, messages, plan.recent, storySoFar, ideas);
           let round = 0;
+          const { mystery: wantsMystery, ...withoutMystery } = state.preferences;
           const result = await askJson(traced, creationMessages(material, state.preferences, ideas, pin), (value) => {
             round++;
             const output = record8(value);
             const first = validateNotebook(tidyNotebook(output.notebook));
-            const ruled = withOwnWords(storyRules(null, first, round, {}, state.preferences), output.playerPeople, ideas);
+            const ruled = withOwnWords(storyRules(null, first, round, {}, withoutMystery), output.playerPeople, ideas);
             const notes = pin ? (Array.isArray(output.notes) ? output.notes : []).map((n) => plain2(n, TALK_LIMITS.note)).filter(Boolean).slice(0, 4) : [];
-            return { notebook: openArc(withoutTimes(ruled), "story"), recipe: validateRecipe(output.tracker).recipe, notes };
+            return { notebook: withoutTimes(ruled), recipe: validateRecipe(output.tracker).recipe, notes };
           }, signal, this.traces.get(job.id)?.sentBack);
+          let mysteryMissed = false;
+          if (wantsMystery) {
+            await this.progress(chatId, job, "Writing the mystery");
+            let mysteryRound = 0;
+            try {
+              result.notebook = await askJson(traced, firstMysteryMessages(result.notebook, material, state.preferences), (value) => {
+                mysteryRound++;
+                const output = record8(value);
+                const changes = output.mystery && !record8(output.changes).mystery ? { ...record8(output.changes), mystery: output.mystery } : output.changes;
+                const proposed = applyChanges(result.notebook, changes);
+                if (!proposed || !record8(changes).mystery)
+                  throw new NotebookError('Return "changes" with "mystery", and any people, threads, or seeds it needs.');
+                return withoutTimes(mysteryOnto(validateNotebook(tidyNotebook(proposed, result.notebook)), mysteryRound, state.preferences));
+              }, signal, this.traces.get(job.id)?.sentBack);
+            } catch (error) {
+              if (signal.aborted || error instanceof ModelError && error.code === "CANCELLED")
+                throw error;
+              mysteryMissed = true;
+            }
+          }
+          result.notebook = openArc(result.notebook, "story");
           await this.serial(chatId, async () => {
             const current = await this.load(chatId) ?? state;
             if (current.job?.id !== job.id)
@@ -5271,7 +5317,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
             current.checks = checks;
             current.enabled = true;
             current.needsCheck = covers(covered, prints) ? "" : "The chat changed while the notebook was being written.";
-            current.job = { ...job, status: "complete", label: "Notebook ready" };
+            current.job = { ...job, status: "complete", label: mysteryMissed ? NO_MYSTERY : "Notebook ready" };
             await this.save(current);
           });
         } catch (error) {

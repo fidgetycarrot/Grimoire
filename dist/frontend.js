@@ -174,8 +174,9 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.36.3";
+var VERSION = "0.36.4";
 var CHAPTER_WORKING = "Starting a new chapter";
+var NO_MYSTERY = "Notebook ready, without the mystery";
 var CHAPTER_DONE = "New chapter ready";
 
 // src/frontend.ts
@@ -432,6 +433,8 @@ function setup(ctx) {
     return t;
   }
   function renderJob(view) {
+    if (view.job?.status === "complete" && view.job.label === NO_MYSTERY)
+      return el("p", "gm-notice", "The notebook is ready, but the model couldn’t write a solid mystery for it, so this story starts without one. You can add one under Mystery.");
     if (!view.job || view.job.status === "complete")
       return null;
     if (view.job.status === "running" && view.job.kind === "talk")

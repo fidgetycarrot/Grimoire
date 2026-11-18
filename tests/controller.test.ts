@@ -42,14 +42,14 @@ function host(options: { group?: boolean; granted?: string[]; decide?: (input: a
   return { api, storage, messages, add, decisionCalls };
 }
 /** A scripted model: creation and check-up answers come from the given functions. */
-function model(answers: { create?: (input: any) => unknown; checkup?: (input: any) => unknown; digest?: (input: any) => unknown; talk?: (input: any) => unknown }) {
+function model(answers: { create?: (input: any) => unknown; checkup?: (input: any) => unknown; digest?: (input: any) => unknown; talk?: (input: any) => unknown; mystery?: (input: any) => unknown }) {
   const calls: Array<{ task: string; input: any; messages: Message[] }> = [];
   let hold: Promise<void> | null = null;
   const ask = async (messages: Message[]) => {
     const input = JSON.parse(messages[1].content);
     calls.push({ task: input.task, input, messages });
     if (hold) await hold;
-    const answer = input.task === 'grimoire-create-v1' ? answers.create?.(input) : input.task === 'grimoire-digest-v1' ? answers.digest?.(input) : input.task === 'grimoire-talk-v1' ? answers.talk?.(input) : answers.checkup?.(input);
+    const answer = input.task === 'grimoire-create-v1' ? answers.create?.(input) : input.task === 'grimoire-digest-v1' ? answers.digest?.(input) : input.task === 'grimoire-talk-v1' ? answers.talk?.(input) : input.task === 'grimoire-mystery-first-v1' ? answers.mystery?.(input) : answers.checkup?.(input);
     return typeof answer === 'string' ? answer : JSON.stringify(answer);
   };
   return { ask, calls, pause() { let release!: () => void; hold = new Promise(r => { release = () => { hold = null; r(); }; }); return release; } };
@@ -1549,21 +1549,47 @@ describe('a mystery', () => {
     // Finished: another may be added now.
     await expect(c.addMystery('chat-1')).resolves.toBeDefined(); await c.waitForJobs();
   });
-  test('a first notebook is a mystery only when the player asks for one', async () => {
+  test('a first notebook is a mystery only when the player asks for one, written in a second request', async () => {
     const withIt = () => { const n: any = sampleNotebook(); n.mystery = rawMystery(); return { notebook: n, tracker: recipe }; };
     const plain = await ready(host(), model({ create: withIt }));
     expect((await plain.c.view('chat-1'))!.mystery).toBeNull();
     expect(plain.m.calls[0].messages[0].content).not.toContain('How to write a mystery');
     const h = host(); h.add('assistant', `The ferry bell rings.${tracker('Day 1, 18:00', 'The ferry')}`);
     await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 3 }, {});
-    const m = model({ create: withIt }), c = new NotebookController(h.api, undefined, () => {}, m.ask);
+    const m = model({ create: withIt, mystery: () => ({ changes: { mystery: rawMystery() } }) }), c = new NotebookController(h.api, undefined, () => {}, m.ask);
     await c.create('chat-1', { mystery: true }); await c.waitForJobs();
+    expect(m.calls.map(x => x.task)).toEqual(['grimoire-create-v1', 'grimoire-mystery-first-v1']);
+    // The notebook is shaped for a mystery but leaves the mystery itself to the second request.
     expect(m.calls[0].messages[0].content).toContain('The player asked for a mystery');
-    expect(m.calls[0].messages[0].content).toContain('"mystery": {"question"');
+    expect(m.calls[0].messages[0].content).not.toContain('"mystery": {"question"');
+    expect(m.calls[1].messages[0].content).toContain('How to write a mystery');
+    expect(m.calls[1].input.notebook.mystery).toBeUndefined();
     const view = (await c.view('chat-1'))!;
     expect(view.mystery).toMatchObject({ question: 'Who took the chapel silver?', status: 'open' });
     expect(view.preferences.mystery).toBe(true);
+    expect(view.job).toMatchObject({ status: 'complete', label: 'Notebook ready' });
     for (const secret of SECRETS) expect(await c.noteFor('chat-1')).not.toContain(secret);
+  });
+  const mysteryStory = async (mystery: (n: number) => unknown) => {
+    const h = host(); h.add('assistant', `The ferry bell rings.${tracker('Day 1, 18:00', 'The ferry')}`);
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 3 }, {});
+    let n = 0;
+    const m = model({ create: created, mystery: () => mystery(++n) }), c = new NotebookController(h.api, undefined, () => {}, m.ask);
+    await c.create('chat-1', { mystery: true }); await c.waitForJobs();
+    return { m, view: (await c.view('chat-1'))! };
+  };
+  test('a thin mystery is sent back on its own; the notebook is not written twice', async () => {
+    const { m, view } = await mysteryStory(n => ({ changes: { mystery: n === 1 ? { ...rawMystery(), clues: rawMystery().clues.slice(0, 2) } : rawMystery() } }));
+    expect(m.calls.map(x => x.task)).toEqual(['grimoire-create-v1', 'grimoire-mystery-first-v1', 'grimoire-mystery-first-v1']);
+    expect(m.calls[2].messages.at(-1)!.content).toContain('at least 6 clues');
+    expect(view.mystery).toMatchObject({ status: 'open' });
+  });
+  test('when the mystery cannot be made solid, the notebook is kept without one, and the panel says so', async () => {
+    const { m, view } = await mysteryStory(() => ({ changes: { mystery: { ...rawMystery(), clues: rawMystery().clues.slice(0, 2) } } }));
+    expect(m.calls.length).toBe(3);
+    expect(view.hasNotebook).toBe(true);
+    expect(view.mystery).toBeNull();
+    expect(view.job).toMatchObject({ status: 'complete', label: 'Notebook ready, without the mystery' });
   });
 });
 

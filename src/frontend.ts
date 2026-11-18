@@ -4,7 +4,7 @@ import { markStories } from './badges';
 import { describeDuration } from './clock';
 import type { Notebook, Pace } from './notebook';
 import type { TomeTab, TomeView } from './tome';
-import { CHAPTER_DONE, CHAPTER_WORKING, VERSION, type ChatView, type Settings, type Snapshot, type StoryListing } from './types';
+import { CHAPTER_DONE, CHAPTER_WORKING, NO_MYSTERY, VERSION, type ChatView, type Settings, type Snapshot, type StoryListing } from './types';
 
 const CORNER_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2 20V6a4 4 0 0 1 4-4h14"/><path d="M6 14V8a2 2 0 0 1 2-2h6"/><circle cx="6" cy="6" r="1.4" fill="currentColor"/></svg>';
 
@@ -146,6 +146,7 @@ const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally']
   /** A running clock next to work in progress, so you can see it is still going. */
   function since(startedAt: number) { const t = el('span', 'gm-since'); t.dataset.gmSince = String(startedAt); t.textContent = elapsed(startedAt); return t; }
   function renderJob(view: ChatView) {
+    if (view.job?.status === 'complete' && view.job.label === NO_MYSTERY) return el('p', 'gm-notice', 'The notebook is ready, but the model couldn’t write a solid mystery for it, so this story starts without one. You can add one under Mystery.');
     if (!view.job || view.job.status === 'complete') return null;
     // Talking shows its progress in the conversation instead.
     if (view.job.status === 'running' && view.job.kind === 'talk') return null;

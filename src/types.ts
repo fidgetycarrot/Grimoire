@@ -9,7 +9,7 @@ import type { Glance, SkipOffer } from './skip';
 import type { TomeView } from './tome';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.36.3';
+export const VERSION = '0.36.4';
 export const MAX_VERSIONS = 16;
 
 /** One saved state of the notebook and the chat history it describes. */
@@ -144,6 +144,8 @@ export type { StoryClock, Notebook, Pace, Preferences, FieldCheck, Recipe };
 
 /** Job labels for a new chapter, so the panel can show its progress where the button is. */
 export const CHAPTER_WORKING = 'Starting a new chapter';
+/** A mystery story whose mystery could not be written: the notebook is kept without one. */
+export const NO_MYSTERY = 'Notebook ready, without the mystery';
 export const CHAPTER_DONE = 'New chapter ready';
 
 export interface MemoryView {

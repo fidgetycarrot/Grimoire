@@ -7,7 +7,7 @@ import { buildNote, liveClock, paceLine, presentPeople, type ClockSources } from
 import { awayPeople, castProblems, followRate, noteSeen, stockProblems } from './cast';
 import { layoutLine, whereabouts } from './layout';
 import { dueThreads, fillReplies, isNewArc, keepTimes, mergeRevision, NotebookError, partProgress, stamp, validateNotebook, waitsFor, withoutTimes, type Moment, type Notebook, type Pace, type Preferences } from './notebook';
-import { checkupMessages, creationMessages, digestMessages, talkMessages, type Material } from './prompts';
+import { checkupMessages, creationMessages, digestMessages, firstMysteryMessages, talkMessages, type Material } from './prompts';
 import { applyChanges, describeChanges, openExchange } from './talk';
 import { checkPush, launchMystery, launchPush, PUSH_KINDS, secretsLeft, type PushKind } from './push';
 import { leakProblems, lockMystery, scrubLeaks, mysteryPlayable, mysteryProblems, mysteryView, settleMystery } from './mystery';
@@ -26,7 +26,7 @@ import { Trace, TRACES_KEPT, type JobTrace } from './trace';
 import { checkRoom, ROOM_TOKENS, roomMessages, type RoomReading } from './room';
 import type { DecisionResult } from 'lumiverse-spindle-types';
 import { checkRecipe, guessRecipe, readField, readTracker, trackerText, validateRecipe, type FieldType, type Recipe } from './tracker';
-import { CHAPTER_DONE, CHAPTER_WORKING, DEFAULT_PREFERENCES, DEFAULT_SETTINGS, MAX_VERSIONS, QUICK_LOG, TALK_LIMITS, type QuickRecord, VERSION, type ChatState, type PlayerNote, type TalkLine, type ChatView, type MemoryView, type Job, type Settings, type Snapshot, type StoryListing, type Version } from './types';
+import { CHAPTER_DONE, CHAPTER_WORKING, NO_MYSTERY, DEFAULT_PREFERENCES, DEFAULT_SETTINGS, MAX_VERSIONS, QUICK_LOG, TALK_LIMITS, type QuickRecord, VERSION, type ChatState, type PlayerNote, type TalkLine, type ChatView, type MemoryView, type Job, type Settings, type Snapshot, type StoryListing, type Version } from './types';
 import { uuid } from './safe-id';
 
 const record = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
@@ -164,6 +164,16 @@ function firstMystery(revised: Notebook, prefs: Preferences, round: number): Not
   const out: Notebook = fresh ? settleMystery({ ...rest, mystery: { ...fresh, thread: fresh.thread || rest.arc.main } }) : rest;
   if (round > 1 && !mysteryPlayable(out)) throw new NotebookError('The mystery is still not complete.', MYSTERY_THIN);
   return out;
+}
+/** The mystery written onto a new mystery story's notebook: it must be sound, or it is sent back once. */
+function mysteryOnto(revised: Notebook, round: number, prefs: Preferences): Notebook {
+  const out = firstMystery(revised, prefs, round);
+  if (round === 1) {
+    const problems = mysteryProblems(out);
+    if (problems.length) throw new NotebookError(problems.join(' '), 'The mystery was not solid enough yet, so it was sent back once.');
+  }
+  // Asked once already: what still reads as the answer is taken out by hand, so it never reaches the narrator.
+  return fixSpecific(fixLead(null, round > 1 ? scrubLeaks(out, null) : out, prefs));
 }
 /**
  * Keep the base version, the newest full update, and the most recent ones.
@@ -672,15 +682,37 @@ export class NotebookController {
           await this.loadGreetings(chatId);
           const material = await this.material(chatId, info.characterId, messages, plan.recent, storySoFar, ideas);
           let round = 0;
+          // A mystery story takes two requests: the notebook first, then the mystery written onto it.
+          const { mystery: wantsMystery, ...withoutMystery } = state.preferences;
           const result = await askJson(traced, creationMessages(material, state.preferences, ideas, pin), value => {
             round++;
             const output = record(value);
             const first = validateNotebook(tidyNotebook(output.notebook));
-            const ruled = withOwnWords(storyRules(null, first, round, {}, state.preferences), output.playerPeople, ideas);
+            const ruled = withOwnWords(storyRules(null, first, round, {}, withoutMystery), output.playerPeople, ideas);
             const notes = pin ? (Array.isArray(output.notes) ? output.notes : []).map(n => plain(n, TALK_LIMITS.note)).filter(Boolean).slice(0, 4) : [];
-            // The story opens now: the main storyline's first moment is due with the first reply.
-            return { notebook: openArc(withoutTimes(ruled), 'story'), recipe: validateRecipe(output.tracker).recipe, notes };
+            return { notebook: withoutTimes(ruled), recipe: validateRecipe(output.tracker).recipe, notes };
           }, signal, this.traces.get(job.id)?.sentBack);
+          let mysteryMissed = false;
+          if (wantsMystery) {
+            await this.progress(chatId, job, 'Writing the mystery');
+            let mysteryRound = 0;
+            try {
+              result.notebook = await askJson(traced, firstMysteryMessages(result.notebook, material, state.preferences), value => {
+                mysteryRound++;
+                const output = record(value);
+                const changes = output.mystery && !record(output.changes).mystery ? { ...record(output.changes), mystery: output.mystery } : output.changes;
+                const proposed = applyChanges(result.notebook, changes);
+                if (!proposed || !record(changes).mystery) throw new NotebookError('Return "changes" with "mystery", and any people, threads, or seeds it needs.');
+                return withoutTimes(mysteryOnto(validateNotebook(tidyNotebook(proposed, result.notebook)), mysteryRound, state.preferences));
+              }, signal, this.traces.get(job.id)?.sentBack);
+            } catch (error) {
+              // Stopped: nothing is kept, as with any job. Otherwise the notebook stands, without a mystery.
+              if (signal.aborted || error instanceof ModelError && error.code === 'CANCELLED') throw error;
+              mysteryMissed = true;
+            }
+          }
+          // The story opens now: the main storyline's first moment is due with the first reply.
+          result.notebook = openArc(result.notebook, 'story');
           await this.serial(chatId, async () => {
             const current = await this.load(chatId) ?? state;
             if (current.job?.id !== job.id) return;
@@ -702,7 +734,7 @@ export class NotebookController {
             // Ideas you asked to keep become pinned notes, in the model's short form or your own words.
             if (pin) { const texts = result.notes.length ? result.notes : [plain(ideas, TALK_LIMITS.note)]; current.notes = [...current.notes, ...texts.map(text => ({ id: uuid(), text, at: Date.now() }))].slice(-TALK_LIMITS.notes); }
             current.checks = checks; current.enabled = true; current.needsCheck = covers(covered, prints) ? '' : 'The chat changed while the notebook was being written.';
-            current.job = { ...job, status: 'complete', label: 'Notebook ready' };
+            current.job = { ...job, status: 'complete', label: mysteryMissed ? NO_MYSTERY : 'Notebook ready' };
             await this.save(current);
           });
         } catch (error) { await this.failJob(chatId, job, error); }
