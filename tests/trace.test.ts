@@ -49,4 +49,12 @@ describe('timing records', () => {
     expect(trace.live().requests.length).toBe(1);
     expect(changes).toBe(2);
   });
+  test('a request that fails still records which model it went to', async () => {
+    const trace = new Trace('create', 'Writing');
+    const api: any = { permissions: { has: () => true }, connections: { get: async () => ({ id: 'c', provider: 'openrouter', model: 'google/slow-model' }) },
+      generate: { raw: async () => { throw new Error('boom'); } } };
+    const ask = trace.wrap((m, s) => askModel(api, undefined, { connectionId: 'c', maxOutputTokens: 1000, reasoningMode: 'inherit', meter: trace.meter }, m, s));
+    await ask([{ role: 'user', content: 'x' }]).catch(() => {});
+    expect(trace.done('failed').requests[0]).toMatchObject({ ok: false, model: 'google/slow-model' });
+  });
 });

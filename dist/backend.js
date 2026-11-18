@@ -571,6 +571,9 @@ async function askModel(api, userId, settings, messages, signal) {
     throw new ModelError("NO_MODEL", "The chosen connection has no model set. Pick one in Lumiverse.");
   const deadline = AbortSignal.timeout(600000), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   const request = { type: "raw", connection_id: connection.id, provider: connection.provider, model: settings.model?.trim() || connection.model, userId, messages, parameters: { temperature: 0.4, max_tokens: settings.maxOutputTokens }, signal: combined };
+  try {
+    settings.meter?.({ model: request.model });
+  } catch {}
   if (settings.reasoningMode !== "inherit")
     request.reasoning = settings.reasoningMode === "off" && connection.provider !== "openrouter" ? { source: "off" } : { source: "custom", apiReasoning: true, effort: settings.reasoningMode === "off" ? "none" : "low" };
   let result;
@@ -4419,7 +4422,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.36.2";
+var VERSION = "0.36.3";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };

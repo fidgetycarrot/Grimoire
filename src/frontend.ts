@@ -437,7 +437,7 @@ const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally']
       const list = el('ul', 'gm-fields');
       for (const r of t.requests) {
         const li = el('li');
-        const bits = [time(r.ms), r.tokens?.thinking ? `${num(r.tokens.thinking)} thinking tokens` : '', r.tokens?.output !== undefined ? `${num(r.tokens.output)} tokens out` : r.chars ? `${num(r.chars)} characters out` : '', r.tokens?.input !== undefined ? `${num(r.tokens.input)} tokens in` : '', r.backup ? 'backup connection' : '', r.ok ? '' : `failed (${r.error ?? 'error'})`].filter(Boolean);
+        const bits = [time(r.ms), r.tokens?.thinking ? `${num(r.tokens.thinking)} thinking tokens` : '', r.tokens?.output !== undefined ? `${num(r.tokens.output)} tokens out` : r.chars ? `${num(r.chars)} characters out` : '', r.tokens?.input !== undefined ? `${num(r.tokens.input)} tokens in` : '', r.model ? r.model.split('/').at(-1)! : '', r.backup ? 'backup connection' : '', r.ok ? '' : `failed (${r.error ?? 'error'})`].filter(Boolean);
         li.append(el('span', '', r.step), el('span', 'gm-dot', bits.join(' · ')));
         list.append(li);
         if (r.sentBack) list.append(el('li', 'gm-meta', `↳ sent back for a second try: ${r.sentBack}`));

@@ -34,6 +34,8 @@ export async function askModel(api: SpindleAPI, userId: string | undefined, sett
   if (!connection.model?.trim() || !connection.provider?.trim()) throw new ModelError('NO_MODEL', 'The chosen connection has no model set. Pick one in Lumiverse.');
   const deadline = AbortSignal.timeout(600_000), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   const request: RawRequest = { type: 'raw', connection_id: connection.id, provider: connection.provider, model: settings.model?.trim() || connection.model, userId, messages, parameters: { temperature: 0.4, max_tokens: settings.maxOutputTokens }, signal: combined };
+  // Which model it went to, kept even if the request fails or runs out of time.
+  try { settings.meter?.({ model: request.model }); } catch { /* a record only */ }
   if (settings.reasoningMode !== 'inherit') request.reasoning = settings.reasoningMode === 'off' && connection.provider !== 'openrouter' ? { source: 'off' } : { source: 'custom', apiReasoning: true, effort: settings.reasoningMode === 'off' ? 'none' : 'low' };
   let result: unknown;
   let onAbort: (() => void) | undefined;
