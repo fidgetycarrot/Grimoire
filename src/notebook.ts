@@ -1,4 +1,5 @@
 import { absoluteHours, type StoryClock } from './clock';
+import type { Alone } from './alone';
 import { carryMysteryTimes, lockMystery, settleMystery, stampMystery, validateMystery, withoutMysteryTimes, type Mystery } from './mystery';
 
 /**
@@ -18,6 +19,9 @@ export interface Thread {
   /** How it ended for the player, once closed. */ outcome?: 'won' | 'lost' | 'faded';
   /** A lost storyline leaves a mark: how it still shows, in narrator-safe words. */ scar?: string;
   steps: Step[]; startAt?: number; /** Code-owned: how many replies the chat had when the thread began. */ startReply?: number;
+  /** One or two open questions play will answer, mostly through what the player does. The plan may press on them but never answer them in advance. */ stakes?: string[];
+  /** How it ends if the player never takes part: three possible endings, and which one came up (code rolls it). */ alone?: Alone;
+  /** The player character has taken part in it. Once true it stays true, and its ending is no longer rolled. */ involved?: boolean;
 }
 export interface Person {
   id: string; name: string; aliases: string[]; role: string; wants: string; doing: string; hint: string;
@@ -200,6 +204,9 @@ export function validateNotebook(value: unknown): Notebook {
       ...(t.outcome === 'won' || t.outcome === 'lost' || t.outcome === 'faded' ? { outcome: t.outcome } : {}), ...(t.scar ? { scar: text(t.scar, `${path}.scar`, LIMITS.short) } : {}),
       ...(typeof t.startAt === 'number' && Number.isFinite(t.startAt) ? { startAt: t.startAt } : {}),
       ...(count(t.startReply) !== undefined ? { startReply: count(t.startReply) } : {}),
+      ...(Array.isArray(t.stakes) && t.stakes.length ? { stakes: t.stakes.filter((q): q is string => typeof q === 'string' && !!q.trim()).slice(0, 2).map((q, j) => text(q, `${path}.stakes[${j}]`, 300)) } : {}),
+      ...(t.alone && typeof t.alone === 'object' && !Array.isArray(t.alone) ? { alone: aloneOf(record(t.alone), `${path}.alone`) } : {}),
+      ...(t.involved === true ? { involved: true } : {}),
     };
   }), 'threads');
   const threadIds = new Set(threads.map(t => t.id));
@@ -298,19 +305,40 @@ export function mergeRevision(previous: Notebook, revised: Notebook, now: number
   const { mystery: _given, ...rest } = fresh, mystery = lockMystery(previous.mystery, revised.mystery, options.newMystery === true);
   return settleMystery(stamp({ ...rest, ...(mystery ? { mystery } : {}), story, arc: carryArc(previous, fresh.arc), seeds: carrySeedTimes(previous, fresh.seeds), threads: fresh.threads.map(thread => {
     const old = previous.threads.find(t => t.id === thread.id);
-    return { ...thread, ...(old?.startAt !== undefined ? { startAt: old.startAt } : {}), ...(old?.startReply !== undefined ? { startReply: old.startReply } : {}), steps: thread.steps.map(step => {
+    return { ...thread, ...carryAlone(old, thread), ...(old?.startAt !== undefined ? { startAt: old.startAt } : {}), ...(old?.startReply !== undefined ? { startReply: old.startReply } : {}), steps: thread.steps.map(step => {
       const before = old?.steps.find(s => s.id === step.id);
+      // The rolled ending's words are code's: a model can't rewrite which way it went.
+      if (step.id === ALONE_STEP_ID && before) step = { ...step, text: before.text, sign: before.sign };
       if (step.status === 'waiting') return before?.now && before.status === 'waiting' && step.afterHours === 0 ? { ...step, now: true as const } : step;
       return { ...step, ...(before?.at !== undefined ? { at: before.at } : {}), ...(before?.atReply !== undefined ? { atReply: before.atReply } : {}) };
     }) };
   }) }, now));
+}
+const ALONE_STEP_ID = 'left-alone';
+function aloneOf(a: Record<string, unknown>, path: string): Alone {
+  const words = (v: unknown, p: string) => typeof v === 'string' ? v.trim().slice(0, 400) : (v === undefined || v === null ? '' : (() => { throw new NotebookError(`${p} must be text.`); })());
+  const landed = a.landed === 'good' || a.landed === 'mixed' || a.landed === 'bad' ? a.landed : undefined;
+  return { lean: a.lean === 'threat' ? 'threat' : 'ordinary', good: words(a.good, `${path}.good`), mixed: words(a.mixed, `${path}.mixed`), bad: words(a.bad, `${path}.bad`),
+    ...(landed ? { landed } : {}), ...(typeof a.landedAt === 'number' && Number.isInteger(a.landedAt) && a.landedAt >= 0 ? { landedAt: a.landedAt } : {}) };
+}
+/**
+ * Code owns which ending came up: a model's say is ignored, and once one has landed the endings are locked. Taking
+ * part is for good: a later update can't make a storyline untouched again.
+ */
+function carryAlone(old: Thread | undefined, thread: Thread): Partial<Thread> {
+  const out: Partial<Thread> = {};
+  if (old?.alone?.landed) out.alone = old.alone;
+  else if (thread.alone) { const { landed: _l, landedAt: _a, ...rest } = thread.alone; out.alone = rest; }
+  else if (old?.alone) out.alone = old.alone;
+  if (old?.involved || thread.involved) out.involved = true;
+  return out;
 }
 /** For edits made by the player: anything may change, but recorded times stay with their ids. */
 export function keepTimes(previous: Notebook, edited: Notebook, now: number | Moment): Notebook {
   const { mystery: _m, ...fresh } = withoutTimes(edited), mystery = carryMysteryTimes(previous.mystery, edited.mystery);
   return stamp({ ...fresh, ...(mystery ? { mystery } : {}), story: { ...fresh.story, cameOut: carryRevealed(previous, fresh.story.cameOut) }, arc: carryArc(previous, fresh.arc), seeds: carrySeedTimes(previous, fresh.seeds), threads: fresh.threads.map(thread => {
     const old = previous.threads.find(t => t.id === thread.id);
-    return { ...thread, ...(old?.startAt !== undefined ? { startAt: old.startAt } : {}), ...(old?.startReply !== undefined ? { startReply: old.startReply } : {}), steps: thread.steps.map(step => {
+    return { ...thread, ...(old?.alone?.landed && thread.alone ? { alone: { ...thread.alone, landed: old.alone.landed, ...(old.alone.landedAt !== undefined ? { landedAt: old.alone.landedAt } : {}) } } : {}), ...(old?.startAt !== undefined ? { startAt: old.startAt } : {}), ...(old?.startReply !== undefined ? { startReply: old.startReply } : {}), steps: thread.steps.map(step => {
       const before = old?.steps.find(s => s.id === step.id);
       return step.status === 'waiting' ? step : { ...step, ...(before?.at !== undefined ? { at: before.at } : {}), ...(before?.atReply !== undefined ? { atReply: before.atReply } : {}) };
     }) };

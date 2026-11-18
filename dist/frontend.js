@@ -174,7 +174,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.35.1";
+var VERSION = "0.36.0";
 var CHAPTER_WORKING = "Starting a new chapter";
 var CHAPTER_DONE = "New chapter ready";
 
@@ -972,7 +972,7 @@ function setup(ctx) {
           li.append(el("span", "gm-chip", step.status));
         steps.append(li);
       }
-      e.append(title, el("p", "gm-small", t.why), steps, ...t.ifIgnored ? [el("p", "gm-meta", `If left alone: ${t.ifIgnored}`)] : [], ...t.closedReason ? [el("p", "gm-meta", `Closed${t.outcome ? ` (${{ won: "went your way", lost: "went against you", faded: "faded out" }[t.outcome]})` : ""}: ${t.closedReason}`)] : [], ...t.scar ? [el("p", "gm-meta", `Still felt: ${t.scar}`)] : []);
+      e.append(title, el("p", "gm-small", t.why), steps, ...t.stakes?.length ? [el("p", "gm-meta", `Open questions: ${t.stakes.join(" ")}`)] : [], ...t.alone ? [el("p", "gm-meta", t.alone.landed ? `Left alone, it went ${{ good: "well", mixed: "somewhere in between", bad: "badly" }[t.alone.landed]}: ${t.alone[t.alone.landed]}` : `If left alone (${t.alone.lean === "threat" ? "leans bad" : "leans mild"}): well: ${t.alone.good} · in between: ${t.alone.mixed} · badly: ${t.alone.bad}${t.involved ? " (you took part, so this won’t be rolled)" : ""}`)] : t.ifIgnored ? [el("p", "gm-meta", `If left alone: ${t.ifIgnored}`)] : [], ...t.closedReason ? [el("p", "gm-meta", `Closed${t.outcome ? ` (${{ won: "went your way", lost: "went against you", faded: "faded out" }[t.outcome]})` : ""}: ${t.closedReason}`)] : [], ...t.scar ? [el("p", "gm-meta", `Still felt: ${t.scar}`)] : []);
       threads.append(e);
     }
     if (notebook.summary)

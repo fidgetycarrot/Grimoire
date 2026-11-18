@@ -1639,3 +1639,30 @@ describe('the preset plans the story', () => {
     expect(await c.noteFor('chat-1')).toContain('What the story is about');
   });
 });
+
+describe('storylines left alone, in a running chat', () => {
+  const finished = (input: any) => {
+    const nb = structuredClone(input.notebook);
+    const side = nb.threads.find((t: any) => t.id !== nb.arc.main);
+    side.alone = { lean: 'ordinary', good: 'The feud settles on its own.', mixed: 'Someone else takes the job.', bad: 'A window gets broken.' };
+    side.steps = side.steps.map((s: any) => ({ ...s, status: 'shown' }));
+    return { notebook: nb, tracker: null };
+  };
+  test('a check-up rolls the ending with Grimoire’s die, and not when the preset plans', async () => {
+    const h = host(); h.add('assistant', `The ferry bell rings.${tracker('Day 1, 18:00', 'The ferry')}`);
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 30 }, {});
+    const m = model({ create: created, checkup: finished });
+    const c = new NotebookController(h.api, undefined, () => {}, m.ask);
+    c.random = () => 0.99;
+    await c.create('chat-1', {}); await c.waitForJobs();
+    await c.checkup('chat-1', 'You asked'); await c.waitForJobs();
+    const nb = (await c.view('chat-1'))!.notebook!;
+    expect(nb.threads.find(t => t.alone)!.alone!.landed).toBe('good');
+    const off = host(); off.add('assistant', `The ferry bell rings.${tracker('Day 1, 18:00', 'The ferry')}`);
+    await off.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 30 }, {});
+    const c2 = new NotebookController(off.api, undefined, () => {}, model({ create: created, checkup: finished }).ask);
+    await c2.create('chat-1', { planner: 'preset' }); await c2.waitForJobs();
+    await c2.checkup('chat-1', 'You asked'); await c2.waitForJobs();
+    expect((await c2.view('chat-1'))!.notebook!.threads.find(t => t.alone)!.alone!.landed).toBeUndefined();
+  });
+});

@@ -716,7 +716,10 @@ function validateNotebook(value) {
       ...t.outcome === "won" || t.outcome === "lost" || t.outcome === "faded" ? { outcome: t.outcome } : {},
       ...t.scar ? { scar: text(t.scar, `${path}.scar`, LIMITS.short) } : {},
       ...typeof t.startAt === "number" && Number.isFinite(t.startAt) ? { startAt: t.startAt } : {},
-      ...count(t.startReply) !== undefined ? { startReply: count(t.startReply) } : {}
+      ...count(t.startReply) !== undefined ? { startReply: count(t.startReply) } : {},
+      ...Array.isArray(t.stakes) && t.stakes.length ? { stakes: t.stakes.filter((q) => typeof q === "string" && !!q.trim()).slice(0, 2).map((q, j) => text(q, `${path}.stakes[${j}]`, 300)) } : {},
+      ...t.alone && typeof t.alone === "object" && !Array.isArray(t.alone) ? { alone: aloneOf(record2(t.alone), `${path}.alone`) } : {},
+      ...t.involved === true ? { involved: true } : {}
     };
   }), "threads");
   const threadIds = new Set(threads.map((t) => t.id));
@@ -864,19 +867,49 @@ function mergeRevision(previous, revised, now, options = {}) {
   const { mystery: _given, ...rest } = fresh, mystery = lockMystery(previous.mystery, revised.mystery, options.newMystery === true);
   return settleMystery(stamp({ ...rest, ...mystery ? { mystery } : {}, story, arc: carryArc(previous, fresh.arc), seeds: carrySeedTimes(previous, fresh.seeds), threads: fresh.threads.map((thread) => {
     const old = previous.threads.find((t) => t.id === thread.id);
-    return { ...thread, ...old?.startAt !== undefined ? { startAt: old.startAt } : {}, ...old?.startReply !== undefined ? { startReply: old.startReply } : {}, steps: thread.steps.map((step) => {
+    return { ...thread, ...carryAlone(old, thread), ...old?.startAt !== undefined ? { startAt: old.startAt } : {}, ...old?.startReply !== undefined ? { startReply: old.startReply } : {}, steps: thread.steps.map((step) => {
       const before = old?.steps.find((s) => s.id === step.id);
+      if (step.id === ALONE_STEP_ID && before)
+        step = { ...step, text: before.text, sign: before.sign };
       if (step.status === "waiting")
         return before?.now && before.status === "waiting" && step.afterHours === 0 ? { ...step, now: true } : step;
       return { ...step, ...before?.at !== undefined ? { at: before.at } : {}, ...before?.atReply !== undefined ? { atReply: before.atReply } : {} };
     }) };
   }) }, now));
 }
+var ALONE_STEP_ID = "left-alone";
+function aloneOf(a, path) {
+  const words = (v, p) => typeof v === "string" ? v.trim().slice(0, 400) : v === undefined || v === null ? "" : (() => {
+    throw new NotebookError(`${p} must be text.`);
+  })();
+  const landed = a.landed === "good" || a.landed === "mixed" || a.landed === "bad" ? a.landed : undefined;
+  return {
+    lean: a.lean === "threat" ? "threat" : "ordinary",
+    good: words(a.good, `${path}.good`),
+    mixed: words(a.mixed, `${path}.mixed`),
+    bad: words(a.bad, `${path}.bad`),
+    ...landed ? { landed } : {},
+    ...typeof a.landedAt === "number" && Number.isInteger(a.landedAt) && a.landedAt >= 0 ? { landedAt: a.landedAt } : {}
+  };
+}
+function carryAlone(old, thread) {
+  const out = {};
+  if (old?.alone?.landed)
+    out.alone = old.alone;
+  else if (thread.alone) {
+    const { landed: _l, landedAt: _a, ...rest } = thread.alone;
+    out.alone = rest;
+  } else if (old?.alone)
+    out.alone = old.alone;
+  if (old?.involved || thread.involved)
+    out.involved = true;
+  return out;
+}
 function keepTimes(previous, edited, now) {
   const { mystery: _m, ...fresh } = withoutTimes(edited), mystery = carryMysteryTimes(previous.mystery, edited.mystery);
   return stamp({ ...fresh, ...mystery ? { mystery } : {}, story: { ...fresh.story, cameOut: carryRevealed(previous, fresh.story.cameOut) }, arc: carryArc(previous, fresh.arc), seeds: carrySeedTimes(previous, fresh.seeds), threads: fresh.threads.map((thread) => {
     const old = previous.threads.find((t) => t.id === thread.id);
-    return { ...thread, ...old?.startAt !== undefined ? { startAt: old.startAt } : {}, ...old?.startReply !== undefined ? { startReply: old.startReply } : {}, steps: thread.steps.map((step) => {
+    return { ...thread, ...old?.alone?.landed && thread.alone ? { alone: { ...thread.alone, landed: old.alone.landed, ...old.alone.landedAt !== undefined ? { landedAt: old.alone.landedAt } : {} } } : {}, ...old?.startAt !== undefined ? { startAt: old.startAt } : {}, ...old?.startReply !== undefined ? { startReply: old.startReply } : {}, steps: thread.steps.map((step) => {
       const before = old?.steps.find((s) => s.id === step.id);
       return step.status === "waiting" ? step : { ...step, ...before?.at !== undefined ? { at: before.at } : {}, ...before?.atReply !== undefined ? { atReply: before.atReply } : {} };
     }) };
@@ -2111,6 +2144,9 @@ function tidyNotebook(value, previous) {
       ifFollowed: plain2(t.ifFollowed),
       ifIgnored: plain2(t.ifIgnored),
       steps,
+      ...array2(t.stakes).map((q) => plain2(q, 300)).filter(Boolean).length ? { stakes: array2(t.stakes).map((q) => plain2(q, 300)).filter(Boolean).slice(0, 2) } : {},
+      ...t.alone && typeof t.alone === "object" && !Array.isArray(t.alone) ? { alone: ((a) => ({ lean: /threat|danger|enemy|hostile|bad/i.test(plain2(a.lean, 30)) ? "threat" : "ordinary", good: plain2(a.good, 400), mixed: plain2(a.mixed ?? a.between, 400), bad: plain2(a.bad, 400) }))(record4(t.alone)) } : {},
+      ...truthy(t.involved) ? { involved: true } : {},
       ...status === "closed" ? { outcome: pick(t.outcome, ["won", "lost", "faded"], { win: "won", success: "won", resolved: "won", fail: "lost", failed: "lost", loss: "lost", abandoned: "faded", dropped: "faded", ignored: "faded" }, previous?.threads.find((o) => o.id === id)?.outcome ?? "faded") } : {},
       ...plain2(t.scar, LIMITS.short) || previous?.threads.find((o) => o.id === id)?.scar ? { scar: plain2(t.scar, LIMITS.short) || previous.threads.find((o) => o.id === id).scar } : {}
     };
@@ -2654,7 +2690,7 @@ var SHAPE = `{
  "arc": {"shape": "conflict|kishotenketsu", "stage": "setup|rising|climax|resolution for conflict; ki|sho|ten|ketsu for kishotenketsu", "turn": "kishotenketsu only: what the turn is, or empty", "main": "the id of the thread that is this part's main storyline"},
  "seeds": [{"id": "green-wax", "detail": "an ordinary-looking detail the narrator can mention in passing", "payoff": "what it turns out to mean later", "pays": "the thread id, beat id, or turn it pays into", "status": "waiting|planted|paid|echo|dropped"}],
  "people": [{"id": "cole", "name": "Cole", "aliases": [], "role": "short role", "wants": "what they want", "doing": "what they are doing about it right now, on or off screen", "hint": "a narrator-safe note on how to play them, with no secrets", "voice": "how they talk: word choice, sentence length and rhythm, habits and tics, what they never say, and one short sample line that shows the sound (an example, not a catchphrase); no secrets", "depth": "what keeps them from being a stock type: a contradiction (a want that pulls against a fear or a habit), one specific detail that is not the obvious one for their role, a tie to the world, and the other side of them (how they are when they are not doing their signature thing); no secrets", "drift": "", "sheet": "only for the few who matter most: a fuller character sheet, like a short character card (personality, history, habits, relationships, how they treat the player character, what they are like when pushed); no appearance, no secrets; empty for everyone else", "met": false, "status": "active"}],
- "threads": [{"id": "stolen-ring", "title": "The stolen ring", "speed": "urgent|steady|slow", "why": "why it matters, including hidden causes", "hint": "why it matters, in one or two narrator-safe sentences with no secrets (not a recap of the current scene)", "people": ["cole"], "status": "open", "closedReason": "", "outcome": "once closed: won|lost|faded (how it ended for the player)", "scar": "once lost: how it still shows, in narrator-safe words", "ifFollowed": "what following it leads to", "ifIgnored": "what happens if it is left alone", "steps": [{"id": "owner-notices", "text": "what happens", "sign": "how it reaches the player, as something they can act on: a thing in their hands, an offer, a question put to them, someone waiting on their answer", "afterHours": 24, "status": "waiting"}]}],
+ "threads": [{"id": "stolen-ring", "title": "The stolen ring", "speed": "urgent|steady|slow", "why": "why it matters, including hidden causes", "hint": "why it matters, in one or two narrator-safe sentences with no secrets (not a recap of the current scene)", "people": ["cole"], "status": "open", "closedReason": "", "outcome": "once closed: won|lost|faded (how it ended for the player)", "scar": "once lost: how it still shows, in narrator-safe words", "ifFollowed": "what following it leads to", "ifIgnored": "what happens if it is left alone", "stakes": ["one or two open questions about people that play will answer, e.g. Will Katy keep the secret?"], "alone": {"lean": "threat|ordinary", "good": "how it ends well without the player", "mixed": "how it ends in between", "bad": "how it ends badly"}, "involved": false, "steps": [{"id": "owner-notices", "text": "what happens", "sign": "how it reaches the player, as something they can act on: a thing in their hands, an offer, a question put to them, someone waiting on their answer", "afterHours": 24, "status": "waiting"}]}],
  "buildings": [{"id": "vance-house", "name": "the Vance house", "aliases": ["Vance Residence", "home"], "floors": [{"name": "Upstairs", "rooms": [{"name": "Master bedroom", "aliases": [], "near": ["Hall bathroom", "Landing"]}]}, {"name": "Downstairs", "rooms": [{"name": "Kitchen", "aliases": ["breakfast nook"], "near": ["Living room", "Patio door"]}]}]}],
  "covers": [{"id": "upset-stomach", "by": "player, or the id of the person who told it", "told": ["ids of the people who were told it"], "said": "the lie as it was told", "hides": "what it covers up", "status": "holding|strained|exposed"}],
  "beats": [{"id": "ring-recognized", "text": "a moment the story could reach", "purpose": "what it sets up or pays off", "conditions": "what must be true first", "thread": "stolen-ring", "intensity": "low|high", "status": "possible"}],
@@ -2686,6 +2722,8 @@ var CRAFT = [
   '3f. Lies need upkeep. When the player character or anyone else tells a lie that matters (an excuse, a cover story, a false name, a hidden affair), record it in "covers": who told it ("player", or their id), who was told, what was said, and what it hides. Plan how it comes back, spaced out like everything else: someone asks a follow-up, a detail stops adding up, the lie needs another lie to hold. Mark it "strained" once someone starts to doubt it; it may come apart ("exposed") at a well-paced moment, never all at once, and an exposed lie stays exposed and has consequences. A lie someone else told is a secret: keep it out of hints. Small talk and white lies that nobody will remember do not count.',
   '3g. Keep places straight. For each building the story spends time in (a home, a workplace, a dorm, a ship), record its layout in "buildings": its floors, the rooms on each, and which rooms are beside each other, plain words and no measurements. Base it on the card and the chat, keep it ordinary and plausible for that kind of place (in a two-story house the bedrooms are usually upstairs and the kitchen downstairs), and list in "aliases" the names the chat and its tracker use for the building and its rooms. Once written, a layout changes only when the story changes the building; add rooms as they come up. Only buildings the story actually uses.',
   "3h. Fun is the point. Hard things make wins matter, but a story that is only hard is a grind. Give each part of the story at least one win the player can earn, plan something lighter after a loss or a long hard stretch (a warm scene, a funny one, a small good thing), and let the tone setting decide the mix: light leans toward warmth and humor, dark keeps the relief rare but real.",
+  '3k. Stakes: give each storyline one or two "stakes": open questions about people, places, or groups that will change something that lasts (Will Katy keep the secret? Does Lonnie get the shop back?). Play answers them, mostly through what the player character does. Steps may press on a stakes question and raise its cost, but no step, beat, or sign may answer it in advance or assume how it comes out. Once the chat has answered one, drop it.',
+  `3l. Left alone: every storyline except the main one also says how it ends if the player character never takes part, in "alone": a good ending, an in-between one, and a bad one, each sized to the storyline and written as what reaches the player when it happens (news, a sight, someone telling them). Not every ending is a catastrophe: a good one can be relief or someone else sorting it out; an in-between one a missed chance or something going on without them. "lean" is threat for real dangers (enemies, debts, a curse) and ordinary for everything else. You never choose which ending happens; Grimoire rolls it once the storyline's steps have played out untouched. Set "involved" to true once the player character has taken part in a storyline (acted on it, gone to it, dealt with its people about it); it stays true.`,
   "3i. Give each part of the story one real choice: a possible moment where two things the player character wants cannot both be had, and each way costs something and leads somewhere different (say where in ifFollowed and ifIgnored, or in the beat). Never decide it for them, and do not make one way plainly right.",
   "3j. The player character gets a storyline of their own. If the persona says what they want, fear, owe, or left behind, tie one storyline to it. Build it only from what the persona and the chat state; never invent their past, feelings, or decisions.",
   "4. Plan a supporting cast beyond the card's character so the world is not just the main character; how large depends on the story size below. They have their own lives and are met when they fit.",
@@ -2746,6 +2784,7 @@ ${LORE(input.lore) ? `- ${LORE(input.lore)}` : ""}${MEMORY(input.memory) ? `- ${
 - People invented in the chat: add them only if they matter (they act, recur, or tie into a thread). Mark people met once the player has met them.
 - Revise future beats and plans when the player's choices change what makes sense. Keep the pacing rules below: if waiting steps are packed too tightly (several threads peaking on the same night, steady steps hours apart), spread them out by raising afterHours on waiting steps. Change how the story gets somewhere, not why, unless the player has made the old why impossible. Do not force the player back onto an old plan.
 - Entries with "quick": true were marked after a reply by a fast reader. Confirm them by keeping them, or correct them if the chat does not support them (a step back to waiting, a beat back to possible, a seed back to waiting or planted).
+- Stakes and left alone: keep each open storyline's "stakes" questions open until the chat answers them (then drop them), and set "involved" to true once the player character takes part. Don't close a storyline the player never took part in as faded: let its steps play out, and Grimoire will bring in one of its "alone" endings. You may sharpen "alone" endings until one has landed; after that they are fixed.
 - Endings: when you close a storyline, set "outcome": won (the player got what they were after), lost (it went against them), or faded (it was dropped or petered out). A lost storyline leaves a mark: write in "scar" how it still shows (someone won't forgive, a door is closed, money is gone, a reputation is hurt), and let it color what comes next; it can grow a worse follow-up later. What was lost is never quietly forgotten.
 - Problems: a problem the player raised, or one that came up in the chat, becomes a storyline with its own steps unless it truly ended. If the chat solved a problem too easily (in a reply or two, at no real cost, through money, luck, or someone fixing it for the player), keep what happened, but it is not the end: give it a catch, a cost, a delay, or someone it angers, and make that a storyline. Problems are what move the story; do not let them evaporate.
 - ${WORLD(input.preferences.size)}${input.preferences.size !== "close" && input.away.length ? ' "away" lists people the player has met who have not been seen for a while: give one or two of them a reason to come back soon, through what they want.' : ""}
@@ -3957,6 +3996,53 @@ function buildTome(input) {
   };
 }
 
+// src/alone.ts
+var ODDS = {
+  threat: { good: 0.15, mixed: 0.35, bad: 0.5 },
+  ordinary: { good: 0.4, mixed: 0.4, bad: 0.2 }
+};
+var GUARD_REPLIES = 40;
+var GUARD = 0.3;
+var ALONE_STEP = "left-alone";
+function dueAlone(notebook, thread) {
+  return thread.status === "open" && thread.id !== notebook.arc.main && thread.id !== notebook.mystery?.thread && !thread.involved && !!thread.alone && !thread.alone.landed && thread.steps.length > 0 && thread.steps.every((s) => s.status !== "waiting");
+}
+function rollEnding(lean, guarded, random) {
+  const odds = { ...ODDS[lean] };
+  if (guarded)
+    odds.bad *= GUARD;
+  const total = odds.good + odds.mixed + odds.bad;
+  let at = random * total;
+  for (const ending of ["bad", "mixed", "good"]) {
+    if (at < odds[ending])
+      return ending;
+    at -= odds[ending];
+  }
+  return "good";
+}
+function settleAlone(notebook, now, random = Math.random) {
+  const reply = now.reply ?? 0;
+  let threads = notebook.threads.map((t) => {
+    const step = t.steps.find((s) => s.id === ALONE_STEP);
+    if (t.status !== "open" || !t.alone?.landed || !step || step.status === "waiting")
+      return t;
+    const ending = t.alone[t.alone.landed];
+    return { ...t, status: "closed", outcome: t.alone.landed === "bad" ? "lost" : "faded", closedReason: `Left alone: ${ending}`, ...t.alone.landed === "bad" && !t.scar ? { scar: ending } : {} };
+  });
+  const due = threads.find((t) => dueAlone({ ...notebook, threads }, t));
+  if (due?.alone) {
+    const guarded = threads.some((t) => t.alone?.landed === "bad" && t.alone.landedAt !== undefined && reply - t.alone.landedAt < GUARD_REPLIES);
+    const landed = rollEnding(due.alone.lean, guarded, random());
+    const text = due.alone[landed];
+    threads = threads.map((t) => t.id !== due.id ? t : {
+      ...t,
+      alone: { ...t.alone, landed, landedAt: reply },
+      steps: [...t.steps, { id: ALONE_STEP, text, sign: text, afterHours: t.speed === "slow" ? 24 : 6, status: "waiting" }]
+    });
+  }
+  return { ...notebook, threads };
+}
+
 // src/room.ts
 var ROOM_TOKENS = 4000;
 function roomMessages(input) {
@@ -4257,7 +4343,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.35.1";
+var VERSION = "0.36.0";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -4776,6 +4862,7 @@ class NotebookController {
     return character;
   }
   rooms = new Map;
+  random = Math.random;
   async readRoom(chatId, messageId) {
     const state = await this.load(chatId);
     if (!state?.versions.length)
@@ -5174,6 +5261,8 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
           let merged = mergeRevision(base.notebook, revised, live.moment);
           if (isNewArc(base.notebook, merged))
             merged = openArc(merged, "chapter");
+          if (state.preferences.planner !== "preset")
+            merged = settleAlone(merged, live.moment, this.random);
           if (absoluteHours(liveClock(merged.clock, live.values, live.types).clock) < absoluteHours(live.clock))
             merged = { ...merged, clock: live.clock };
           return { notebook: merged, recipe: output.tracker ? validateRecipe(output.tracker).recipe : null, early: earlySteps(base.notebook, merged, live.moment) };

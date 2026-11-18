@@ -21,6 +21,7 @@ import { plain, plainBlock, tidyNotebook } from './tidy';
 import { applyQuick, quickError, quickQuestions, quickState } from './quick';
 import { glance, skipOffer } from './skip';
 import { buildTome } from './tome';
+import { settleAlone } from './alone';
 import { checkRoom, ROOM_TOKENS, roomMessages, type RoomReading } from './room';
 import type { DecisionResult } from 'lumiverse-spindle-types';
 import { checkRecipe, guessRecipe, readField, readTracker, trackerText, validateRecipe, type FieldType, type Recipe } from './tracker';
@@ -431,6 +432,8 @@ export class NotebookController {
   }
   /** Read the Room retellings already written, by chat and reply text, so reopening costs nothing. */
   private rooms = new Map<string, { key: string; reading: RoomReading }>();
+  /** The die for storylines left alone. Replaceable in tests. */
+  random: () => number = Math.random;
   /**
    * The latest reply retold in plain words, with things the player's character could do next. Runs only when the
    * player opens Read the Room, outside the chat's queue so a long check-up doesn't hold it up. It is given only
@@ -751,6 +754,8 @@ export class NotebookController {
           let merged = mergeRevision(base.notebook, revised, live.moment);
           // A new part of the story opens with its main storyline's first moment.
           if (isNewArc(base.notebook, merged)) merged = openArc(merged, 'chapter');
+          // Storylines that ran their course without the player end one way or another: code rolls which.
+          if (state.preferences.planner !== 'preset') merged = settleAlone(merged, live.moment, this.random);
           // Time only moves forward. A clock that went back keeps the time from before the check-up;
           // tracker-owned parts are read again below either way.
           if (absoluteHours(liveClock(merged.clock, live.values, live.types).clock) < absoluteHours(live.clock)) merged = { ...merged, clock: live.clock };

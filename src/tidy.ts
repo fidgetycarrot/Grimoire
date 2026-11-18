@@ -112,6 +112,9 @@ export function tidyNotebook(value: unknown, previous?: Notebook): unknown {
       people: [...new Set(array(t.people).map(x => who.get(slug(x))).filter((x): x is string => !!x))].slice(0, 8),
       status, closedReason: plain(t.closedReason, LIMITS.short) || (status === 'closed' ? 'Resolved in the story' : ''),
       ifFollowed: plain(t.ifFollowed), ifIgnored: plain(t.ifIgnored), steps,
+      ...(array(t.stakes).map(q => plain(q, 300)).filter(Boolean).length ? { stakes: array(t.stakes).map(q => plain(q, 300)).filter(Boolean).slice(0, 2) } : {}),
+      ...(t.alone && typeof t.alone === 'object' && !Array.isArray(t.alone) ? { alone: (a => ({ lean: /threat|danger|enemy|hostile|bad/i.test(plain(a.lean, 30)) ? 'threat' as const : 'ordinary' as const, good: plain(a.good, 400), mixed: plain(a.mixed ?? a.between, 400), bad: plain(a.bad, 400) }))(record(t.alone)) } : {}),
+      ...(truthy(t.involved) ? { involved: true } : {}),
       ...(status === 'closed' ? { outcome: pick(t.outcome, ['won', 'lost', 'faded'] as const, { win: 'won', success: 'won', resolved: 'won', fail: 'lost', failed: 'lost', loss: 'lost', abandoned: 'faded', dropped: 'faded', ignored: 'faded' }, previous?.threads.find(o => o.id === id)?.outcome ?? 'faded') } : {}),
       ...(plain(t.scar, LIMITS.short) || previous?.threads.find(o => o.id === id)?.scar ? { scar: plain(t.scar, LIMITS.short) || previous!.threads.find(o => o.id === id)!.scar! } : {}) };
   }).filter(t => t.title), 'thread');
