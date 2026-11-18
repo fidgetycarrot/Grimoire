@@ -461,6 +461,65 @@ function planHistory(turns) {
   return { recent, earlier };
 }
 
+// src/trace.ts
+var TRACES_KEPT = 6;
+
+class Trace {
+  kind;
+  label;
+  startedAt;
+  step;
+  requests = [];
+  usage = null;
+  constructor(kind, label, startedAt = Date.now()) {
+    this.kind = kind;
+    this.label = label;
+    this.startedAt = startedAt;
+    this.step = label;
+  }
+  meter = (usage) => {
+    this.usage = usage;
+  };
+  sentBack = (reason) => {
+    const last = this.requests.at(-1);
+    if (last)
+      last.sentBack = reason.slice(0, 200);
+  };
+  nextBackup = false;
+  backup = () => {
+    this.nextBackup = true;
+  };
+  wrap(ask) {
+    return async (messages, signal) => {
+      const started = Date.now();
+      this.usage = null;
+      try {
+        const reply = await ask(messages, signal);
+        this.requests.push(this.entry(started, true, { chars: reply.length }));
+        return reply;
+      } catch (error) {
+        this.requests.push(this.entry(started, false, { error: error instanceof ModelError ? error.code : "ERROR" }));
+        throw error;
+      }
+    };
+  }
+  entry(started, ok, extra) {
+    const u = this.usage, tokens = u && (u.input !== undefined || u.output !== undefined || u.thinking !== undefined) ? { ...u.input !== undefined ? { input: u.input } : {}, ...u.output !== undefined ? { output: u.output } : {}, ...u.thinking !== undefined ? { thinking: u.thinking } : {} } : undefined;
+    const backup = this.nextBackup;
+    this.nextBackup = false;
+    return { step: this.step.slice(0, 80), ms: Date.now() - started, ok, ...extra, ...backup ? { backup: true } : {}, ...tokens ? { tokens } : {}, ...u?.model ? { model: u.model.slice(0, 80) } : {} };
+  }
+  done(status) {
+    return { kind: this.kind, label: this.label, startedAt: this.startedAt, ms: Date.now() - this.startedAt, status, requests: this.requests.slice(0, 20) };
+  }
+}
+function readUsage(value) {
+  const u = value && typeof value === "object" ? value : {};
+  const num = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.round(v) : undefined;
+  const details = u.completion_tokens_details ?? u.output_tokens_details;
+  return { input: num(u.prompt_tokens ?? u.input_tokens), output: num(u.completion_tokens ?? u.output_tokens), thinking: num(details?.reasoning_tokens ?? u.reasoning_tokens) };
+}
+
 // src/model.ts
 var record = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
 
@@ -519,6 +578,9 @@ async function askModel(api, userId, settings, messages, signal) {
       combined.removeEventListener("abort", onAbort);
   }
   const value = record(result), finish = String(value.finish_reason ?? "").toLowerCase();
+  try {
+    settings.meter?.({ model: request.model, ...readUsage(value.usage) });
+  } catch {}
   if (value.refusal || /refusal|content_filter|safety|blocked/.test(finish))
     throw new ModelError("DECLINED", "The provider declined this request.");
   if (/length|max_tokens/.test(finish))
@@ -543,7 +605,7 @@ function parseJson(content) {
     throw new ModelError("MALFORMED_JSON", "The model did not return valid JSON.");
   }
 }
-async function askJson(ask, messages, check, signal) {
+async function askJson(ask, messages, check, signal, onRetry) {
   let attempt = messages;
   for (let round = 0;round < 2; round++) {
     const reply = await ask(attempt, signal);
@@ -553,20 +615,23 @@ async function askJson(ask, messages, check, signal) {
       if (round > 0 || error instanceof ModelError && error.code !== "MALFORMED_JSON")
         throw error;
       const reason = error instanceof Error ? error.message : "The reply did not match.";
+      onRetry?.(error instanceof ModelError ? error.code : error && typeof error === "object" && typeof error.safe === "string" ? error.safe : "It did not pass Grimoire\u2019s checks.");
       attempt = [...messages, { role: "assistant", content: reply }, { role: "user", content: `That reply could not be used: ${reason} Return the complete corrected JSON object only.` }];
     }
   }
   throw new ModelError("UNREACHABLE", "Unexpected state.");
 }
-function withBackup(main, backup) {
+function withBackup(main, backup, onBackup) {
   if (!backup)
     return main;
   return async (messages, signal) => {
     try {
       return await main(messages, signal);
     } catch (error) {
-      if (error instanceof ModelError && error.code === "DECLINED")
+      if (error instanceof ModelError && error.code === "DECLINED") {
+        onBackup?.();
         return backup(messages, signal);
+      }
       throw error;
     }
   };
@@ -4343,7 +4408,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.36.0";
+var VERSION = "0.36.1";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -4603,6 +4668,7 @@ class NotebookController {
         skipDismissedAt: Number(saved.skipDismissedAt) > 0 ? Number(saved.skipDismissedAt) : 0,
         held: Array.isArray(saved.held) ? saved.held.filter((x) => typeof x === "string").slice(0, 12) : [],
         blocked: Array.isArray(saved.blocked) ? saved.blocked.filter((x) => typeof x === "string").slice(0, 6) : [],
+        traces: Array.isArray(saved.traces) ? saved.traces.filter((t) => t && typeof t === "object" && Array.isArray(t.requests)).slice(-TRACES_KEPT) : [],
         resync: Number.isInteger(saved.resync) ? Number(saved.resync) : null,
         talk: talkLines(saved.talk),
         notes: playerNotes(saved.notes),
@@ -4786,6 +4852,7 @@ class NotebookController {
         talk: state.talk,
         notes: state.notes,
         quickLog: state.quickLog,
+        traces: state.traces ?? [],
         follow: followRate(state.quickLog),
         recap: notebook?.recap ?? "",
         mystery: mysteryView(notebook?.mystery),
@@ -4847,13 +4914,31 @@ class NotebookController {
     }
     return { version: VERSION, permissions, connections, settings: await this.settings(), chat, notice, decisions };
   }
-  asker(settings) {
+  asker(settings, trace) {
     if (this.ask)
-      return this.ask;
+      return trace ? trace.wrap(this.ask) : this.ask;
     if (!settings.connectionId)
       throw new Error("Choose a connection in Grimoire settings first.");
-    const on = (connectionId) => (messages, signal) => askModel(this.api, this.userId, { ...settings, connectionId }, messages, signal);
-    return withBackup(on(settings.connectionId), settings.backupId ? on(settings.backupId) : null);
+    const on = (connectionId) => {
+      const ask = (messages, signal) => askModel(this.api, this.userId, { ...settings, connectionId, ...trace ? { meter: trace.meter } : {} }, messages, signal);
+      return trace ? trace.wrap(ask) : ask;
+    };
+    return withBackup(on(settings.connectionId), settings.backupId ? on(settings.backupId) : null, trace?.backup);
+  }
+  traces = new Map;
+  async keepTrace(chatId, job) {
+    const trace = this.traces.get(job.id);
+    this.traces.delete(job.id);
+    if (!trace?.requests.length)
+      return;
+    await this.serial(chatId, async () => {
+      const current = await this.load(chatId);
+      if (!current)
+        return;
+      const status = current.job?.id === job.id ? current.job.status : "complete";
+      current.traces = [...current.traces ?? [], trace.done(status)].slice(-TRACES_KEPT);
+      await this.save(current);
+    });
   }
   async character(characterId) {
     const character = await this.api.characters.get(characterId, this.userId);
@@ -5075,6 +5160,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
     this.running.set(state.chatId, controller);
     const job = { id: uuid(), kind, status: "running", label, startedAt: Date.now() };
     state.job = job;
+    this.traces.set(job.id, new Trace(kind, label, job.startedAt));
     return { job, signal: controller.signal };
   }
   track(task) {
@@ -5107,6 +5193,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
       const state = await this.load(chatId) ?? this.blank(chatId);
       state.preferences = validPreferences(preferencesInput);
       const { job, signal } = this.startJob(state, "create", "Writing the notebook");
+      const traced = this.asker(settings, this.traces.get(job.id));
       await this.save(state);
       this.changed();
       this.track((async () => {
@@ -5118,26 +5205,26 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
             const character = (await this.character(info.characterId)).name, persona = (await this.persona())?.name ?? "";
             for (const [i, part] of plan.earlier.entries()) {
               await this.progress(chatId, job, `Reading the story so far (${i + 1} of ${plan.earlier.length})`);
-              storySoFar = await askJson(ask, digestMessages({ character, persona, part: i + 1, parts: plan.earlier.length, record: storySoFar, chat: part }), (value) => {
+              storySoFar = await askJson(traced, digestMessages({ character, persona, part: i + 1, parts: plan.earlier.length, record: storySoFar, chat: part }), (value) => {
                 const text = plainBlock(record8(value).record, 12000);
                 if (!text)
                   throw new NotebookError('"record" is empty. Write the story so far as plain text.');
                 return text;
-              }, signal);
+              }, signal, this.traces.get(job.id)?.sentBack);
             }
             await this.progress(chatId, job, "Writing the notebook");
           }
           await this.loadGreetings(chatId);
           const material = await this.material(chatId, info.characterId, messages, plan.recent, storySoFar, ideas);
           let round = 0;
-          const result = await askJson(ask, creationMessages(material, state.preferences, ideas, pin), (value) => {
+          const result = await askJson(traced, creationMessages(material, state.preferences, ideas, pin), (value) => {
             round++;
             const output = record8(value);
             const first = validateNotebook(tidyNotebook(output.notebook));
             const ruled = withOwnWords(storyRules(null, first, round, {}, state.preferences), output.playerPeople, ideas);
             const notes = pin ? (Array.isArray(output.notes) ? output.notes : []).map((n) => plain2(n, TALK_LIMITS.note)).filter(Boolean).slice(0, 4) : [];
             return { notebook: openArc(withoutTimes(ruled), "story"), recipe: validateRecipe(output.tracker).recipe, notes };
-          }, signal);
+          }, signal, this.traces.get(job.id)?.sentBack);
           await this.serial(chatId, async () => {
             const current = await this.load(chatId) ?? state;
             if (current.job?.id !== job.id)
@@ -5172,6 +5259,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
           await this.failJob(chatId, job, error);
         } finally {
           this.running.delete(chatId);
+          await this.keepTrace(chatId, job).catch(() => {});
           this.changed();
         }
       })());
@@ -5186,6 +5274,9 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
       current.job = { ...current.job, label };
       await this.save(current);
     });
+    const trace = this.traces.get(job.id);
+    if (trace)
+      trace.step = label;
     this.changed();
   }
   async failJob(chatId, job, error) {
@@ -5217,6 +5308,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
     if (!live)
       return null;
     const { job, signal } = this.startJob(state, "checkup", "Updating the notebook");
+    const traced = this.asker(settings, this.traces.get(job.id));
     await this.save(state);
     this.changed();
     const base = live.version, read = live.prints.slice();
@@ -5251,7 +5343,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
         input.lore = await this.loreFor(chatId, chat, base.notebook);
         input.memory = await this.recallFor(chatId, chat, base.notebook);
         let round = 0;
-        const result = await askJson(ask, checkupMessages(input), (value) => {
+        const result = await askJson(traced, checkupMessages(input), (value) => {
           round++;
           const output = record8(value);
           const proposed = output.notebook && typeof output.notebook === "object" ? output.notebook : applyChanges(base.notebook, output.changes) ?? structuredClone(base.notebook);
@@ -5266,7 +5358,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
           if (absoluteHours(liveClock(merged.clock, live.values, live.types).clock) < absoluteHours(live.clock))
             merged = { ...merged, clock: live.clock };
           return { notebook: merged, recipe: output.tracker ? validateRecipe(output.tracker).recipe : null, early: earlySteps(base.notebook, merged, live.moment) };
-        }, signal);
+        }, signal, this.traces.get(job.id)?.sentBack);
         await this.serial(chatId, async () => {
           const current = await this.load(chatId);
           if (!current || current.job?.id !== job.id)
@@ -5304,6 +5396,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
         await this.failJob(chatId, job, error);
       } finally {
         this.running.delete(chatId);
+        await this.keepTrace(chatId, job).catch(() => {});
         this.changed();
       }
     })());
@@ -5353,6 +5446,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
         throw new Error("Write a notebook for this chat first.");
       state.talk = [...state.talk, { from: "you", text: message, at: Date.now(), ...keep ? { keep: true } : {} }].slice(-TALK_LIMITS.lines);
       const { job, signal } = this.startJob(state, "talk", push === "chapter" ? CHAPTER_WORKING : push === "mystery" ? "Grimoire is writing a mystery" : push ? "Grimoire is setting something in motion" : "Grimoire is thinking");
+      const traced = this.asker(settings, this.traces.get(job.id));
       await this.save(state);
       this.changed();
       const base = live.version, read = live.prints.slice();
@@ -5376,7 +5470,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
       this.track((async () => {
         try {
           let round = 0;
-          const result = await askJson(ask, talkMessages(input), (value) => {
+          const result = await askJson(traced, talkMessages(input), (value) => {
             round++;
             const output = record8(value);
             const asked = !push && output.ask === true && !input.mustAct;
@@ -5418,7 +5512,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
                 notebook = openArc(notebook, "chapter");
             }
             return { reply: kind ? pushReply(kind, skip) : reply, asked, notebook, kind, skip, note: !asked && pinning ? plain2(output.note, TALK_LIMITS.note) : "" };
-          }, signal);
+          }, signal, this.traces.get(job.id)?.sentBack);
           await this.serial(chatId, async () => {
             const current = await this.load(chatId);
             if (!current || current.job?.id !== job.id)
@@ -5461,6 +5555,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
           await this.failJob(chatId, job, error);
         } finally {
           this.running.delete(chatId);
+          await this.keepTrace(chatId, job).catch(() => {});
           this.changed();
         }
       })());

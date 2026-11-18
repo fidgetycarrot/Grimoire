@@ -1666,3 +1666,18 @@ describe('storylines left alone, in a running chat', () => {
     expect((await c2.view('chat-1'))!.notebook!.threads.find(t => t.alone)!.alone!.landed).toBeUndefined();
   });
 });
+
+describe('how long Grimoire took', () => {
+  test('a notebook job keeps a timing record with the chat, shown in the view', async () => {
+    const h = host(); h.add('assistant', `The ferry bell rings.${tracker('Day 1, 18:00', 'The ferry')}`);
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 30 }, {});
+    let first = true;
+    const m = model({ create: created, checkup: input => ({ notebook: input.notebook, tracker: null }) });
+    const c = new NotebookController(h.api, undefined, () => {}, async (messages, signal) => { if (first) { first = false; return 'oops, not JSON'; } return m.ask(messages); });
+    await c.create('chat-1', {}); await c.waitForJobs();
+    await c.checkup('chat-1', 'You asked'); await c.waitForJobs();
+    const traces = (await c.view('chat-1'))!.traces!;
+    expect(traces.map(t => [t.kind, t.status, t.requests.length])).toEqual([['create', 'complete', 2], ['checkup', 'complete', 1]]);
+    expect(traces[0].requests[0]).toMatchObject({ step: 'Writing the notebook', sentBack: 'MALFORMED_JSON' });
+  });
+});

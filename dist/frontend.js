@@ -174,7 +174,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.36.0";
+var VERSION = "0.36.1";
 var CHAPTER_WORKING = "Starting a new chapter";
 var CHAPTER_DONE = "New chapter ready";
 
@@ -862,8 +862,31 @@ function setup(ctx) {
     d.body.append(trackerPart(view));
     if (view.memory)
       d.body.append(memoryPart(view.memory));
+    if (view.traces?.length)
+      d.body.append(timingPart(view.traces));
     d.body.append(el("p", "gm-hint", "Only shapes, counts, and numbers: no names, no plans."));
     return d.root;
+  }
+  function timingPart(traces) {
+    const s = part("How long Grimoire took");
+    const time = (ms) => ms < 60000 ? `${Math.max(1, Math.round(ms / 1000))} s` : `${Math.floor(ms / 60000)} min ${Math.round(ms % 60000 / 1000)} s`;
+    const num = (n) => n.toLocaleString("en-US");
+    const KIND = { create: "Writing the notebook", checkup: "Check-up", talk: "Talk" };
+    for (const t of [...traces].reverse().slice(0, 4)) {
+      const head = el("p", "gm-small");
+      head.append(el("strong", "", KIND[t.kind] ?? t.kind), document.createTextNode(` · ${time(t.ms)} · ${t.requests.length} ${t.requests.length === 1 ? "request" : "requests"}${t.status === "failed" ? " · didn’t finish" : ""} · ${ago(t.startedAt)}`));
+      const list = el("ul", "gm-fields");
+      for (const r of t.requests) {
+        const li = el("li");
+        const bits = [time(r.ms), r.tokens?.thinking ? `${num(r.tokens.thinking)} thinking tokens` : "", r.tokens?.output !== undefined ? `${num(r.tokens.output)} tokens out` : r.chars ? `${num(r.chars)} characters out` : "", r.tokens?.input !== undefined ? `${num(r.tokens.input)} tokens in` : "", r.backup ? "backup connection" : "", r.ok ? "" : `failed (${r.error ?? "error"})`].filter(Boolean);
+        li.append(el("span", "", r.step), el("span", "gm-dot", bits.join(" · ")));
+        list.append(li);
+        if (r.sentBack)
+          list.append(el("li", "gm-meta", `↳ sent back for a second try: ${r.sentBack}`));
+      }
+      s.append(head, list);
+    }
+    return s;
   }
   function memoryPart(m) {
     const s = part("Lumiverse memory");

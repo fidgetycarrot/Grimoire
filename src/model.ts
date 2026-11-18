@@ -1,8 +1,9 @@
 import type { SpindleAPI, GenerationRequestDTO } from 'lumiverse-spindle-types';
+import { readUsage } from './trace';
 
 export type Message = { role: 'system' | 'user' | 'assistant'; content: string };
 export type ReasoningMode = 'inherit' | 'off' | 'low';
-export interface ModelSettings { connectionId: string; maxOutputTokens: number; reasoningMode: ReasoningMode; /** Another model on the same connection, by its exact ID; empty uses the connection's. */ model?: string }
+export interface ModelSettings { connectionId: string; maxOutputTokens: number; reasoningMode: ReasoningMode; /** Another model on the same connection, by its exact ID; empty uses the connection's. */ model?: string; /** Told the model used and the token counts the provider reported, for timing records. */ meter?: (usage: { model?: string; input?: number; output?: number; thinking?: number }) => void }
 export type Ask = (messages: Message[], signal?: AbortSignal) => Promise<string>;
 // Lumiverse 1.2's raw worker API requires provider and model even with connection_id.
 type RawRequest = GenerationRequestDTO & { provider: string; model: string };
@@ -42,6 +43,7 @@ export async function askModel(api: SpindleAPI, userId: string | undefined, sett
     throw explain(deadline.aborted && !signal?.aborted ? new DOMException('Timed out', 'TimeoutError') : error);
   } finally { if (onAbort) combined.removeEventListener('abort', onAbort); }
   const value = record(result), finish = String(value.finish_reason ?? '').toLowerCase();
+  try { settings.meter?.({ model: request.model, ...readUsage(value.usage) }); } catch { /* a record only */ }
   if (value.refusal || /refusal|content_filter|safety|blocked/.test(finish)) throw new ModelError('DECLINED', 'The provider declined this request.');
   if (/length|max_tokens/.test(finish)) throw new ModelError('OUTPUT_LIMIT', 'The model ran out of room before finishing. Raise the response allowance in settings.');
   if (typeof value.content !== 'string' || !value.content.trim()) throw new ModelError('EMPTY_RESPONSE', 'The model returned nothing.');
@@ -62,7 +64,7 @@ export function parseJson(content: string): unknown {
  * Ask for JSON and check it. A reply that is malformed or fails the check
  * gets one corrected attempt with the reason; then the step stops.
  */
-export async function askJson<T>(ask: Ask, messages: Message[], check: (value: unknown) => T, signal?: AbortSignal): Promise<T> {
+export async function askJson<T>(ask: Ask, messages: Message[], check: (value: unknown) => T, signal?: AbortSignal, /** Told why an answer is being sent back. */ onRetry?: (reason: string) => void): Promise<T> {
   let attempt = messages;
   for (let round = 0; round < 2; round++) {
     const reply = await ask(attempt, signal);
@@ -70,6 +72,8 @@ export async function askJson<T>(ask: Ask, messages: Message[], check: (value: u
     catch (error) {
       if (round > 0 || error instanceof ModelError && error.code !== 'MALFORMED_JSON') throw error;
       const reason = error instanceof Error ? error.message : 'The reply did not match.';
+      // The record gets only the spoiler-free reason; the model gets the details so it can fix them.
+      onRetry?.(error instanceof ModelError ? error.code : error && typeof error === 'object' && typeof (error as { safe?: unknown }).safe === 'string' ? (error as { safe: string }).safe : 'It did not pass Grimoire’s checks.');
       attempt = [...messages, { role: 'assistant', content: reply }, { role: 'user', content: `That reply could not be used: ${reason} Return the complete corrected JSON object only.` }];
     }
   }
@@ -80,10 +84,10 @@ export async function askJson<T>(ask: Ask, messages: Message[], check: (value: u
  * A planner that falls back. Some models decline some stories (a cautious model and an explicit chat). When the
  * main connection declines, the same request goes to the backup once, so the check-up isn't lost.
  */
-export function withBackup(main: Ask, backup: Ask | null): Ask {
+export function withBackup(main: Ask, backup: Ask | null, onBackup?: () => void): Ask {
   if (!backup) return main;
   return async (messages, signal) => {
     try { return await main(messages, signal); }
-    catch (error) { if (error instanceof ModelError && error.code === 'DECLINED') return backup(messages, signal); throw error; }
+    catch (error) { if (error instanceof ModelError && error.code === 'DECLINED') { onBackup?.(); return backup(messages, signal); } throw error; }
   };
 }

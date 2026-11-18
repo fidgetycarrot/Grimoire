@@ -22,6 +22,7 @@ import { applyQuick, quickError, quickQuestions, quickState } from './quick';
 import { glance, skipOffer } from './skip';
 import { buildTome } from './tome';
 import { settleAlone } from './alone';
+import { Trace, TRACES_KEPT, type JobTrace } from './trace';
 import { checkRoom, ROOM_TOKENS, roomMessages, type RoomReading } from './room';
 import type { DecisionResult } from 'lumiverse-spindle-types';
 import { checkRecipe, guessRecipe, readField, readTracker, trackerText, validateRecipe, type FieldType, type Recipe } from './tracker';
@@ -230,7 +231,7 @@ export class NotebookController {
         version: 1, chatId, enabled: saved.enabled === true, pace: PACES.includes(saved.pace as Pace) ? saved.pace as Pace : 'auto', preferences: validPreferences(saved.preferences),
         versions, recipe: validateRecipe(saved.recipe).recipe, checks: Array.isArray(saved.checks) ? saved.checks as ChatState['checks'] : [],
         skipHours: Number(saved.skipHours) > 0 ? Number(saved.skipHours) : 0, skipTurn: Number(saved.skipTurn) > 0 ? Number(saved.skipTurn) : 0, needsCheck: typeof saved.needsCheck === 'string' ? saved.needsCheck : '', queued: typeof saved.queued === 'string' ? saved.queued.slice(0, 200) : '', newFaceAt: Number.isInteger(saved.newFaceAt) ? saved.newFaceAt as number : 0, building: typeof saved.building === 'string' ? saved.building.slice(0, 80) : '', seen: Object.fromEntries(Object.entries(record(saved.seen)).filter(([k, v]) => typeof k === 'string' && Number.isInteger(v)).slice(0, 200)) as Record<string, number>, trackerTried: saved.trackerTried === true, skipDismissedAt: Number(saved.skipDismissedAt) > 0 ? Number(saved.skipDismissedAt) : 0,
-        held: Array.isArray(saved.held) ? saved.held.filter((x): x is string => typeof x === 'string').slice(0, 12) : [], blocked: Array.isArray(saved.blocked) ? saved.blocked.filter((x): x is string => typeof x === 'string').slice(0, 6) : [], resync: Number.isInteger(saved.resync) ? Number(saved.resync) : null,
+        held: Array.isArray(saved.held) ? saved.held.filter((x): x is string => typeof x === 'string').slice(0, 12) : [], blocked: Array.isArray(saved.blocked) ? saved.blocked.filter((x): x is string => typeof x === 'string').slice(0, 6) : [], traces: Array.isArray(saved.traces) ? (saved.traces as JobTrace[]).filter(t => t && typeof t === 'object' && Array.isArray(t.requests)).slice(-TRACES_KEPT) : [], resync: Number.isInteger(saved.resync) ? Number(saved.resync) : null,
         talk: talkLines(saved.talk), notes: playerNotes(saved.notes), quickLog: quickLog(saved.quickLog),
         intimate: Array.isArray(saved.intimate) ? saved.intimate.filter((x): x is string => typeof x === 'string').slice(-300) : [], intimateNow: saved.intimateNow === true,
         paceSignals: Array.isArray(saved.paceSignals) ? saved.paceSignals.filter((x): x is number => Number.isInteger(x)).slice(-12) : [], replan: saved.replan === true, replannedAt: Number(saved.replannedAt) || 0,
@@ -383,7 +384,7 @@ export class NotebookController {
         checks: live ? state.checks : [], needsCheck: state.needsCheck || (live && !live.matched ? 'The chat changed before the notebook was written.' : ''),
         job: state.job, updatedAt: state.updatedAt, repliesSinceCheck: live ? this.repliesSince(live) : 0, skipHours: state.skipHours, notebook, behind: !!live && live.index !== state.versions.length - 1, earlierParts, quick: state.quick, dueIds: live ? dueThreads(live.version.notebook, live.moment).map(d => d.thread.id) : [],
         glance: live ? glance(live.version.notebook, live.moment) : null, reworking: !!live && this.reworking(state, live),
-        talk: state.talk, notes: state.notes, quickLog: state.quickLog, follow: followRate(state.quickLog), recap: notebook?.recap ?? '', mystery: mysteryView(notebook?.mystery), canUndo: this.undoable(state) !== null, spent: !!notebook && !storyLeft(notebook), memory: mem,
+        talk: state.talk, notes: state.notes, quickLog: state.quickLog, traces: state.traces ?? [], follow: followRate(state.quickLog), recap: notebook?.recap ?? '', mystery: mysteryView(notebook?.mystery), canUndo: this.undoable(state) !== null, spent: !!notebook && !storyLeft(notebook), memory: mem,
         skipOffer: offer, tome,
       };
     });
@@ -419,11 +420,29 @@ export class NotebookController {
   }
 
   // ----- Writing the notebook -------------------------------------------------
-  private asker(settings: Settings): Ask {
-    if (this.ask) return this.ask;
+  private asker(settings: Settings, trace?: Trace): Ask {
+    if (this.ask) return trace ? trace.wrap(this.ask) : this.ask;
     if (!settings.connectionId) throw new Error('Choose a connection in Grimoire settings first.');
-    const on = (connectionId: string): Ask => (messages, signal) => askModel(this.api, this.userId, { ...settings, connectionId }, messages, signal);
-    return withBackup(on(settings.connectionId), settings.backupId ? on(settings.backupId) : null);
+    const on = (connectionId: string): Ask => {
+      const ask: Ask = (messages, signal) => askModel(this.api, this.userId, { ...settings, connectionId, ...(trace ? { meter: trace.meter } : {}) }, messages, signal);
+      return trace ? trace.wrap(ask) : ask;
+    };
+    return withBackup(on(settings.connectionId), settings.backupId ? on(settings.backupId) : null, trace?.backup);
+  }
+  /** Timing records of running jobs, by job id. */
+  private traces = new Map<string, Trace>();
+  /** Keep a finished job's timing record with the chat, newest last. */
+  private async keepTrace(chatId: string, job: Job) {
+    const trace = this.traces.get(job.id);
+    this.traces.delete(job.id);
+    if (!trace?.requests.length) return;
+    await this.serial(chatId, async () => {
+      const current = await this.load(chatId);
+      if (!current) return;
+      const status = current.job?.id === job.id ? current.job.status : 'complete';
+      current.traces = [...(current.traces ?? []), trace.done(status)].slice(-TRACES_KEPT);
+      await this.save(current);
+    });
   }
   private async character(characterId: string) {
     const character = await this.api.characters.get(characterId, this.userId);
@@ -598,6 +617,7 @@ export class NotebookController {
     this.running.set(state.chatId, controller);
     const job: Job = { id: uuid(), kind, status: 'running', label, startedAt: Date.now() };
     state.job = job;
+    this.traces.set(job.id, new Trace(kind, label, job.startedAt));
     return { job, signal: controller.signal };
   }
   private track(task: Promise<void>) { this.tasks.add(task); void task.finally(() => this.tasks.delete(task)); }
@@ -623,6 +643,7 @@ export class NotebookController {
       const state = await this.load(chatId) ?? this.blank(chatId);
       state.preferences = validPreferences(preferencesInput);
       const { job, signal } = this.startJob(state, 'create', 'Writing the notebook');
+      const traced = this.asker(settings, this.traces.get(job.id));
       await this.save(state); this.changed();
       this.track((async () => {
         try {
@@ -634,18 +655,18 @@ export class NotebookController {
             const character = (await this.character(info.characterId)).name, persona = (await this.persona())?.name ?? '';
             for (const [i, part] of plan.earlier.entries()) {
               await this.progress(chatId, job, `Reading the story so far (${i + 1} of ${plan.earlier.length})`);
-              storySoFar = await askJson(ask, digestMessages({ character, persona, part: i + 1, parts: plan.earlier.length, record: storySoFar, chat: part }), value => {
+              storySoFar = await askJson(traced, digestMessages({ character, persona, part: i + 1, parts: plan.earlier.length, record: storySoFar, chat: part }), value => {
                 const text = plainBlock(record(value).record, 12_000);
                 if (!text) throw new NotebookError('"record" is empty. Write the story so far as plain text.');
                 return text;
-              }, signal);
+              }, signal, this.traces.get(job.id)?.sentBack);
             }
             await this.progress(chatId, job, 'Writing the notebook');
           }
           await this.loadGreetings(chatId);
           const material = await this.material(chatId, info.characterId, messages, plan.recent, storySoFar, ideas);
           let round = 0;
-          const result = await askJson(ask, creationMessages(material, state.preferences, ideas, pin), value => {
+          const result = await askJson(traced, creationMessages(material, state.preferences, ideas, pin), value => {
             round++;
             const output = record(value);
             const first = validateNotebook(tidyNotebook(output.notebook));
@@ -653,7 +674,7 @@ export class NotebookController {
             const notes = pin ? (Array.isArray(output.notes) ? output.notes : []).map(n => plain(n, TALK_LIMITS.note)).filter(Boolean).slice(0, 4) : [];
             // The story opens now: the main storyline's first moment is due with the first reply.
             return { notebook: openArc(withoutTimes(ruled), 'story'), recipe: validateRecipe(output.tracker).recipe, notes };
-          }, signal);
+          }, signal, this.traces.get(job.id)?.sentBack);
           await this.serial(chatId, async () => {
             const current = await this.load(chatId) ?? state;
             if (current.job?.id !== job.id) return;
@@ -679,7 +700,7 @@ export class NotebookController {
             await this.save(current);
           });
         } catch (error) { await this.failJob(chatId, job, error); }
-        finally { this.running.delete(chatId); this.changed(); }
+        finally { this.running.delete(chatId); await this.keepTrace(chatId, job).catch(() => {}); this.changed(); }
       })());
       return job;
     });
@@ -691,6 +712,7 @@ export class NotebookController {
       if (!current || current.job?.id !== job.id) return;
       current.job = { ...current.job, label }; await this.save(current);
     });
+    const trace = this.traces.get(job.id); if (trace) trace.step = label;
     this.changed();
   }
   private async failJob(chatId: string, job: Job, error: unknown) {
@@ -720,6 +742,7 @@ export class NotebookController {
     const live = await this.live(state, await this.api.chat.getMessages(chatId));
     if (!live) return null;
     const { job, signal } = this.startJob(state, 'checkup', 'Updating the notebook');
+    const traced = this.asker(settings, this.traces.get(job.id));
     await this.save(state); this.changed();
     const base = live.version, read = live.prints.slice();
     // Words, not markup: preset panels and styling can be most of a reply.
@@ -742,7 +765,7 @@ export class NotebookController {
         input.lore = await this.loreFor(chatId, chat, base.notebook);
         input.memory = await this.recallFor(chatId, chat, base.notebook);
         let round = 0;
-        const result = await askJson(ask, checkupMessages(input), value => {
+        const result = await askJson(traced, checkupMessages(input), value => {
           round++;
           const output = record(value);
           // A check-up lists only what changes (much less to write, so cheaper and faster); a whole notebook is still read.
@@ -760,7 +783,7 @@ export class NotebookController {
           // tracker-owned parts are read again below either way.
           if (absoluteHours(liveClock(merged.clock, live.values, live.types).clock) < absoluteHours(live.clock)) merged = { ...merged, clock: live.clock };
           return { notebook: merged, recipe: output.tracker ? validateRecipe(output.tracker).recipe : null, early: earlySteps(base.notebook, merged, live.moment) };
-        }, signal);
+        }, signal, this.traces.get(job.id)?.sentBack);
         await this.serial(chatId, async () => {
           const current = await this.load(chatId);
           if (!current || current.job?.id !== job.id) return;
@@ -787,7 +810,7 @@ export class NotebookController {
           await this.save(current);
         });
       } catch (error) { await this.failJob(chatId, job, error); }
-      finally { this.running.delete(chatId); this.changed(); }
+      finally { this.running.delete(chatId); await this.keepTrace(chatId, job).catch(() => {}); this.changed(); }
     })());
     return job;
   }
@@ -836,6 +859,7 @@ export class NotebookController {
       if (!live) throw new Error('Write a notebook for this chat first.');
       state.talk = [...state.talk, { from: 'you' as const, text: message, at: Date.now(), ...(keep ? { keep: true as const } : {}) }].slice(-TALK_LIMITS.lines);
       const { job, signal } = this.startJob(state, 'talk', push === 'chapter' ? CHAPTER_WORKING : push === 'mystery' ? 'Grimoire is writing a mystery' : push ? 'Grimoire is setting something in motion' : 'Grimoire is thinking');
+      const traced = this.asker(settings, this.traces.get(job.id));
       await this.save(state); this.changed();
       const base = live.version, read = live.prints.slice();
       // A button press is its own request, not part of a conversation.
@@ -852,7 +876,7 @@ export class NotebookController {
       this.track((async () => {
         try {
           let round = 0;
-          const result = await askJson(ask, talkMessages(input), value => {
+          const result = await askJson(traced, talkMessages(input), value => {
             round++;
             const output = record(value);
             const asked = !push && output.ask === true && !input.mustAct;
@@ -891,7 +915,7 @@ export class NotebookController {
               if (isNewArc(base.notebook, notebook)) notebook = openArc(notebook, 'chapter');
             }
             return { reply: kind ? pushReply(kind, skip) : reply, asked, notebook, kind, skip, note: !asked && pinning ? plain(output.note, TALK_LIMITS.note) : '' };
-          }, signal);
+          }, signal, this.traces.get(job.id)?.sentBack);
           await this.serial(chatId, async () => {
             const current = await this.load(chatId);
             if (!current || current.job?.id !== job.id) return;
@@ -925,7 +949,7 @@ export class NotebookController {
             await this.save(current);
           });
         } catch (error) { await this.failJob(chatId, job, error); }
-        finally { this.running.delete(chatId); this.changed(); }
+        finally { this.running.delete(chatId); await this.keepTrace(chatId, job).catch(() => {}); this.changed(); }
       })());
       return job;
     });

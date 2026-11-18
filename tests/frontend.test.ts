@@ -459,3 +459,19 @@ describe('who plans the story', () => {
     expect(h.requests.find(r => r.action === 'planner')!.input).toEqual({ chatId: 'chat-1', planner: 'grimoire' });
   });
 });
+
+describe('how long Grimoire took, in the panel', () => {
+  test('each job shows its requests with time, thinking, size, and any second try', async () => {
+    const traces = [{ kind: 'create', label: 'Writing the notebook', startedAt: Date.now() - 900_000, ms: 754_000, status: 'complete', requests: [
+      { step: 'Reading the story so far (1 of 2)', ms: 130_000, ok: true, chars: 9000 },
+      { step: 'Writing the notebook', ms: 302_000, ok: true, chars: 41000, tokens: { input: 21000, output: 11000, thinking: 6400 }, sentBack: 'The update broke a story rule, so it was sent back once.' },
+      { step: 'Writing the notebook', ms: 322_000, ok: true, chars: 42000 } ] }];
+    const h = harness({ traces } as any); await tick();
+    const text = h.root.textContent!;
+    expect(text).toContain('How long Grimoire took');
+    expect(text).toContain('Writing the notebook · 12 min 34 s · 3 requests');
+    expect(text).toContain('5 min 2 s · 6,400 thinking tokens · 11,000 tokens out · 21,000 tokens in');
+    expect(text).toContain('sent back for a second try: The update broke a story rule');
+    expect(text).toContain('2 min 10 s · 9,000 characters out');
+  });
+});

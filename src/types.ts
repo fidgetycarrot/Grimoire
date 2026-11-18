@@ -1,4 +1,5 @@
 import type { StoryClock } from './clock';
+import type { JobTrace } from './trace';
 import type { MysteryView } from './mystery';
 import type { ClockSources } from './note';
 import type { Notebook, Pace, Preferences, WaitSetting } from './notebook';
@@ -8,7 +9,7 @@ import type { Glance, SkipOffer } from './skip';
 import type { TomeView } from './tome';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.36.0';
+export const VERSION = '0.36.1';
 export const MAX_VERSIONS = 16;
 
 /** One saved state of the notebook and the chat history it describes. */
@@ -41,6 +42,8 @@ export interface ChatState {
   held: string[];
   /** Due steps the quick check found could not believably reach the player in the scene as it stands (a locked or private room, somewhere they could not be). They wait for the scene to open up. */
   blocked?: string[];
+  /** How long recent notebook jobs' model requests took (sizes and times only), newest last. */
+  traces?: JobTrace[];
   /** The reply count when the story changed direction; the next check-up reworks the notebook. Null when none is due. */
   resync: number | null;
   /** The quick check's recent answers as plain numbers, for checking how it judges. No story text. */
@@ -121,6 +124,7 @@ export interface ChatView {
   /** This part of the story has nothing left to happen: a new chapter is offered. */
   spent: boolean;
   /** Of recent replies where the note asked for a due step now, how many showed it. */ follow: { offered: number; used: number } | null;
+  /** How long recent notebook jobs' requests took. */ traces?: JobTrace[];
   /** Where the story stands, for the player. */ recap: string;
   /** The mystery as the player may see it: the question and the clues they have found. Never the answer. */ mystery?: MysteryView | null;
   /** How much Lumiverse's Memory Cortex holds for this chat, and what the last reply got from it. Counts only. */
