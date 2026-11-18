@@ -468,13 +468,16 @@ class Trace {
   kind;
   label;
   startedAt;
+  onChange;
   step;
   requests = [];
   usage = null;
-  constructor(kind, label, startedAt = Date.now()) {
+  current = null;
+  constructor(kind, label, startedAt = Date.now(), onChange = () => {}) {
     this.kind = kind;
     this.label = label;
     this.startedAt = startedAt;
+    this.onChange = onChange;
     this.step = label;
   }
   meter = (usage) => {
@@ -493,6 +496,8 @@ class Trace {
     return async (messages, signal) => {
       const started = Date.now();
       this.usage = null;
+      this.current = { step: this.step.slice(0, 80), since: started };
+      this.onChange();
       try {
         const reply = await ask(messages, signal);
         this.requests.push(this.entry(started, true, { chars: reply.length }));
@@ -500,6 +505,9 @@ class Trace {
       } catch (error) {
         this.requests.push(this.entry(started, false, { error: error instanceof ModelError ? error.code : "ERROR" }));
         throw error;
+      } finally {
+        this.current = null;
+        this.onChange();
       }
     };
   }
@@ -511,6 +519,9 @@ class Trace {
   }
   done(status) {
     return { kind: this.kind, label: this.label, startedAt: this.startedAt, ms: Date.now() - this.startedAt, status, requests: this.requests.slice(0, 20) };
+  }
+  live() {
+    return { ...this.done("running"), requests: this.requests.map((r) => ({ ...r })), ...this.current ? { waiting: { ...this.current } } : {} };
   }
 }
 function readUsage(value) {
@@ -4408,7 +4419,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.36.1";
+var VERSION = "0.36.2";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -4852,7 +4863,7 @@ class NotebookController {
         talk: state.talk,
         notes: state.notes,
         quickLog: state.quickLog,
-        traces: state.traces ?? [],
+        traces: this.tracesOf(state),
         follow: followRate(state.quickLog),
         recap: notebook?.recap ?? "",
         mystery: mysteryView(notebook?.mystery),
@@ -4926,6 +4937,11 @@ class NotebookController {
     return withBackup(on(settings.connectionId), settings.backupId ? on(settings.backupId) : null, trace?.backup);
   }
   traces = new Map;
+  tracesOf(state) {
+    const saved = state.traces ?? [];
+    const running = state.job?.status === "running" ? this.traces.get(state.job.id) : undefined;
+    return running ? [...saved, running.live()] : saved;
+  }
   async keepTrace(chatId, job) {
     const trace = this.traces.get(job.id);
     this.traces.delete(job.id);
@@ -5160,7 +5176,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
     this.running.set(state.chatId, controller);
     const job = { id: uuid(), kind, status: "running", label, startedAt: Date.now() };
     state.job = job;
-    this.traces.set(job.id, new Trace(kind, label, job.startedAt));
+    this.traces.set(job.id, new Trace(kind, label, job.startedAt, () => this.changed()));
     return { job, signal: controller.signal };
   }
   track(task) {

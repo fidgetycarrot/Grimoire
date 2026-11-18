@@ -134,7 +134,7 @@ const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally']
     const parts = view.earlierParts ?? 0;
     const write = button('Write the notebook', async () => {
       await act('create', { chatId: view.chatId, preferences: { tone: tone.value, twist: twist.checked, shape: shape.value, lockShape: lock.checked, size: size.value, mystery: mystery.checked && planner.value !== 'preset', planner: planner.value }, ideas: ideas.value.trim(), keepIdeas: keepIdeas.checked });
-      notify(parts ? `Reading the chat, then writing the notebook. This uses ${parts + 1} model requests and can take a few minutes.` : 'Writing the notebook. This uses one model request and can take a minute.');
+      notify(parts ? `Reading the chat, then writing the notebook. This uses ${parts + 1} model requests and can take a few minutes.` : 'Writing the notebook. This uses one model request and can take several minutes.');
     }, 'primary');
     write.classList.add('gm-wide'); write.disabled = noConnection || view.job?.status === 'running';
     card.append(grid, twistRow);
@@ -432,7 +432,8 @@ const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally']
     const KIND: Record<string, string> = { create: 'Writing the notebook', checkup: 'Check-up', talk: 'Talk' };
     for (const t of [...traces].reverse().slice(0, 4)) {
       const head = el('p', 'gm-small');
-      head.append(el('strong', '', KIND[t.kind] ?? t.kind), document.createTextNode(` · ${time(t.ms)} · ${t.requests.length} ${t.requests.length === 1 ? 'request' : 'requests'}${t.status === 'failed' ? ' · didn’t finish' : ''} · ${ago(t.startedAt)}`));
+      if (t.status === 'running') head.append(el('strong', '', KIND[t.kind] ?? t.kind), document.createTextNode(' · still going · '), since(t.startedAt));
+      else head.append(el('strong', '', KIND[t.kind] ?? t.kind), document.createTextNode(` · ${time(t.ms)} · ${t.requests.length} ${t.requests.length === 1 ? 'request' : 'requests'}${t.status === 'failed' ? ' · didn’t finish' : ''} · ${ago(t.startedAt)}`));
       const list = el('ul', 'gm-fields');
       for (const r of t.requests) {
         const li = el('li');
@@ -441,6 +442,7 @@ const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally']
         list.append(li);
         if (r.sentBack) list.append(el('li', 'gm-meta', `↳ sent back for a second try: ${r.sentBack}`));
       }
+      if (t.waiting) { const li = el('li'), wait = el('span', 'gm-dot'); wait.append(document.createTextNode('waiting for the model · '), since(t.waiting.since)); li.append(el('span', '', t.waiting.step), wait); list.append(li); }
       s.append(head, list);
     }
     return s;
@@ -551,7 +553,13 @@ const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally']
     }
     if (!view.supported) { body.append(el('p', 'gm-notice', view.reason)); return; }
     const job = renderJob(view);
-    if (!view.hasNotebook) { if (job) body.append(job); body.append(renderStart(view)); return; }
+    if (!view.hasNotebook) {
+      if (job) body.append(job);
+      body.append(renderStart(view));
+      // No notebook yet, so no Behind the scenes: show the timing here, while it is written and after a try that failed.
+      if (view.traces?.length) { const card = el('section', 'gm-card gm-stack'); card.append(timingPart(view.traces)); body.append(card); }
+      return;
+    }
     const toggle = el('input'); toggle.type = 'checkbox'; toggle.checked = view.enabled; toggle.setAttribute('role', 'switch'); toggle.setAttribute('aria-label', 'Use Grimoire in this chat');
     toggle.addEventListener('change', () => { void act('enable', { chatId: view.chatId, enabled: toggle.checked }).catch(error => { toggle.checked = !toggle.checked; notify(error.message, 'error'); }); });
     if (job) body.append(job);

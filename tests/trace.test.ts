@@ -34,4 +34,19 @@ describe('timing records', () => {
     await ask([{ role: 'user', content: 'x' }]);
     expect(trace.done('complete').requests[0]).toMatchObject({ tokens: { input: 100, output: 50, thinking: 30 }, model: 'google/some-model' });
   });
+  test('while a job runs, the request still waiting shows, and every start and finish is announced', async () => {
+    let changes = 0, release!: () => void;
+    const trace = new Trace('create', 'Writing the notebook', Date.now(), () => { changes++; });
+    const ask = trace.wrap(() => new Promise<string>(r => { release = () => r('{}'); }));
+    const pending = ask([]);
+    const live = trace.live();
+    expect(live.status).toBe('running');
+    expect(live.requests).toEqual([]);
+    expect(live.waiting?.step).toBe('Writing the notebook');
+    expect(changes).toBe(1);
+    release(); await pending;
+    expect(trace.live().waiting).toBeUndefined();
+    expect(trace.live().requests.length).toBe(1);
+    expect(changes).toBe(2);
+  });
 });

@@ -13,7 +13,10 @@ export interface RequestTrace {
   /** Grimoire sent this answer back, and why (in Grimoire's spoiler-free words). */ sentBack?: string;
   /** The main connection declined, and the backup answered. */ backup?: true;
 }
-export interface JobTrace { kind: string; label: string; startedAt: number; ms: number; status: string; requests: RequestTrace[] }
+export interface JobTrace {
+  kind: string; label: string; startedAt: number; ms: number; status: string; requests: RequestTrace[];
+  /** Only while the job runs: the request still waiting for its answer. */ waiting?: { step: string; since: number };
+}
 export const TRACES_KEPT = 6;
 
 export interface Usage { model?: string; input?: number; output?: number; thinking?: number }
@@ -22,7 +25,9 @@ export class Trace {
   step: string;
   readonly requests: RequestTrace[] = [];
   private usage: Usage | null = null;
-  constructor(readonly kind: string, readonly label: string, readonly startedAt = Date.now()) { this.step = label; }
+  /** The request still waiting for its answer, if any. */
+  private current: { step: string; since: number } | null = null;
+  constructor(readonly kind: string, readonly label: string, readonly startedAt = Date.now(), private readonly onChange: () => void = () => {}) { this.step = label; }
   /** Called by the request itself with what the provider reported. */
   meter = (usage: Usage) => { this.usage = usage; };
   /** Mark the newest request as sent back, with Grimoire's reason. */
@@ -34,6 +39,7 @@ export class Trace {
   wrap(ask: Ask): Ask {
     return async (messages, signal) => {
       const started = Date.now(); this.usage = null;
+      this.current = { step: this.step.slice(0, 80), since: started }; this.onChange();
       try {
         const reply = await ask(messages, signal);
         this.requests.push(this.entry(started, true, { chars: reply.length }));
@@ -41,7 +47,7 @@ export class Trace {
       } catch (error) {
         this.requests.push(this.entry(started, false, { error: error instanceof ModelError ? error.code : 'ERROR' }));
         throw error;
-      }
+      } finally { this.current = null; this.onChange(); }
     };
   }
   private entry(started: number, ok: boolean, extra: Partial<RequestTrace>): RequestTrace {
@@ -51,6 +57,10 @@ export class Trace {
   }
   done(status: string): JobTrace {
     return { kind: this.kind, label: this.label, startedAt: this.startedAt, ms: Date.now() - this.startedAt, status, requests: this.requests.slice(0, 20) };
+  }
+  /** The record so far, for showing while the job runs. */
+  live(): JobTrace {
+    return { ...this.done('running'), requests: this.requests.map(r => ({ ...r })), ...(this.current ? { waiting: { ...this.current } } : {}) };
   }
 }
 

@@ -474,4 +474,15 @@ describe('how long Grimoire took, in the panel', () => {
     expect(text).toContain('sent back for a second try: The update broke a story rule');
     expect(text).toContain('2 min 10 s · 9,000 characters out');
   });
+  test('before there is a notebook, the start screen shows the timing: while it is written, and after a try that failed', async () => {
+    const traces = [
+      { kind: 'create', label: 'Writing the notebook', startedAt: Date.now() - 1_300_000, ms: 601_000, status: 'failed', requests: [{ step: 'Writing the notebook', ms: 600_000, ok: false, error: 'TIMEOUT' }] },
+      { kind: 'create', label: 'Writing the notebook', startedAt: Date.now() - 95_000, ms: 95_000, status: 'running', requests: [], waiting: { step: 'Writing the notebook', since: Date.now() - 95_000 } }];
+    const h = harness({ hasNotebook: false, notebook: null, traces } as any); await tick();
+    const text = h.root.textContent!;
+    expect(text).toContain('How long Grimoire took');
+    expect(text).toContain('Writing the notebook · still going · ');
+    expect(text).toContain('waiting for the model · ');
+    expect(text).toContain('10 min 0 s · failed (TIMEOUT)');
+  });
 });

@@ -384,7 +384,7 @@ export class NotebookController {
         checks: live ? state.checks : [], needsCheck: state.needsCheck || (live && !live.matched ? 'The chat changed before the notebook was written.' : ''),
         job: state.job, updatedAt: state.updatedAt, repliesSinceCheck: live ? this.repliesSince(live) : 0, skipHours: state.skipHours, notebook, behind: !!live && live.index !== state.versions.length - 1, earlierParts, quick: state.quick, dueIds: live ? dueThreads(live.version.notebook, live.moment).map(d => d.thread.id) : [],
         glance: live ? glance(live.version.notebook, live.moment) : null, reworking: !!live && this.reworking(state, live),
-        talk: state.talk, notes: state.notes, quickLog: state.quickLog, traces: state.traces ?? [], follow: followRate(state.quickLog), recap: notebook?.recap ?? '', mystery: mysteryView(notebook?.mystery), canUndo: this.undoable(state) !== null, spent: !!notebook && !storyLeft(notebook), memory: mem,
+        talk: state.talk, notes: state.notes, quickLog: state.quickLog, traces: this.tracesOf(state), follow: followRate(state.quickLog), recap: notebook?.recap ?? '', mystery: mysteryView(notebook?.mystery), canUndo: this.undoable(state) !== null, spent: !!notebook && !storyLeft(notebook), memory: mem,
         skipOffer: offer, tome,
       };
     });
@@ -431,6 +431,12 @@ export class NotebookController {
   }
   /** Timing records of running jobs, by job id. */
   private traces = new Map<string, Trace>();
+  /** Saved timing records, plus the running job's so far. */
+  private tracesOf(state: ChatState): JobTrace[] {
+    const saved = state.traces ?? [];
+    const running = state.job?.status === 'running' ? this.traces.get(state.job.id) : undefined;
+    return running ? [...saved, running.live()] : saved;
+  }
   /** Keep a finished job's timing record with the chat, newest last. */
   private async keepTrace(chatId: string, job: Job) {
     const trace = this.traces.get(job.id);
@@ -617,7 +623,7 @@ export class NotebookController {
     this.running.set(state.chatId, controller);
     const job: Job = { id: uuid(), kind, status: 'running', label, startedAt: Date.now() };
     state.job = job;
-    this.traces.set(job.id, new Trace(kind, label, job.startedAt));
+    this.traces.set(job.id, new Trace(kind, label, job.startedAt, () => this.changed()));
     return { job, signal: controller.signal };
   }
   private track(task: Promise<void>) { this.tasks.add(task); void task.finally(() => this.tasks.delete(task)); }
