@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { SpindleAPI } from 'lumiverse-spindle-types';
-import { NotebookController } from '../src/controller';
+import { QUIET_EVERY, NotebookController } from '../src/controller';
 import { ModelError, type Message } from '../src/model';
 import { fakeEmbed, MYSTERY_ANSWER, rawMystery, sampleNotebook } from './fixtures';
 
@@ -491,14 +491,55 @@ describe('the quick check', () => {
     release(); await c.waitForJobs();
     expect(await c.noteFor('chat-1')).toContain('Shutters bang');
   });
-  test('something new in the story starts a full check-up once a few replies have passed, and only one', async () => {
+  test('something new in the story starts a full check-up once the usual number of replies have passed, and only one', async () => {
     const { h, m, c } = await quickReady(answers({ new_turn: noul(0.88) }));
     const reasons = () => m.calls.filter(x => x.task === 'grimoire-checkup-v1').map(x => x.input.reason);
-    for (const [i, line] of ['A stranger named Pell waves you over.', 'Pell names a price.', 'Pell leads you to a boat.', 'The boat pushes off.'].entries()) {
-      h.add('user', 'I follow.'); h.add('assistant', `${line}${tracker(`Day 1, 18:${10 + i * 5}`, 'The ferry')}`);
+    for (let i = 0; i < 9; i++) {
+      h.add('user', 'I follow.'); h.add('assistant', `Pell leads on, step ${i}.${tracker('Day 1, 18:00', 'The ferry')}`);
       await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
-      expect(reasons()).toEqual(i < 2 ? [] : ['Something new happened in the story']);
+      expect(reasons()).toEqual(i < 7 ? [] : ['Something new happened in the story']);
     }
+  });
+  test('with the quick check working, a quiet stretch goes without check-ups until it has gone on a long while', async () => {
+    const { h, m, c } = await quickReady(answers({}));
+    const checkups = () => m.calls.filter(x => x.task === 'grimoire-checkup-v1');
+    for (let i = 0; i < QUIET_EVERY; i++) {
+      h.add('user', 'I wait.'); h.add('assistant', `Time passes, ${i}.${tracker('Day 1, 18:00', 'The ferry')}`);
+      await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+      expect(checkups().length).toBe(i < QUIET_EVERY - 1 ? 0 : 1);
+    }
+    expect(checkups()[0].input.reason).toBe(`${QUIET_EVERY} replies since the last update`);
+  });
+  test('with the quick check working, a new scene waits for the usual number of replies instead of starting a check-up at once', async () => {
+    const { h, m, c } = await quickReady(answers({}));
+    const reasons = () => m.calls.filter(x => x.task === 'grimoire-checkup-v1').map(x => x.input.reason);
+    for (let i = 0; i < 8; i++) {
+      h.add('user', 'I walk.'); h.add('assistant', `The road goes on, ${i}.${tracker('Day 1, 18:00', i < 2 ? 'The ferry' : 'The orchard')}`);
+      await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+      expect(reasons()).toEqual(i < 7 ? [] : ['The scene moved']);
+    }
+  });
+  test('a check-up asks the connection for low reasoning while writing the notebook keeps the main setting', async () => {
+    const h = host();
+    h.add('assistant', `The ferry bell rings.${tracker('Day 1, 18:00', 'The ferry')}`);
+    const m = model({ create: created, checkup: (input: any) => ({ notebook: input.notebook, tracker: null }) });
+    const sent: any[] = [];
+    (h.api as any).connections.get = async (id: string) => ({ id, provider: 'openrouter', model: 'some/model' });
+    (h.api as any).generate = { raw: async (request: any) => { sent.push(request); return { content: await m.ask(request.messages) }; } };
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 2 }, {});
+    const c = new NotebookController(h.api);
+    await c.create('chat-1', {}); await c.waitForJobs();
+    for (let i = 0; i < 2; i++) { h.add('user', 'I wait.'); h.add('assistant', `Time passes.${tracker('Day 1, 18:00', 'The ferry')}`); }
+    await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+    const task = (r: any) => JSON.parse(r.messages.at(-1).content).task;
+    expect(sent.find(r => task(r) === 'grimoire-create-v1').reasoning).toBeUndefined();
+    expect(sent.find(r => task(r) === 'grimoire-checkup-v1').reasoning).toMatchObject({ effort: 'low' });
+  });
+  test('check-ups think less than notebook writing unless the player chooses otherwise', async () => {
+    const h = host(), c = new NotebookController(h.api, undefined, () => {});
+    expect((await c.settings()).checkupReasoning).toBe('low');
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', checkupReasoning: 'inherit' }, {});
+    expect((await c.settings()).checkupReasoning).toBe('inherit');
   });
   test('a secret coming out still starts a check-up right away', async () => {
     const { h, m, c } = await quickReady(answers({ truth_1: noul(0.9), new_turn: noul(0.9) }));

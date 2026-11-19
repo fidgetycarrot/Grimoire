@@ -4436,11 +4436,11 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.36.4";
+var VERSION = "0.37.0";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
-var DEFAULT_SETTINGS = { connectionId: "", backupId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true, intimate: "protect", memories: true, replyCard: true };
+var DEFAULT_SETTINGS = { connectionId: "", backupId: "", maxOutputTokens: 16000, reasoningMode: "inherit", checkupReasoning: "low", every: 8, quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true, intimate: "protect", memories: true, replyCard: true };
 var DEFAULT_PREFERENCES = { tone: "balanced", twist: true, shape: "auto", lockShape: false, size: "auto" };
 var CHAPTER_WORKING = "Starting a new chapter";
 var NO_MYSTERY = "Notebook ready, without the mystery";
@@ -4566,7 +4566,9 @@ function recentPlaces(versions, now) {
   return out.slice(-10);
 }
 var CALM = 3;
-var SOFT_RANK = ["A problem was solved too easily", "A new problem came up", "Something new happened in the story"];
+var QUIET_EVERY = 15;
+var SOFT_RANK = ["A problem was solved too easily", "A new problem came up", "A plan no longer fits the story", "Something new happened in the story"];
+var SOMETHING_NEW = "Something new happened in the story";
 function storyRules(previous, revised, round, pace, prefs, checkup = false) {
   if (previous && prefs.planner === "preset")
     return revised;
@@ -4630,6 +4632,7 @@ function validSettings(value) {
     backupId: typeof v.backupId === "string" && v.backupId !== v.connectionId ? v.backupId.slice(0, 120) : "",
     maxOutputTokens: [8000, 16000, 32000, 64000].includes(tokens) ? tokens : DEFAULT_SETTINGS.maxOutputTokens,
     reasoningMode: ["inherit", "off", "low"].includes(v.reasoningMode) ? v.reasoningMode : "inherit",
+    checkupReasoning: ["inherit", "off", "low"].includes(v.checkupReasoning) ? v.checkupReasoning : DEFAULT_SETTINGS.checkupReasoning,
     every: Number.isInteger(every) && every >= 2 && every <= 50 ? every : DEFAULT_SETTINGS.every,
     quick: { enabled: quick.enabled === true, connectionId: plainSetting(quick.connectionId, 120), model: plainSetting(quick.model, 200) },
     wait: v.wait === "short" || v.wait === "long" ? v.wait : "medium",
@@ -5373,7 +5376,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
     if (!live)
       return null;
     const { job, signal } = this.startJob(state, "checkup", "Updating the notebook");
-    const traced = this.asker(settings, this.traces.get(job.id));
+    const traced = this.asker({ ...settings, reasoningMode: settings.checkupReasoning ?? settings.reasoningMode }, this.traces.get(job.id));
     await this.save(state);
     this.changed();
     const base = live.version, read = live.prints.slice();
@@ -5948,8 +5951,13 @@ ${recallNote(recall)}`;
     }
     const findTracker = !state.recipe.fields.length && !state.trackerTried && since >= 1 && this.trackerSamples(live.turns, chatId).length > 0;
     const urgent = !(settings.quick.enabled && this.decisionsReady()) && since >= 2 && full.reason !== "Checking on an urgent development" && dueThreads(live.version.notebook, live.moment).some((d) => d.thread.speed === "urgent");
-    const queued = since >= CALM ? state.queued : "";
-    const reason = state.needsCheck ? state.needsCheck.startsWith("The chat changed") ? "Caught up after the chat changed" : state.needsCheck : unmatched ? "The chat changed before the notebook was written" : extra ? extra : queued ? queued : state.replan ? "The story ran ahead of its plan" : moved ? "The scene moved" : jumped ? "Time moved on" : findTracker ? "Looking for your preset\u2019s tracker" : urgent ? "Checking on an urgent development" : since >= settings.every ? `${since} replies since the last update` : "";
+    const watched = settings.quick.enabled && this.decisionsReady() && state.quick?.ok !== false;
+    const after = reply - since;
+    const stirred = moved || jumped || !!state.queued || state.newFaceAt > after || state.quickLog.some((q) => q.reply > after && q.marked > 0);
+    const ready = watched ? stirred && since >= settings.every : true;
+    const queued = since >= (watched && state.queued === SOMETHING_NEW ? settings.every : CALM) ? state.queued : "";
+    const stretch = watched ? Math.max(settings.every, QUIET_EVERY) : settings.every;
+    const reason = state.needsCheck ? state.needsCheck.startsWith("The chat changed") ? "Caught up after the chat changed" : state.needsCheck : unmatched ? "The chat changed before the notebook was written" : extra ? extra : queued ? queued : state.replan ? "The story ran ahead of its plan" : moved && ready ? "The scene moved" : jumped && ready ? "Time moved on" : findTracker ? "Looking for your preset\u2019s tracker" : urgent ? "Checking on an urgent development" : ready && watched ? "The story moved on" : since >= stretch ? `${since} replies since the last update` : "";
     if (findTracker)
       state.trackerTried = true;
     await this.save(state);
@@ -6029,7 +6037,7 @@ ${live.values.location ?? ""}`, light);
           else if (outcome.revealed)
             extra = "A secret came out";
           else if (outcome.needsCheckup)
-            soft = outcome.easyFix ? "A problem was solved too easily" : outcome.problem ? "A new problem came up" : "Something new happened in the story";
+            soft = outcome.easyFix ? "A problem was solved too easily" : outcome.problem ? "A new problem came up" : outcome.held.length ? "A plan no longer fits the story" : SOMETHING_NEW;
           const judged = live.prints.at(-1);
           state.intimateNow = outcome.intimate;
           if (outcome.intimate && settings.intimate === "protect" && judged && !state.intimate.includes(judged)) {

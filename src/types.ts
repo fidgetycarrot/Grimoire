@@ -9,7 +9,7 @@ import type { Glance, SkipOffer } from './skip';
 import type { TomeView } from './tome';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.36.4';
+export const VERSION = '0.37.0';
 export const MAX_VERSIONS = 16;
 
 /** One saved state of the notebook and the chat history it describes. */
@@ -96,8 +96,8 @@ export interface PlayerNote { id: string; text: string; at: number }
 export const TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 } as const;
 /** The quick check after each reply. An empty connection means the default decision connection; an empty model means the connection's model. */
 export interface QuickSettings { enabled: boolean; connectionId: string; model: string }
-export interface Settings { connectionId: string; /** Tried when the main connection declines a request. */ backupId: string; maxOutputTokens: number; reasoningMode: ReasoningMode; every: number; quick: QuickSettings; /** The most replies a planned development waits, as a size. */ wait: WaitSetting; /** List chats with a notebook on the home page. */ homeList: boolean; /** During intimate scenes: keep the story out until they end, or let urgent things in. */ intimate: 'protect' | 'allow'; /** Add Lumiverse's memories to the note when the preset doesn't already. */ memories: boolean; /** Show the Paged Relic Tome chronicle card under the latest assistant reply. */ replyCard?: boolean; /** The connection Read the Room uses for its plain retelling; empty uses Grimoire's own. */ roomConnectionId?: string; /** A different model on that connection, by its exact ID; empty uses the connection's. */ roomModel?: string }
-export const DEFAULT_SETTINGS: Settings = { connectionId: '', backupId: '', maxOutputTokens: 16000, reasoningMode: 'inherit', every: 8, quick: { enabled: false, connectionId: '', model: '' }, wait: 'medium', homeList: true, intimate: 'protect', memories: true, replyCard: true };
+export interface Settings { connectionId: string; /** Tried when the main connection declines a request. */ backupId: string; maxOutputTokens: number; reasoningMode: ReasoningMode; /** Thinking for check-ups only: they are bookkeeping, and thinking is most of their cost. */ checkupReasoning?: ReasoningMode; every: number; quick: QuickSettings; /** The most replies a planned development waits, as a size. */ wait: WaitSetting; /** List chats with a notebook on the home page. */ homeList: boolean; /** During intimate scenes: keep the story out until they end, or let urgent things in. */ intimate: 'protect' | 'allow'; /** Add Lumiverse's memories to the note when the preset doesn't already. */ memories: boolean; /** Show the Paged Relic Tome chronicle card under the latest assistant reply. */ replyCard?: boolean; /** The connection Read the Room uses for its plain retelling; empty uses Grimoire's own. */ roomConnectionId?: string; /** A different model on that connection, by its exact ID; empty uses the connection's. */ roomModel?: string }
+export const DEFAULT_SETTINGS: Settings = { connectionId: '', backupId: '', maxOutputTokens: 16000, reasoningMode: 'inherit', checkupReasoning: 'low', every: 8, quick: { enabled: false, connectionId: '', model: '' }, wait: 'medium', homeList: true, intimate: 'protect', memories: true, replyCard: true };
 export const DEFAULT_PREFERENCES: Preferences = { tone: 'balanced', twist: true, shape: 'auto', lockShape: false, size: 'auto' };
 
 export interface ChatView {

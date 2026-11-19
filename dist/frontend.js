@@ -174,7 +174,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.36.4";
+var VERSION = "0.37.0";
 var CHAPTER_WORKING = "Starting a new chapter";
 var NO_MYSTERY = "Notebook ready, without the mystery";
 var CHAPTER_DONE = "New chapter ready";
@@ -1162,7 +1162,7 @@ function setup(ctx) {
     body.append(renderSteer(view), ...view.hasNotebook ? [...view.preferences.planner === "preset" && view.mystery?.status !== "open" ? [] : [renderMystery(view)], renderTaste(view)] : [], renderBehind(view), renderSpoilers(view), renderMore(view));
   }
   function renderSettings() {
-    const settings = { ...snapshot?.settings ?? { connectionId: "", backupId: "", maxOutputTokens: 16000, reasoningMode: "inherit", every: 8, quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true, intimate: "protect", memories: true } };
+    const settings = { ...snapshot?.settings ?? { connectionId: "", backupId: "", maxOutputTokens: 16000, reasoningMode: "inherit", checkupReasoning: "low", every: 8, quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true, intimate: "protect", memories: true } };
     const card = el("section", "gm-card gm-stack");
     const connection = select([["", "Choose a connection"], ...(snapshot?.connections ?? []).map((c) => [c.id, `${c.name}${c.model ? ` · ${c.model}` : ""}`])], settings.connectionId);
     const backup = select([["", "None"], ...(snapshot?.connections ?? []).map((c) => [c.id, `${c.name}${c.model ? ` · ${c.model}` : ""}`])], settings.backupId ?? "");
@@ -1173,10 +1173,11 @@ function setup(ctx) {
     every.value = String(settings.every);
     const tokens = select([["8000", "8,000"], ["16000", "16,000"], ["32000", "32,000"], ["64000", "64,000"]], String(settings.maxOutputTokens));
     const reasoning = select([["inherit", "Use the connection’s setting"], ["off", "Off"], ["low", "Low"]], settings.reasoningMode);
+    const checkupReasoning = select([["low", "Low"], ["off", "Off"], ["inherit", "Same as above"]], settings.checkupReasoning ?? "low");
     const wait = select([["short", "A few replies (about 8)"], ["medium", "Some replies (about 15)"], ["long", "Many replies (about 30)"]], settings.wait ?? "medium");
     const grid = el("div", "gm-grid");
-    grid.append(labeled("Response room (tokens)", tokens), labeled("Reasoning", reasoning));
-    card.append(el("h2", "", "Settings"), labeled("Model connection", connection, "Used to write notebooks and run check-ups. Your chat keeps its own connection. A cheaper model may do, but test it on a chat first."), labeled("Backup connection", backup, "Some models refuse some stories. If the main connection declines a request, Grimoire sends it here instead, so the check-up isn’t lost."), labeled("Longest a story thread waits", wait, "A thread moves on when enough story time has passed, or after this many replies, whichever comes first, so a long scene never leaves the story stuck. Urgent threads wait less and slow ones longer. Big scenes still aren’t interrupted for slow threads; they come in at the next break."), labeled("Check-up after this many replies", every, "A fallback. Check-ups also run when the scene changes or time jumps."), grid);
+    grid.append(labeled("Response room (tokens)", tokens), labeled("Reasoning", reasoning), labeled("Reasoning for check-ups", checkupReasoning));
+    card.append(el("h2", "", "Settings"), labeled("Model connection", connection, "Used to write notebooks and run check-ups. Your chat keeps its own connection. A cheaper model may do, but test it on a chat first."), labeled("Backup connection", backup, "Some models refuse some stories. If the main connection declines a request, Grimoire sends it here instead, so the check-up isn’t lost."), labeled("Longest a story thread waits", wait, "A thread moves on when enough story time has passed, or after this many replies, whichever comes first, so a long scene never leaves the story stuck. Urgent threads wait less and slow ones longer. Big scenes still aren’t interrupted for slow threads; they come in at the next break."), labeled("Check-up after this many replies", every, "With the quick check on, a check-up waits until something has happened (a new scene, a step in a storyline, someone new), and a quiet stretch waits 15 replies. Without it, check-ups also run when the scene changes or time jumps."), grid, el("p", "gm-hint", "Check-ups mostly keep records, so low reasoning is usually enough and costs much less. Writing a notebook always uses the Reasoning setting above."));
     const decisions = snapshot?.decisions ?? { available: false, reason: "", connections: [] };
     const quickCard = el("section", "gm-card gm-stack");
     const quickRow = el("label", "gm-switch"), quickOn = el("input");
@@ -1229,7 +1230,7 @@ function setup(ctx) {
     const status = el("p", "gm-hint", "Changes save on their own.");
     const save = async () => {
       try {
-        await rpc.request("settings", { settings: { connectionId: connection.value, backupId: backup.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, wait: wait.value, homeList: home.checked, replyCard: replyCard.checked, roomConnectionId: room.value, roomModel: roomModel.value.trim(), intimate: intimate.value, memories: mem.checked, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } });
+        await rpc.request("settings", { settings: { connectionId: connection.value, backupId: backup.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, checkupReasoning: checkupReasoning.value, wait: wait.value, homeList: home.checked, replyCard: replyCard.checked, roomConnectionId: room.value, roomModel: roomModel.value.trim(), intimate: intimate.value, memories: mem.checked, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } });
       } catch (error) {
         notify(error instanceof Error ? error.message : String(error), "error");
         return;

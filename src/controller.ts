@@ -135,8 +135,12 @@ export function recentPlaces(versions: Array<{ location?: string; covered: unkno
 
 /** Check-ups the quick check asks for, other than urgent ones, wait until this many replies have passed since the last. */
 const CALM = 3;
+/** With the quick check on, the most replies a quiet stretch goes without a check-up. */
+export const QUIET_EVERY = 15;
 /** Strongest first. */
-const SOFT_RANK = ['A problem was solved too easily', 'A new problem came up', 'Something new happened in the story'];
+const SOFT_RANK = ['A problem was solved too easily', 'A new problem came up', 'A plan no longer fits the story', 'Something new happened in the story'];
+/** The vaguest thing the quick check notices. A cheap narrator brings in something new nearly every reply. */
+const SOMETHING_NEW = 'Something new happened in the story';
 
 function storyRules(previous: Notebook | null, revised: Notebook, round: number, pace: PaceRules, prefs: Preferences, checkup = false): Notebook {
   // The preset plans the story: an update is a record of people and what happened, so the plot rules don't apply.
@@ -195,6 +199,7 @@ export function validSettings(value: unknown): Settings {
     backupId: typeof v.backupId === 'string' && v.backupId !== v.connectionId ? v.backupId.slice(0, 120) : '',
     maxOutputTokens: [8000, 16000, 32000, 64000].includes(tokens) ? tokens : DEFAULT_SETTINGS.maxOutputTokens,
     reasoningMode: ['inherit', 'off', 'low'].includes(v.reasoningMode as string) ? v.reasoningMode as Settings['reasoningMode'] : 'inherit',
+    checkupReasoning: ['inherit', 'off', 'low'].includes(v.checkupReasoning as string) ? v.checkupReasoning as Settings['reasoningMode'] : DEFAULT_SETTINGS.checkupReasoning,
     every: Number.isInteger(every) && every >= 2 && every <= 50 ? every : DEFAULT_SETTINGS.every,
     quick: { enabled: quick.enabled === true, connectionId: plainSetting(quick.connectionId, 120), model: plainSetting(quick.model, 200) },
     wait: v.wait === 'short' || v.wait === 'long' ? v.wait : 'medium',
@@ -780,7 +785,8 @@ export class NotebookController {
     const live = await this.live(state, await this.api.chat.getMessages(chatId));
     if (!live) return null;
     const { job, signal } = this.startJob(state, 'checkup', 'Updating the notebook');
-    const traced = this.asker(settings, this.traces.get(job.id));
+    // Check-ups are bookkeeping: they think less than notebook writing does, unless the player chose otherwise.
+    const traced = this.asker({ ...settings, reasoningMode: settings.checkupReasoning ?? settings.reasoningMode }, this.traces.get(job.id));
     await this.save(state); this.changed();
     const base = live.version, read = live.prints.slice();
     // Words, not markup: preset panels and styling can be most of a reply.
@@ -1259,9 +1265,20 @@ export class NotebookController {
     // An urgent development was offered: see whether it happened before offering it again, once per stretch.
     // The quick check answers this itself, so it is only needed without one.
     const urgent = !(settings.quick.enabled && this.decisionsReady()) && since >= 2 && full.reason !== 'Checking on an urgent development' && dueThreads(live.version.notebook, live.moment).some(d => d.thread.speed === 'urgent');
-    const queued = since >= CALM ? state.queued : '';
-    const reason = state.needsCheck ? (state.needsCheck.startsWith('The chat changed') ? 'Caught up after the chat changed' : state.needsCheck) : unmatched ? 'The chat changed before the notebook was written' : extra ? extra : queued ? queued : state.replan ? 'The story ran ahead of its plan' : moved ? 'The scene moved' : jumped ? 'Time moved on'
-      : findTracker ? 'Looking for your preset’s tracker' : urgent ? 'Checking on an urgent development' : since >= settings.every ? `${since} replies since the last update` : '';
+    // With the quick check reading every reply, a check-up waits until the story has really moved: a new scene, a
+    // jump in time, something the quick check marked or noticed, someone new. Even then it waits the usual number of
+    // replies, and a quiet stretch waits QUIET_EVERY. Each check-up is a big request; most of a quiet stretch has
+    // nothing in it to write down.
+    // Only while the quick check is working: a failing one notices nothing, so the usual rules run.
+    const watched = settings.quick.enabled && this.decisionsReady() && state.quick?.ok !== false;
+    const after = reply - since;
+    const stirred = moved || jumped || !!state.queued || state.newFaceAt > after || state.quickLog.some(q => q.reply > after && q.marked > 0);
+    const ready = watched ? stirred && since >= settings.every : true;
+    // Something specific (a problem, a plan that no longer fits) gets its check-up soon; something vaguely new waits.
+    const queued = since >= (watched && state.queued === SOMETHING_NEW ? settings.every : CALM) ? state.queued : '';
+    const stretch = watched ? Math.max(settings.every, QUIET_EVERY) : settings.every;
+    const reason = state.needsCheck ? (state.needsCheck.startsWith('The chat changed') ? 'Caught up after the chat changed' : state.needsCheck) : unmatched ? 'The chat changed before the notebook was written' : extra ? extra : queued ? queued : state.replan ? 'The story ran ahead of its plan' : moved && ready ? 'The scene moved' : jumped && ready ? 'Time moved on'
+      : findTracker ? 'Looking for your preset’s tracker' : urgent ? 'Checking on an urgent development' : ready && watched ? 'The story moved on' : since >= stretch ? `${since} replies since the last update` : '';
     if (findTracker) state.trackerTried = true;
     await this.save(state);
     if (reason && settings.connectionId || reason && this.ask) await this.startCheckup(chatId, reason).catch(() => null);
@@ -1329,7 +1346,7 @@ export class NotebookController {
           // A secret coming out can't wait. Anything else the quick check noticed waits its turn (see decide).
           if (outcome.mysteryEnded) extra = 'The mystery was answered';
           else if (outcome.revealed) extra = 'A secret came out';
-          else if (outcome.needsCheckup) soft = outcome.easyFix ? 'A problem was solved too easily' : outcome.problem ? 'A new problem came up' : 'Something new happened in the story';
+          else if (outcome.needsCheckup) soft = outcome.easyFix ? 'A problem was solved too easily' : outcome.problem ? 'A new problem came up' : outcome.held.length ? 'A plan no longer fits the story' : SOMETHING_NEW;
           // An intimate scene: its replies don't count toward storyline waits, and hurrying is the scene's own business.
           // When the player lets the story carry on through these scenes, they count like any other reply.
           const judged = live.prints.at(-1);
