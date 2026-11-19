@@ -166,7 +166,7 @@ describe('keeping people sounding like themselves', () => {
   test('on a reply busy with plot: no upkeep, and short sheets', () => {
     const busy = nb(); const storm = busy.threads.find(t => t.id === 'storm')!; storm.speed = 'urgent'; storm.steps[0].afterHours = 0;
     const text = note(busy, { ...scene, now: { hours: 400, reply: 12, waits } });
-    expect(text).toContain('What the story does now:');
+    expect(text).toContain('What I bring in now:');
     expect(text).not.toContain('has been slipping');
     expect(text).not.toContain('Before writing lines for');
     expect(text.length).toBeLessThan(note(nb(), { ...scene, now: { hours: 43, reply: 12, waits } }).length);
@@ -202,8 +202,8 @@ describe('when the preset plans the story', () => {
   test('the note leaves the plot alone: no pace, arc, storylines, moments, time, or layout', () => {
     const full = note(storm(nb()), { ...scene, now: { hours: 400, reply: 12, waits } });
     const light = note(storm(nb()), { ...scene, now: { hours: 400, reply: 12, waits }, light: true, layout: 'Where things are in the Ferry House: …' });
-    expect(full).toContain('What the story does now:');
-    for (const plot of ['What the story does now:', 'The main storyline is', 'What the story is about', 'Story time', 'Pace:', 'Where things are', 'A possible next moment', 'Problems take time']) expect(light).not.toContain(plot);
+    expect(full).toContain('What I bring in now:');
+    for (const plot of ['What I bring in now:', 'The main storyline is', 'What the story is about', 'Story time', 'Pace:', 'Where things are', 'A moment I could let happen', 'Problems take time']) expect(light).not.toContain(plot);
     expect(light.length).toBeLessThan(full.length);
   });
   test('it keeps the people true and the long memory', () => {

@@ -8,10 +8,11 @@
  * not message ids, so a forked chat matches its shared history.
  */
 import { splitOoc, storyText } from './ooc';
+import { hasCodeword, stripCodeword } from './codeword';
 import { sha256Digest } from './safe-id';
 
 /** ooc: a whole out-of-character message, or the narrator's answer to one. Not part of the story. */
-export interface Turn { id: string; role: 'user' | 'assistant'; content: string; ooc?: true }
+export interface Turn { id: string; role: 'user' | 'assistant'; content: string; ooc?: true; /** The player's message carried the codeword (taken out of `content`). */ asked?: true }
 type Message = { id: string; role: string; content: string; index_in_chat: number };
 
 export async function fingerprint(turn: Pick<Turn, 'role' | 'content'>): Promise<string> {
@@ -22,7 +23,8 @@ export async function fingerprint(turn: Pick<Turn, 'role' | 'content'>): Promise
 export function conversation(messages: Message[], exclude?: string, isStory?: (reply: string) => boolean): Turn[] {
   const turns: Turn[] = messages.filter(m => (m.role === 'user' || m.role === 'assistant') && m.id !== exclude)
     .sort((a, b) => a.index_in_chat - b.index_in_chat)
-    .map(m => ({ id: m.id, role: m.role as Turn['role'], content: m.content }));
+    // The codeword is the player talking to Grimoire, never part of the story.
+    .map(m => m.role === 'user' && hasCodeword(m.content) ? { id: m.id, role: 'user' as const, content: stripCodeword(m.content), asked: true as const } : { id: m.id, role: m.role as Turn['role'], content: m.content });
   // A whole out-of-character message, and the narrator's answer right after it, are outside the story.
   let outside = false;
   for (const turn of turns) {

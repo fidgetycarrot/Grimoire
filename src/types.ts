@@ -1,3 +1,4 @@
+import type { Look } from './look';
 import type { StoryClock } from './clock';
 import type { JobTrace } from './trace';
 import type { MysteryView } from './mystery';
@@ -9,7 +10,7 @@ import type { Glance, SkipOffer } from './skip';
 import type { TomeView } from './tome';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.37.0';
+export const VERSION = '0.38.0';
 export const MAX_VERSIONS = 16;
 
 /** One saved state of the notebook and the chat history it describes. */
@@ -42,6 +43,14 @@ export interface ChatState {
   held: string[];
   /** Due steps the quick check found could not believably reach the player in the scene as it stands (a locked or private room, somewhere they could not be). They wait for the scene to open up. */
   blocked?: string[];
+  /** The codeword's last deep look: the player message it answers (id and fingerprint) and its plan, so a swipe reuses it. */
+  look?: { key: string; look: Look; at: number };
+  /** How many check-ups this chat has had, to send every few to the main connection for a full review. */
+  checkups?: number;
+  /** Due steps whose moment the quick check saw in the latest reply, which the reply didn't take: the next reply should. */
+  open?: string[];
+  /** Steps whose moment was there two replies running and was passed both times. */
+  missed?: string[];
   /** How long recent notebook jobs' model requests took (sizes and times only), newest last. */
   traces?: JobTrace[];
   /** The reply count when the story changed direction; the next check-up reworks the notebook. Null when none is due. */
@@ -90,14 +99,16 @@ export interface QuickRecord {
   answers: Record<string, number | { choice: string; confidence: number }>;
   marked: number; checkup: boolean; shifted: boolean; held: number;
   /** The note for this reply offered nothing (an intimate scene it was protecting), so it says nothing about whether the narrator listens. */ quiet?: true;
+  /** The due steps asked about, in question order (due_1 is the first). */ steps?: string[];
+  /** Steps whose moment the reply left open: the next note offers them. */ open?: string[];
 }
 export const QUICK_LOG = 40;
 export interface PlayerNote { id: string; text: string; at: number }
 export const TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 } as const;
 /** The quick check after each reply. An empty connection means the default decision connection; an empty model means the connection's model. */
 export interface QuickSettings { enabled: boolean; connectionId: string; model: string }
-export interface Settings { connectionId: string; /** Tried when the main connection declines a request. */ backupId: string; maxOutputTokens: number; reasoningMode: ReasoningMode; /** Thinking for check-ups only: they are bookkeeping, and thinking is most of their cost. */ checkupReasoning?: ReasoningMode; every: number; quick: QuickSettings; /** The most replies a planned development waits, as a size. */ wait: WaitSetting; /** List chats with a notebook on the home page. */ homeList: boolean; /** During intimate scenes: keep the story out until they end, or let urgent things in. */ intimate: 'protect' | 'allow'; /** Add Lumiverse's memories to the note when the preset doesn't already. */ memories: boolean; /** Show the Paged Relic Tome chronicle card under the latest assistant reply. */ replyCard?: boolean; /** The connection Read the Room uses for its plain retelling; empty uses Grimoire's own. */ roomConnectionId?: string; /** A different model on that connection, by its exact ID; empty uses the connection's. */ roomModel?: string }
-export const DEFAULT_SETTINGS: Settings = { connectionId: '', backupId: '', maxOutputTokens: 16000, reasoningMode: 'inherit', checkupReasoning: 'low', every: 8, quick: { enabled: false, connectionId: '', model: '' }, wait: 'medium', homeList: true, intimate: 'protect', memories: true, replyCard: true };
+export interface Settings { connectionId: string; /** Tried when the main connection declines a request. */ backupId: string; maxOutputTokens: number; reasoningMode: ReasoningMode; /** Thinking for check-ups only: they are bookkeeping, and thinking is most of their cost. */ checkupReasoning?: ReasoningMode; /** A cheaper connection for routine check-ups; empty uses the main one. Big moments and every few check-ups still use the main one. */ checkupConnectionId?: string; /** Seconds the reply waits for the codeword's deep look before going ahead without it. */ lookWait?: number; every: number; quick: QuickSettings; /** The most replies a planned development waits, as a size. */ wait: WaitSetting; /** List chats with a notebook on the home page. */ homeList: boolean; /** During intimate scenes: keep the story out until they end, or let urgent things in. */ intimate: 'protect' | 'allow'; /** Add Lumiverse's memories to the note when the preset doesn't already. */ memories: boolean; /** Show the Paged Relic Tome chronicle card under the latest assistant reply. */ replyCard?: boolean; /** The connection Read the Room uses for its plain retelling; empty uses Grimoire's own. */ roomConnectionId?: string; /** A different model on that connection, by its exact ID; empty uses the connection's. */ roomModel?: string }
+export const DEFAULT_SETTINGS: Settings = { connectionId: '', backupId: '', maxOutputTokens: 16000, reasoningMode: 'inherit', checkupReasoning: 'low', checkupConnectionId: '', lookWait: 15, every: 8, quick: { enabled: false, connectionId: '', model: '' }, wait: 'medium', homeList: true, intimate: 'protect', memories: true, replyCard: true };
 export const DEFAULT_PREFERENCES: Preferences = { tone: 'balanced', twist: true, shape: 'auto', lockShape: false, size: 'auto' };
 
 export interface ChatView {
@@ -123,7 +134,7 @@ export interface ChatView {
   canUndo: boolean;
   /** This part of the story has nothing left to happen: a new chapter is offered. */
   spent: boolean;
-  /** Of recent replies where the note asked for a due step now, how many showed it. */ follow: { offered: number; used: number } | null;
+  /** Of recent replies where the note asked for a due step now, how many showed it. */ follow: { offered: number; used: number } | null; /** Of recent replies with someone who had been slipping, how many had them sound like themselves again. */ voices?: { asked: number; landed: number } | null;
   /** How long recent notebook jobs' requests took. */ traces?: JobTrace[];
   /** Where the story stands, for the player. */ recap: string;
   /** The mystery as the player may see it: the question and the clues they have found. Never the answer. */ mystery?: MysteryView | null;

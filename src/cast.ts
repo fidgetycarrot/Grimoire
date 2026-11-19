@@ -77,12 +77,30 @@ export function stockProblems(previous: Notebook, revised: Notebook, prefs: Pref
  * and callbacks are offered "only if it fits", so a reply that leaves them out has done nothing wrong; and replies
  * written while an intimate scene was protected had nothing offered to them at all.
  */
-export function followRate(log: Array<{ reply: number; ok: boolean; answers: Record<string, unknown>; marked: number; quiet?: boolean }>): { offered: number; used: number } | null {
-  const byReply = new Map<number, { answers: Record<string, unknown> }>();
+/** How often someone who had been slipping sounded like themselves again, over the last replies that asked. */
+export function voiceRate(log: Array<{ ok: boolean; answers: Record<string, unknown> }>): { asked: number; landed: number } | null {
+  const asked = log.filter(r => r.ok && typeof r.answers.voice_1 === 'number').slice(-12);
+  return asked.length >= 3 ? { asked: asked.length, landed: asked.filter(r => (r.answers.voice_1 as number) >= 0.7).length } : null;
+}
+export function followRate(log: Array<{ reply: number; ok: boolean; answers: Record<string, unknown>; marked: number; quiet?: boolean; steps?: string[]; open?: string[] }>): { offered: number; used: number } | null {
+  const happened = (v: unknown) => typeof v === 'number' && v >= 0.7;
+  // One record per reply (a swipe is judged again; the last word stands), and none from a protected intimate scene.
+  const byReply = new Map<number, (typeof log)[number]>();
   for (const r of log) if (r.ok) byReply.set(r.reply, r);
   for (const r of log) if (r.quiet) byReply.delete(r.reply);
-  // A due step the quick check found could not believably reach the player in that scene is not a miss either.
-  const dues = (r: { answers: Record<string, unknown> }) => Object.entries(r.answers).filter(([k]) => /^due_/.test(k) && !(typeof r.answers[k.replace('due_', 'reach_')] === 'number' && (r.answers[k.replace('due_', 'reach_')] as number) <= 0.3)).map(([, v]) => typeof v === 'number' ? v : 0);
-  const asked = [...byReply.values()].filter(r => dues(r).length).slice(-12);
-  return asked.length >= 4 ? { offered: asked.length, used: asked.filter(r => dues(r).some(v => v >= 0.7)).length } : null;
+  const kept = [...byReply.values()].sort((a, b) => a.reply - b.reply);
+  const asked: boolean[] = [];
+  kept.forEach((r, i) => {
+    // With openings, a step is asked for once its moment has come: the reply before saw it, so this reply's note offered it.
+    if (r.steps) {
+      const prev = kept[i - 1], offered = (prev?.open ?? []).filter(id => r.steps!.includes(id));
+      if (offered.length) asked.push(offered.some(id => happened(r.answers[`due_${r.steps!.indexOf(id) + 1}`])));
+      return;
+    }
+    // Older records: every due step counted, except one the quick check found could not believably reach the player.
+    const dues = Object.entries(r.answers).filter(([k]) => /^due_/.test(k) && !(typeof r.answers[k.replace('due_', 'reach_')] === 'number' && (r.answers[k.replace('due_', 'reach_')] as number) <= 0.3)).map(([, v]) => v);
+    if (dues.length) asked.push(dues.some(happened));
+  });
+  const recent = asked.slice(-12);
+  return recent.length >= 4 ? { offered: recent.length, used: recent.filter(Boolean).length } : null;
 }

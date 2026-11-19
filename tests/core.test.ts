@@ -193,7 +193,7 @@ describe('the note before each reply', () => {
     expect(note('auto', 1, {}, stalled)).toContain('Move the story now');
   });
   test('nothing is due before its time, and a time skip is told once', () => {
-    expect(note('auto', 1)).not.toContain('Developments that are due');
+    expect(note('auto', 1)).not.toContain('Developments I can bring in');
     expect(note('auto', 1, { skipHours: 72 })).toContain('About 3 days have passed');
   });
   test('finds people by name or alias, whole words only', () => {
@@ -460,7 +460,7 @@ describe('arc shapes and breadcrumbs', () => {
   test('a detail is planted without its meaning, then brought back much later with it', () => {
     const nb = base();
     const first = note(nb, 10);
-    expect(first).toContain('A small detail to mention in passing, without drawing attention to it: Oswin seals his letters with green wax.');
+    expect(first).toContain('A small detail I mention in passing, without drawing attention to it: Oswin seals his letters with green wax.');
     expect(first).not.toContain('ring box');
     nb.seeds[0] = { ...nb.seeds[0], status: 'planted', plantedAt: 11 };
     expect(seedPlan(nb, { hours: 42, reply: 12, waits }).ready).toEqual([]);
@@ -468,7 +468,7 @@ describe('arc shapes and breadcrumbs', () => {
     // Fifteen replies later the ring thread's first step comes due, and the detail is tied to it.
     const later = note(nb, 26);
     expect(later).toContain('A shout from the manor');
-    expect(later).toContain('Bring back something mentioned earlier: "Oswin seals his letters with green wax." (The ring box in the next town is sealed with the same green wax, tying the sale to Oswin)');
+    expect(later).toContain('I bring back something mentioned earlier: "Oswin seals his letters with green wax." (The ring box in the next town is sealed with the same green wax, tying the sale to Oswin)');
   });
   test('planting is spaced out and waits out big moments', () => {
     const nb: any = base(); nb.seeds.push({ id: 'bell', detail: 'The ferry bell is cracked.', payoff: 'It fails during the storm.', pays: 'storm', status: 'waiting' });

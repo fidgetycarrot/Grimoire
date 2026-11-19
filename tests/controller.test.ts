@@ -42,14 +42,14 @@ function host(options: { group?: boolean; granted?: string[]; decide?: (input: a
   return { api, storage, messages, add, decisionCalls };
 }
 /** A scripted model: creation and check-up answers come from the given functions. */
-function model(answers: { create?: (input: any) => unknown; checkup?: (input: any) => unknown; digest?: (input: any) => unknown; talk?: (input: any) => unknown; mystery?: (input: any) => unknown }) {
+function model(answers: { create?: (input: any) => unknown; checkup?: (input: any) => unknown; digest?: (input: any) => unknown; talk?: (input: any) => unknown; mystery?: (input: any) => unknown; look?: (input: any) => unknown }) {
   const calls: Array<{ task: string; input: any; messages: Message[] }> = [];
   let hold: Promise<void> | null = null;
   const ask = async (messages: Message[]) => {
     const input = JSON.parse(messages[1].content);
     calls.push({ task: input.task, input, messages });
     if (hold) await hold;
-    const answer = input.task === 'grimoire-create-v1' ? answers.create?.(input) : input.task === 'grimoire-digest-v1' ? answers.digest?.(input) : input.task === 'grimoire-talk-v1' ? answers.talk?.(input) : input.task === 'grimoire-mystery-first-v1' ? answers.mystery?.(input) : answers.checkup?.(input);
+    const answer = input.task === 'grimoire-create-v1' ? answers.create?.(input) : input.task === 'grimoire-digest-v1' ? answers.digest?.(input) : input.task === 'grimoire-talk-v1' ? answers.talk?.(input) : input.task === 'grimoire-mystery-first-v1' ? answers.mystery?.(input) : input.task === 'grimoire-look-v1' ? await answers.look?.(input) : answers.checkup?.(input);
     return typeof answer === 'string' ? answer : JSON.stringify(answer);
   };
   return { ask, calls, pause() { let release!: () => void; hold = new Promise(r => { release = () => { hold = null; r(); }; }); return release; } };
@@ -535,6 +535,24 @@ describe('the quick check', () => {
     expect(sent.find(r => task(r) === 'grimoire-create-v1').reasoning).toBeUndefined();
     expect(sent.find(r => task(r) === 'grimoire-checkup-v1').reasoning).toMatchObject({ effort: 'low' });
   });
+  test('routine check-ups go to the cheaper connection; big moments and every fifth one go to the main connection', async () => {
+    const h = host();
+    h.add('assistant', `The ferry bell rings.${tracker('Day 1, 18:00', 'The ferry')}`);
+    const m = model({ create: created, checkup: (input: any) => ({ notebook: input.notebook, tracker: null }) });
+    const sent: any[] = [];
+    (h.api as any).connections.get = async (id: string) => ({ id, provider: 'openrouter', model: id === 'cheap' ? 'small/model' : 'big/model' });
+    (h.api as any).generate = { raw: async (request: any) => { sent.push(request); return { content: await m.ask(request.messages) }; } };
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', checkupConnectionId: 'cheap', every: 50 }, {});
+    const c = new NotebookController(h.api);
+    await c.create('chat-1', {}); await c.waitForJobs();
+    const reasons = ['3 replies since the last update', 'The scene moved', 'A secret came out', '3 replies since the last update', '3 replies since the last update'];
+    for (const reason of reasons) { h.add('user', 'I wait.'); h.add('assistant', `Time passes.${tracker('Day 1, 18:00', 'The ferry')}`); await c.checkup('chat-1', reason); await c.waitForJobs(); }
+    const checkups = sent.filter(r => JSON.parse(r.messages.at(-1).content).task === 'grimoire-checkup-v1');
+    expect(checkups.map(r => r.connection_id)).toEqual(['cheap', 'cheap', 'model', 'cheap', 'model']);
+    expect(checkups[4].messages[0].content).toContain('This update is also a full review');
+    expect(checkups[0].messages[0].content).not.toContain('This update is also a full review');
+    expect(sent.find(r => JSON.parse(r.messages.at(-1).content).task === 'grimoire-create-v1').connection_id).toBe('model');
+  });
   test('check-ups think less than notebook writing unless the player chooses otherwise', async () => {
     const h = host(), c = new NotebookController(h.api, undefined, () => {});
     expect((await c.settings()).checkupReasoning).toBe('low');
@@ -677,8 +695,8 @@ describe('edits, swipes, and forks', () => {
     expect(text).toContain('The player gave guidance for this reply');
     expect(text).toContain('Story time: Day 1, 18:20');
     expect(text).not.toContain('Pace:');
-    expect(text).not.toContain('Developments that are due');
-    expect(text).not.toContain('A possible next moment');
+    expect(text).not.toContain('Developments I can bring in');
+    expect(text).not.toContain('A moment I could let happen');
     expect(text).toContain('Never write the player character');
     expect(plain.messages[1].content).toContain('Pace:');
     // Blank guidance is no guidance.
@@ -918,7 +936,7 @@ describe('out-of-character talk in the chat', () => {
     expect((await c.view('chat-1'))!.repliesSinceCheck).toBe(before);
     // A story message with an aside is a story message.
     h.add('user', 'I wave. (ooc: thanks)');
-    expect(await c.noteFor('chat-1')).toContain('Grimoire: private story guidance');
+    expect(await c.noteFor('chat-1')).toContain('Grimoire: my private notes');
     h.add('assistant', `Mira waves back.${tracker('Day 1, 18:30', 'The ferry')}`);
     await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
     expect(h.decisionCalls).toHaveLength(1);
@@ -1097,7 +1115,7 @@ describe('intimate scenes', () => {
     const note = await c.noteFor('chat-1');
     expect(note).toContain('an intimate scene is under way');
     expect(note).not.toContain('Pace: fast');
-    expect(note).not.toContain('Developments that are due');
+    expect(note).not.toContain('Developments I can bring in');
     const view = (await c.view('chat-1'))!;
     expect(view.skipOffer).toBeNull();
     // Four replies went by, but none counted: the urgent storm (due after 2 replies on Fast) hasn't been pushed in by reply count.
@@ -1232,7 +1250,7 @@ describe('Grimoire leads the story', () => {
     expect(nb.arc).toMatchObject({ shape: 'kishotenketsu', stage: 'ki', main: 'stolen-ring', opening: 'story' });
     expect(nb.threads[0].steps[0].afterHours).toBe(0);
     const text = await c.noteFor('chat-1');
-    expect(text).toContain('What the story does now:\n- The stolen ring: A shout from the manor on the hill.');
+    expect(text).toContain('What I bring in now:\n- The stolen ring: A shout from the manor on the hill.');
   });
   test('a kept shape holds at check-ups, and a new part opens with its own main storyline', async () => {
     const newPart = (input: any) => {
@@ -1746,5 +1764,68 @@ describe('how long Grimoire took', () => {
     const traces = (await c.view('chat-1'))!.traces!;
     expect(traces.map(t => [t.kind, t.status, t.requests.length])).toEqual([['create', 'complete', 2], ['checkup', 'complete', 1]]);
     expect(traces[0].requests[0]).toMatchObject({ step: 'Writing the notebook', sentBack: 'MALFORMED_JSON' });
+  });
+});
+
+describe('the $grimoire codeword', () => {
+  const plan = { move: 'I have Oswin come down the gangway with a sealed letter he wants carried across before dark.', cause: 'Oswin has been arranging a buyer in the next town.', hands: 'Oswin holds out the letter and a coin, waiting for an answer' };
+  const setup = async (look: (input: any) => unknown, extra: Record<string, unknown> = {}) => {
+    const m = model({ create: created, checkup: (input: any) => ({ notebook: input.notebook, tracker: null }), look });
+    const { h, c } = await ready(host(), m);
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 50, ...extra }, {});
+    return { h, m, c };
+  };
+  const prompt = (text: string) => [{ role: 'user' as const, content: 'I step aboard.' }, { role: 'assistant' as const, content: 'Mira takes your coin.' }, { role: 'user' as const, content: text }];
+  const sent = (result: any) => (result.messages as any[]).map(m => m.content).join('\n');
+  test('the narrator never sees the word, and the deep look\'s plan leads the note for that reply', async () => {
+    const { h, m, c } = await setup(() => plan);
+    h.add('user', 'I lean on the rail and watch the water. $grimoire');
+    const result: any = await c.intercept(prompt('I lean on the rail and watch the water. $grimoire'), { chatId: 'chat-1', generationType: 'normal' });
+    expect(sent(result)).not.toContain('$grimoire');
+    expect(sent(result)).toContain('I lean on the rail and watch the water.');
+    expect(sent(result)).toContain('The player asked me to move the story in this reply');
+    expect(sent(result)).toContain('My plan for this reply: I have Oswin come down the gangway');
+    expect(sent(result)).toContain('What they wrote happens first and fully');
+    expect(sent(result)).not.toContain('What I bring in now');
+    const look = m.calls.find(x => x.task === 'grimoire-look-v1')!;
+    expect(look.input.said).toBe('I lean on the rail and watch the water.');
+    expect(JSON.stringify(look.input.notes)).not.toContain('Oswin stole it');
+  });
+  test('a message that is only the word: the character carries on, and nothing is invented for them', async () => {
+    const { h, c } = await setup(() => plan);
+    h.add('user', '$grimoire');
+    const result: any = await c.intercept(prompt('$grimoire'), { chatId: 'chat-1', generationType: 'normal' });
+    expect(sent(result)).toContain('(I carry on with what I was doing.)');
+    expect(sent(result)).toContain('their character carries on with what they were already doing');
+  });
+  test('a swipe reuses the same plan without asking again; a later message without the word asks nothing', async () => {
+    const { h, m, c } = await setup(() => plan);
+    h.add('user', 'I wait. $grimoire');
+    await c.intercept(prompt('I wait. $grimoire'), { chatId: 'chat-1', generationType: 'normal' });
+    h.add('assistant', 'Oswin comes down the gangway.');
+    const swipe: any = await c.intercept(prompt('I wait. $grimoire'), { chatId: 'chat-1', generationType: 'swipe' });
+    expect(sent(swipe)).toContain('My plan for this reply: I have Oswin');
+    expect(m.calls.filter(x => x.task === 'grimoire-look-v1')).toHaveLength(1);
+    h.add('user', 'I take the letter.');
+    const next: any = await c.intercept(prompt('I take the letter.'), { chatId: 'chat-1', generationType: 'normal' });
+    expect(sent(next)).not.toContain('The player asked me to move the story');
+    expect(m.calls.filter(x => x.task === 'grimoire-look-v1')).toHaveLength(1);
+  });
+  test('a deep look that takes too long: the reply goes ahead with the best ready step, and a swipe gets the plan', async () => {
+    let release!: () => void; const gate = new Promise<void>(r => { release = r; });
+    const { h, c } = await setup(async () => { await gate; return plan; }, { lookWait: 5 });
+    h.add('user', 'I wait. $grimoire');
+    const quick = c.intercept(prompt('I wait. $grimoire'), { chatId: 'chat-1', generationType: 'normal' });
+    const result: any = await quick;
+    expect(sent(result)).toContain('I bring this in now, in the most believable way for where they are: The coming storm');
+    release(); await c.waitForJobs(); await new Promise(r => setTimeout(r, 20));
+    h.add('assistant', 'A shout from the manor.');
+    const swipe: any = await c.intercept(prompt('I wait. $grimoire'), { chatId: 'chat-1', generationType: 'swipe' });
+    expect(sent(swipe)).toContain('My plan for this reply: I have Oswin');
+  }, 15_000);
+  test('the word never becomes part of what Grimoire reads from the chat', async () => {
+    const { conversation } = await import('../src/history');
+    const turns = conversation([{ id: 'a', role: 'user', content: 'I sit down. $grimoire', index_in_chat: 0 }]);
+    expect(turns[0]).toMatchObject({ content: 'I sit down.', asked: true });
   });
 });

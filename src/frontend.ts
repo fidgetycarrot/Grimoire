@@ -349,6 +349,7 @@ const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally']
     const s = part('Quick check answers');
     const records = [...(view.quickLog ?? [])].reverse().slice(0, 12);
     if (!records.length) { s.append(el('p', 'gm-small', 'No quick checks yet.')); return s; }
+    if (view.voices) s.append(el('p', 'gm-small', `Voice fixes: in ${view.voices.landed} of the last ${view.voices.asked} replies with someone who had been slipping, they sounded like themselves again.`));
     if (view.follow) s.append(el('p', 'gm-small', `Is the narrator listening? In ${view.follow.used} of the last ${view.follow.offered} replies where Grimoire asked for something to happen now, it happened.${view.follow.used * 4 < view.follow.offered ? ' That is low: this preset or writer may be ignoring Grimoire’s note.' : ''}`));
     const pct = (n: number) => `${Math.round(n * 100)}%`;
     for (const r of records) {
@@ -430,7 +431,7 @@ const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally']
     const s = part('How long Grimoire took');
     const time = (ms: number) => ms < 60_000 ? `${Math.max(1, Math.round(ms / 1000))} s` : `${Math.floor(ms / 60_000)} min ${Math.round((ms % 60_000) / 1000)} s`;
     const num = (n: number) => n.toLocaleString('en-US');
-    const KIND: Record<string, string> = { create: 'Writing the notebook', checkup: 'Check-up', talk: 'Talk' };
+    const KIND: Record<string, string> = { create: 'Writing the notebook', checkup: 'Check-up', talk: 'Talk', look: 'Deep look ($grimoire)' };
     for (const t of [...traces].reverse().slice(0, 4)) {
       const head = el('p', 'gm-small');
       if (t.status === 'running') head.append(el('strong', '', KIND[t.kind] ?? t.kind), document.createTextNode(' · still going · '), since(t.startedAt));
@@ -495,7 +496,7 @@ const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally']
       const e = el('div', 'gm-entry'), title = el('p'); title.append(el('strong', '', t.title), el('span', 'gm-chip', t.status === 'open' ? t.speed : t.status));
       if (t.id === notebook.arc.main) title.append(el('span', 'gm-chip', 'main storyline'));
       if (due.includes(t.id)) { const c = el('span', 'gm-chip', 'due'); c.dataset.tone = 'due'; title.append(c); }
-      const steps = el('ol', 'gm-steps'); for (const step of t.steps) { const li = el('li', 'gm-small', step.text); li.dataset.status = step.status; if (step.status !== 'waiting') li.append(el('span', 'gm-chip', step.status)); steps.append(li); }
+      const steps = el('ol', 'gm-steps'); for (const step of t.steps) { const li = el('li', 'gm-small', step.text); li.dataset.status = step.status; if (step.status !== 'waiting') li.append(el('span', 'gm-chip', step.status)); else if (step.opening) li.append(el('span', 'gm-meta', ` · waits for: ${step.opening}`)); steps.append(li); }
       e.append(title, el('p', 'gm-small', t.why), steps, ...(t.stakes?.length ? [el('p', 'gm-meta', `Open questions: ${t.stakes.join(' ')}`)] : []), ...(t.alone ? [el('p', 'gm-meta', t.alone.landed ? `Left alone, it went ${({ good: 'well', mixed: 'somewhere in between', bad: 'badly' } as const)[t.alone.landed]}: ${t.alone[t.alone.landed]}` : `If left alone (${t.alone.lean === 'threat' ? 'leans bad' : 'leans mild'}): well: ${t.alone.good} · in between: ${t.alone.mixed} · badly: ${t.alone.bad}${t.involved ? ' (you took part, so this won’t be rolled)' : ''}`)] : t.ifIgnored ? [el('p', 'gm-meta', `If left alone: ${t.ifIgnored}`)] : []), ...(t.closedReason ? [el('p', 'gm-meta', `Closed${t.outcome ? ` (${({ won: 'went your way', lost: 'went against you', faded: 'faded out' } as const)[t.outcome]})` : ''}: ${t.closedReason}`)] : []), ...(t.scar ? [el('p', 'gm-meta', `Still felt: ${t.scar}`)] : []));
       threads.append(e);
     }
@@ -574,10 +575,12 @@ const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally']
 
   // ----- Settings -----
   function renderSettings() {
-    const settings: Settings = { ...(snapshot?.settings ?? { connectionId: '', backupId: '', maxOutputTokens: 16000, reasoningMode: 'inherit', checkupReasoning: 'low', every: 8, quick: { enabled: false, connectionId: '', model: '' }, wait: 'medium', homeList: true, intimate: 'protect', memories: true }) };
+    const settings: Settings = { ...(snapshot?.settings ?? { connectionId: '', backupId: '', maxOutputTokens: 16000, reasoningMode: 'inherit', checkupReasoning: 'low', checkupConnectionId: '', lookWait: 15, every: 8, quick: { enabled: false, connectionId: '', model: '' }, wait: 'medium', homeList: true, intimate: 'protect', memories: true }) };
     const card = el('section', 'gm-card gm-stack');
     const connection = select([['', 'Choose a connection'], ...(snapshot?.connections ?? []).map(c => [c.id, `${c.name}${c.model ? ` · ${c.model}` : ''}`] as [string, string])], settings.connectionId);
     const backup = select([['', 'None'], ...(snapshot?.connections ?? []).map(c => [c.id, `${c.name}${c.model ? ` · ${c.model}` : ''}`] as [string, string])], settings.backupId ?? '');
+    const lookWait = select([['10', '10 seconds'], ['15', '15 seconds'], ['30', '30 seconds'], ['60', '1 minute'], ['120', '2 minutes']], String(settings.lookWait ?? 15));
+    const checkupConnection = select([['', 'The model connection above'], ...(snapshot?.connections ?? []).map(c => [c.id, `${c.name}${c.model ? ` · ${c.model}` : ''}`] as [string, string])], settings.checkupConnectionId ?? '');
     const every = el('input'); every.type = 'number'; every.min = '2'; every.max = '50'; every.value = String(settings.every);
     const tokens = select([['8000', '8,000'], ['16000', '16,000'], ['32000', '32,000'], ['64000', '64,000']], String(settings.maxOutputTokens));
     const reasoning = select([['inherit', 'Use the connection’s setting'], ['off', 'Off'], ['low', 'Low']], settings.reasoningMode);
@@ -586,6 +589,8 @@ const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally']
     const grid = el('div', 'gm-grid'); grid.append(labeled('Response room (tokens)', tokens), labeled('Reasoning', reasoning), labeled('Reasoning for check-ups', checkupReasoning));
     card.append(el('h2', '', 'Settings'),
       labeled('Model connection', connection, 'Used to write notebooks and run check-ups. Your chat keeps its own connection. A cheaper model may do, but test it on a chat first.'),
+      labeled('Check-ups use', checkupConnection, 'Routine check-ups only keep records, so a cheaper model can do them. Big moments (a secret coming out, the story changing direction) and a full review every 5 check-ups still use the model connection above.'),
+      labeled('Wait for the deep look', lookWait, 'Type $grimoire anywhere in your message when you want the story to move. Grimoire takes a deep look first, using the model connection above, and the reply waits for it this long. If it takes longer, that reply uses the notebook’s best ready step, and the deep look is kept for a swipe. Lumiverse also stops waiting for extensions after its own time limit, in its extension settings: set that a little longer than this.'),
       labeled('Backup connection', backup, 'Some models refuse some stories. If the main connection declines a request, Grimoire sends it here instead, so the check-up isn’t lost.'),
       labeled('Longest a story thread waits', wait, 'A thread moves on when enough story time has passed, or after this many replies, whichever comes first, so a long scene never leaves the story stuck. Urgent threads wait less and slow ones longer. Big scenes still aren’t interrupted for slow threads; they come in at the next break.'),
       labeled('Check-up after this many replies', every, 'With the quick check on, a check-up waits until something has happened (a new scene, a step in a storyline, someone new), and a quiet stretch waits 15 replies. Without it, check-ups also run when the scene changes or time jumps.'), grid,
@@ -624,7 +629,7 @@ const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally']
     const status = el('p', 'gm-hint', 'Changes save on their own.');
     const save = async () => {
       // Saved without redrawing the page, so the next change isn't interrupted.
-      try { await rpc.request('settings', { settings: { connectionId: connection.value, backupId: backup.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, checkupReasoning: checkupReasoning.value, wait: wait.value, homeList: home.checked, replyCard: replyCard.checked, roomConnectionId: room.value, roomModel: roomModel.value.trim(), intimate: intimate.value, memories: mem.checked, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } }); }
+      try { await rpc.request('settings', { settings: { connectionId: connection.value, backupId: backup.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, checkupReasoning: checkupReasoning.value, checkupConnectionId: checkupConnection.value, lookWait: Number(lookWait.value), wait: wait.value, homeList: home.checked, replyCard: replyCard.checked, roomConnectionId: room.value, roomModel: roomModel.value.trim(), intimate: intimate.value, memories: mem.checked, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } }); }
       catch (error) { notify(error instanceof Error ? error.message : String(error), 'error'); return; }
       status.textContent = 'Saved.';
       void refresh();

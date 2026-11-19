@@ -4,7 +4,7 @@ import { conversation, fingerprints, newestMatching, covers, planHistory, readab
 import { splitOoc } from './ooc';
 import { askJson, askModel, ModelError, withBackup, type Ask } from './model';
 import { buildNote, liveClock, paceLine, presentPeople, type ClockSources } from './note';
-import { awayPeople, castProblems, followRate, noteSeen, stockProblems } from './cast';
+import { awayPeople, castProblems, followRate, noteSeen, stockProblems, voiceRate } from './cast';
 import { layoutLine, whereabouts } from './layout';
 import { dueThreads, fillReplies, isNewArc, keepTimes, mergeRevision, NotebookError, partProgress, stamp, validateNotebook, waitsFor, withoutTimes, type Moment, type Notebook, type Pace, type Preferences } from './notebook';
 import { checkupMessages, creationMessages, digestMessages, firstMysteryMessages, talkMessages, type Material } from './prompts';
@@ -24,6 +24,8 @@ import { buildTome } from './tome';
 import { settleAlone } from './alone';
 import { Trace, TRACES_KEPT, type JobTrace } from './trace';
 import { checkRoom, ROOM_TOKENS, roomMessages, type RoomReading } from './room';
+import { checkLook, LOOK_TOKENS, lookMessages, type Look } from './look';
+import { CARRY_ON, hasCodeword, stripCodeword } from './codeword';
 import type { DecisionResult } from 'lumiverse-spindle-types';
 import { checkRecipe, guessRecipe, readField, readTracker, trackerText, validateRecipe, type FieldType, type Recipe } from './tracker';
 import { CHAPTER_DONE, CHAPTER_WORKING, NO_MYSTERY, DEFAULT_PREFERENCES, DEFAULT_SETTINGS, MAX_VERSIONS, QUICK_LOG, TALK_LIMITS, type QuickRecord, VERSION, type ChatState, type PlayerNote, type TalkLine, type ChatView, type MemoryView, type Job, type Settings, type Snapshot, type StoryListing, type Version } from './types';
@@ -67,7 +69,7 @@ function quickLog(value: unknown): QuickRecord[] {
   });
 }
 /** Numbers only: what the decision model answered, never the questions' story text. */
-export function quickRecord(reply: number, result: DecisionResult | null, outcome: { marked: number; needsCheckup: boolean; shifted: boolean; held: string[] } | null): QuickRecord {
+export function quickRecord(reply: number, result: DecisionResult | null, outcome: { marked: number; needsCheckup: boolean; shifted: boolean; held: string[]; open?: string[] } | null, plan?: { marks: Record<string, { kind: string; step?: string }> }): QuickRecord {
   const answers: QuickRecord['answers'] = {};
   for (const [key, a] of Object.entries((result?.answers ?? {}) as Record<string, { type: string; noul?: number; choice?: string; confidence?: number }>)) {
     // Whether a guess at the mystery was right is the story's to tell, not the log's.
@@ -75,7 +77,9 @@ export function quickRecord(reply: number, result: DecisionResult | null, outcom
     if (a?.type === 'noul' && typeof a.noul === 'number') answers[key] = Math.round(a.noul * 100) / 100;
     else if (a?.type === 'choice' && typeof a.choice === 'string') answers[key] = { choice: a.choice, confidence: Math.round((a.confidence ?? 0) * 100) / 100 };
   }
-  return { reply, at: Date.now(), ok: !!result, answers, marked: outcome?.marked ?? 0, checkup: !!outcome && (outcome.needsCheckup || outcome.shifted), shifted: !!outcome?.shifted, held: outcome?.held.length ?? 0 };
+  const steps = plan ? Object.entries(plan.marks).filter(([k, m]) => k.startsWith('due_') && m.step).map(([, m]) => m.step!) : [];
+  return { reply, at: Date.now(), ok: !!result, answers, marked: outcome?.marked ?? 0, checkup: !!outcome && (outcome.needsCheckup || outcome.shifted), shifted: !!outcome?.shifted, held: outcome?.held.length ?? 0,
+    ...(plan ? { steps } : {}), ...(outcome?.open?.length ? { open: outcome.open } : {}) };
 }
 function playerNotes(value: unknown): PlayerNote[] {
   if (!Array.isArray(value)) return [];
@@ -135,6 +139,10 @@ export function recentPlaces(versions: Array<{ location?: string; covered: unkno
 
 /** Check-ups the quick check asks for, other than urgent ones, wait until this many replies have passed since the last. */
 const CALM = 3;
+/** With a cheaper check-up connection, every this many check-ups is a full review on the main connection. */
+export const REVIEW_EVERY = 5;
+/** Check-ups where a sloppy update would hurt: always the main connection. */
+const BIG_MOMENTS = ['A secret came out', 'The story changed direction', 'The mystery was answered', 'The story ran ahead of its plan', 'Caught up after the chat changed', 'The chat changed before the notebook was written', 'A plan no longer fits the story', 'Time skip of'];
 /** With the quick check on, the most replies a quiet stretch goes without a check-up. */
 export const QUIET_EVERY = 15;
 /** Strongest first. */
@@ -200,6 +208,8 @@ export function validSettings(value: unknown): Settings {
     maxOutputTokens: [8000, 16000, 32000, 64000].includes(tokens) ? tokens : DEFAULT_SETTINGS.maxOutputTokens,
     reasoningMode: ['inherit', 'off', 'low'].includes(v.reasoningMode as string) ? v.reasoningMode as Settings['reasoningMode'] : 'inherit',
     checkupReasoning: ['inherit', 'off', 'low'].includes(v.checkupReasoning as string) ? v.checkupReasoning as Settings['reasoningMode'] : DEFAULT_SETTINGS.checkupReasoning,
+    checkupConnectionId: typeof v.checkupConnectionId === 'string' ? v.checkupConnectionId : '',
+    lookWait: Number.isInteger(v.lookWait) && (v.lookWait as number) >= 5 && (v.lookWait as number) <= 280 ? v.lookWait as number : DEFAULT_SETTINGS.lookWait,
     every: Number.isInteger(every) && every >= 2 && every <= 50 ? every : DEFAULT_SETTINGS.every,
     quick: { enabled: quick.enabled === true, connectionId: plainSetting(quick.connectionId, 120), model: plainSetting(quick.model, 200) },
     wait: v.wait === 'short' || v.wait === 'long' ? v.wait : 'medium',
@@ -246,7 +256,7 @@ export class NotebookController {
         version: 1, chatId, enabled: saved.enabled === true, pace: PACES.includes(saved.pace as Pace) ? saved.pace as Pace : 'auto', preferences: validPreferences(saved.preferences),
         versions, recipe: validateRecipe(saved.recipe).recipe, checks: Array.isArray(saved.checks) ? saved.checks as ChatState['checks'] : [],
         skipHours: Number(saved.skipHours) > 0 ? Number(saved.skipHours) : 0, skipTurn: Number(saved.skipTurn) > 0 ? Number(saved.skipTurn) : 0, needsCheck: typeof saved.needsCheck === 'string' ? saved.needsCheck : '', queued: typeof saved.queued === 'string' ? saved.queued.slice(0, 200) : '', newFaceAt: Number.isInteger(saved.newFaceAt) ? saved.newFaceAt as number : 0, building: typeof saved.building === 'string' ? saved.building.slice(0, 80) : '', seen: Object.fromEntries(Object.entries(record(saved.seen)).filter(([k, v]) => typeof k === 'string' && Number.isInteger(v)).slice(0, 200)) as Record<string, number>, trackerTried: saved.trackerTried === true, skipDismissedAt: Number(saved.skipDismissedAt) > 0 ? Number(saved.skipDismissedAt) : 0,
-        held: Array.isArray(saved.held) ? saved.held.filter((x): x is string => typeof x === 'string').slice(0, 12) : [], blocked: Array.isArray(saved.blocked) ? saved.blocked.filter((x): x is string => typeof x === 'string').slice(0, 6) : [], traces: Array.isArray(saved.traces) ? (saved.traces as JobTrace[]).filter(t => t && typeof t === 'object' && Array.isArray(t.requests)).slice(-TRACES_KEPT) : [], resync: Number.isInteger(saved.resync) ? Number(saved.resync) : null,
+        held: Array.isArray(saved.held) ? saved.held.filter((x): x is string => typeof x === 'string').slice(0, 12) : [], blocked: Array.isArray(saved.blocked) ? saved.blocked.filter((x): x is string => typeof x === 'string').slice(0, 6) : [], checkups: Number.isInteger(saved.checkups) ? saved.checkups as number : 0, ...(saved.look && typeof saved.look === 'object' && typeof (saved.look as { key?: unknown }).key === 'string' ? { look: saved.look as ChatState['look'] } : {}), open: Array.isArray(saved.open) ? saved.open.filter((x): x is string => typeof x === 'string').slice(0, 6) : [], missed: Array.isArray(saved.missed) ? saved.missed.filter((x): x is string => typeof x === 'string').slice(0, 6) : [], traces: Array.isArray(saved.traces) ? (saved.traces as JobTrace[]).filter(t => t && typeof t === 'object' && Array.isArray(t.requests)).slice(-TRACES_KEPT) : [], resync: Number.isInteger(saved.resync) ? Number(saved.resync) : null,
         talk: talkLines(saved.talk), notes: playerNotes(saved.notes), quickLog: quickLog(saved.quickLog),
         intimate: Array.isArray(saved.intimate) ? saved.intimate.filter((x): x is string => typeof x === 'string').slice(-300) : [], intimateNow: saved.intimateNow === true,
         paceSignals: Array.isArray(saved.paceSignals) ? saved.paceSignals.filter((x): x is number => Number.isInteger(x)).slice(-12) : [], replan: saved.replan === true, replannedAt: Number(saved.replannedAt) || 0,
@@ -399,7 +409,7 @@ export class NotebookController {
         checks: live ? state.checks : [], needsCheck: state.needsCheck || (live && !live.matched ? 'The chat changed before the notebook was written.' : ''),
         job: state.job, updatedAt: state.updatedAt, repliesSinceCheck: live ? this.repliesSince(live) : 0, skipHours: state.skipHours, notebook, behind: !!live && live.index !== state.versions.length - 1, earlierParts, quick: state.quick, dueIds: live ? dueThreads(live.version.notebook, live.moment).map(d => d.thread.id) : [],
         glance: live ? glance(live.version.notebook, live.moment) : null, reworking: !!live && this.reworking(state, live),
-        talk: state.talk, notes: state.notes, quickLog: state.quickLog, traces: this.tracesOf(state), follow: followRate(state.quickLog), recap: notebook?.recap ?? '', mystery: mysteryView(notebook?.mystery), canUndo: this.undoable(state) !== null, spent: !!notebook && !storyLeft(notebook), memory: mem,
+        talk: state.talk, notes: state.notes, quickLog: state.quickLog, traces: this.tracesOf(state), follow: followRate(state.quickLog), voices: voiceRate(state.quickLog), recap: notebook?.recap ?? '', mystery: mysteryView(notebook?.mystery), canUndo: this.undoable(state) !== null, spent: !!notebook && !storyLeft(notebook), memory: mem,
         skipOffer: offer, tome,
       };
     });
@@ -784,9 +794,15 @@ export class NotebookController {
     const settings = await this.settings(), ask = this.asker(settings);
     const live = await this.live(state, await this.api.chat.getMessages(chatId));
     if (!live) return null;
-    const { job, signal } = this.startJob(state, 'checkup', 'Updating the notebook');
-    // Check-ups are bookkeeping: they think less than notebook writing does, unless the player chose otherwise.
-    const traced = this.asker({ ...settings, reasoningMode: settings.checkupReasoning ?? settings.reasoningMode }, this.traces.get(job.id));
+    // Routine check-ups are bookkeeping and can go to a cheaper connection. Big moments, and a full review every few
+    // check-ups, go to the main one, where judgment matters.
+    state.checkups = (state.checkups ?? 0) + 1;
+    const cheap = settings.checkupConnectionId && settings.checkupConnectionId !== settings.connectionId ? settings.checkupConnectionId : '';
+    const review = !!cheap && state.checkups % REVIEW_EVERY === 0;
+    const strong = !cheap || review || BIG_MOMENTS.some(b => reason.startsWith(b));
+    const { job, signal } = this.startJob(state, 'checkup', review ? 'Reviewing the whole notebook' : 'Updating the notebook');
+    // Check-ups think less than notebook writing does, unless the player chose otherwise. A review thinks like notebook writing.
+    const traced = this.asker({ ...settings, connectionId: strong ? settings.connectionId : cheap, reasoningMode: review ? settings.reasoningMode : settings.checkupReasoning ?? settings.reasoningMode }, this.traces.get(job.id));
     await this.save(state); this.changed();
     const base = live.version, read = live.prints.slice();
     // Words, not markup: preset panels and styling can be most of a reply.
@@ -797,7 +813,7 @@ export class NotebookController {
     const input = {
       notebook: { ...base.notebook, clock: live.clock }, pace: state.pace, chat, trackerText: live.text, trackerValues: live.values, trackerChecks: live.state.checks, recipe: state.recipe,
       clockOwner: { day: live.sources.day, hour: live.sources.hour }, due: dueThreads(base.notebook, live.moment).map(d => ({ thread: d.thread.id, step: d.step.id })),
-      skipHours: state.skipHours, reason, preferences: state.preferences, resync: state.resync !== null, held: state.held, notes: state.notes.map(n => n.text), part: partProgress(base.notebook, live.moment), replan: state.replan, replies: learning ? this.trackerSamples(live.turns, chatId).slice(0, 2).map(r => r.slice(0, 20_000)) : [],
+      skipHours: state.skipHours, reason, review, preferences: state.preferences, resync: state.resync !== null, held: state.held, notes: state.notes.map(n => n.text), part: partProgress(base.notebook, live.moment), replan: state.replan, replies: learning ? this.trackerSamples(live.turns, chatId).slice(0, 2).map(r => r.slice(0, 20_000)) : [],
       lore: NO_LORE as Lore, memory: undefined as Recall | undefined,
       away: awayPeople(base.notebook, state.seen, this.presentNow(live), live.moment).slice(0, 6).map(a => `${a.person.name} (last seen ${a.replies} replies ago)`),
       places: recentPlaces(state.versions, live.values.location),
@@ -1147,7 +1163,7 @@ export class NotebookController {
   async saveSettings(value: unknown) { const settings = validSettings(value); await this.api.userStorage.setJson('settings.json', settings, { userId: this.userId }); return settings; }
 
   // ----- The prompt -------------------------------------------------------------
-  async noteFor(chatId: string, exclude?: string, guided = false): Promise<string> {
+  async noteFor(chatId: string, exclude?: string, guided = false, push?: { only: boolean; look?: Look }): Promise<string> {
     return this.serial(chatId, async () => {
       const state = await this.load(chatId);
       if (!state?.enabled || !state.versions.length) return '';
@@ -1161,7 +1177,9 @@ export class NotebookController {
       const intimate = state.intimateNow && settings.intimate === 'protect' && live.turns.at(-1)?.role === 'user';
       const away = awayPeople(live.version.notebook, state.seen, this.presentNow(live), live.moment).map(a => a.person);
       const at = whereabouts(live.version.notebook.buildings ?? [], live.values.location, state.building);
-      return buildNote({ light: state.preferences.planner === 'preset', intimate, blocked: state.blocked ?? [], away, layout: at ? layoutLine(at) : undefined, size: state.preferences.size, sinceNewFace: (live.moment.reply ?? 0) - state.newFaceAt, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, location: live.values.location, narrated: this.narrated(live), trackerPresent: this.listed(live), skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map(n => n.text) });
+      // Openings are judged by the quick check. Without a working one, steps come in on the clock as before.
+      const watched = settings.quick.enabled && this.decisionsReady() && state.quick?.ok !== false;
+      return buildNote({ ...(push ? { push } : {}), light: state.preferences.planner === 'preset', intimate, blocked: state.blocked ?? [], ...(watched ? { open: state.open ?? [], missed: state.missed ?? [] } : {}), away, layout: at ? layoutLine(at) : undefined, size: state.preferences.size, sinceNewFace: (live.moment.reply ?? 0) - state.newFaceAt, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, location: live.values.location, narrated: this.narrated(live), trackerPresent: this.listed(live), skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map(n => n.text) });
     });
   }
   async macro(name: 'clock' | 'pace', chatId: string | undefined): Promise<string> {
@@ -1174,14 +1192,27 @@ export class NotebookController {
       return name === 'clock' ? describeClock(live.clock) : paceLine(state.pace, live.version.notebook);
     });
   }
-  async intercept(messages: LlmMessageDTO[], context: Pick<InterceptorContextDTO, 'chatId' | 'generationType' | 'excludeMessageId'> & { regenFeedback?: string }): Promise<LlmMessageDTO[] | InterceptorResultDTO> {
+  async intercept(messages: LlmMessageDTO[], context: Pick<InterceptorContextDTO, 'chatId' | 'generationType' | 'excludeMessageId'> & { regenFeedback?: string; isDryRun?: boolean }): Promise<LlmMessageDTO[] | InterceptorResultDTO> {
     if (!['normal', 'regenerate', 'swipe'].includes(context.generationType) || !context.chatId) return messages;
+    // The codeword is for Grimoire, never the narrator: it comes out of every message. A message that was only the
+    // codeword becomes the player's character carrying on with what they were doing.
+    const text = (m: LlmMessageDTO) => typeof m.content === 'string' ? m.content : m.content.map(p => (p as { text?: string }).text ?? '').join(' ');
+    const lastUser = messages.map(m => m.role).lastIndexOf('user');
+    const typed = lastUser >= 0 && hasCodeword(text(messages[lastUser]));
+    if (messages.some(m => m.role === 'user' && hasCodeword(text(m)))) messages = messages.map((m, i) => {
+      if (m.role !== 'user' || !hasCodeword(text(m))) return m;
+      const clean = (t: string) => { const out = stripCodeword(t); return i === lastUser && !out.trim() ? CARRY_ON : out; };
+      return typeof m.content === 'string' ? { ...m, content: clean(m.content) } : { ...m, content: m.content.map(p => typeof (p as { text?: unknown }).text === 'string' ? { ...p, text: clean((p as { text: string }).text) } : p) } as LlmMessageDTO;
+    });
     let note = '', exclude = context.excludeMessageId;
     // Some hosts leave out which reply is being replaced. Then the newest reply is the one being redone.
     if (!exclude && context.generationType !== 'normal') { try { const last = conversation(await this.api.chat.getMessages(context.chatId)).at(-1); if (last?.role === 'assistant') exclude = last.id; } catch { /* use the whole chat */ } }
     // A swipe with guidance: the player has said what this reply should be, so the note must not pull another way.
     const guided = context.generationType !== 'normal' && typeof context.regenFeedback === 'string' && context.regenFeedback.trim().length > 0;
-    try { note = await this.noteFor(context.chatId, exclude, guided); } catch { return messages; }
+    // The player asked for the story to move: a deep look decides how, if it comes back in time.
+    let push: { only: boolean; look?: Look } | undefined;
+    if (typed && !guided) { try { push = await this.lookFor(context.chatId, exclude, (await this.settings()).lookWait ?? 15, !!context.isDryRun) ?? undefined; } catch { push = undefined; } }
+    try { note = await this.noteFor(context.chatId, exclude, guided, push); } catch { return messages; }
     if (!note) return messages;
     note += await this.memoryNote(context.chatId, messages, exclude);
     // Keep a trailing assistant prefill last, so the note never breaks it.
@@ -1189,6 +1220,54 @@ export class NotebookController {
     return { messages: [...messages.slice(0, at), { role: 'system', content: note }, ...messages.slice(at)], breakdown: [{ messageIndex: at, name: 'Grimoire' }] };
   }
 
+  /** Deep looks in flight or done, by chat: the player message each answers, so a swipe of the same reply reuses it. */
+  private looks = new Map<string, { key: string; look: Promise<Look | null> }>();
+  /**
+   * The codeword's deep look, for the player message just sent. The reply waits for it up to `wait` seconds; if it
+   * isn't back by then, the note uses the notebook's best ready step, and the look keeps going so a swipe can use it.
+   */
+  private async lookFor(chatId: string, exclude: string | undefined, wait: number, dry: boolean): Promise<{ only: boolean; look?: Look } | null> {
+    const state = await this.load(chatId);
+    if (!state?.enabled || !state.versions.length) return null;
+    const live = await this.live(state, await this.api.chat.getMessages(chatId), exclude);
+    const player = live?.turns.at(-1);
+    // Only the message just sent counts: an older one with the codeword never fires again.
+    if (!live || player?.role !== 'user' || !player.asked) return null;
+    const only = !splitOoc(player.content).story.trim();
+    const key = `${player.id}:${(await fingerprints([player]))[0]}`;
+    if (state.look?.key === key) return { only, look: state.look.look };
+    if (dry) return { only };
+    let entry = this.looks.get(chatId);
+    if (entry?.key !== key) { entry = { key, look: this.runLook(chatId, state, live, player, only, key) }; this.looks.set(chatId, entry); }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const look = await Promise.race([entry.look, new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), wait * 1000); })]);
+    if (timer) clearTimeout(timer);
+    return { only, ...(look ? { look } : {}) };
+  }
+  private async runLook(chatId: string, state: ChatState, live: Live, player: Turn, only: boolean, key: string): Promise<Look | null> {
+    const settings = await this.settings(), trace = new Trace('look', 'Deep look');
+    let look: Look | null = null;
+    try {
+      const ask = this.asker({ ...settings, maxOutputTokens: LOOK_TOKENS, reasoningMode: settings.checkupReasoning ?? settings.reasoningMode }, trace);
+      const light = state.preferences.planner === 'preset', story = live.turns.filter(t => !t.ooc && t !== player);
+      look = await askJson(ask, lookMessages({
+        said: only ? '' : readable(splitOoc(player.content).story, 2000), light, notebook: live.version.notebook,
+        chat: story.slice(-10).map(t => ({ role: t.role, content: told(t, 2500) })),
+        raw: light ? storyReplies(story).slice(-3).map(t => t.content.slice(0, 6000)) : [],
+        place: live.values.location ?? '', present: presentPeople(live.version.notebook, this.narrated(live), this.listed(live)).map(p => p.name),
+        persona: await this.persona(),
+      }), checkLook, AbortSignal.timeout(180_000), trace.sentBack);
+    } catch { look = null; }
+    await this.serial(chatId, async () => {
+      const current = await this.load(chatId);
+      if (!current) return;
+      if (look) current.look = { key, look, at: Date.now() };
+      if (trace.requests.length) current.traces = [...(current.traces ?? []), trace.done(look ? 'complete' : 'failed')].slice(-TRACES_KEPT);
+      await this.save(current);
+    }).catch(() => {});
+    this.changed();
+    return look;
+  }
   /**
    * Lumiverse's memories for the narrator, so any preset has them. Searched with the newest exchange;
    * left out when the prompt already carries them (the preset has the memory block) or the setting is off.
@@ -1356,10 +1435,13 @@ export class NotebookController {
           if (outcome.held.length) state.held = [...new Set([...state.held, ...outcome.held])];
           // Judged afresh each reply: a step that can't reach the player in this scene waits, and is offered again once the scene opens up.
           state.blocked = outcome.blocked;
+          // A moment seen and passed twice running: the next note says so.
+          state.missed = outcome.open.filter(id => (state.open ?? []).includes(id));
+          state.open = outcome.open;
           // The story changed direction: hold old plans back and rework the notebook now.
           if (outcome.shifted) { state.resync = now.moment.reply ?? 0; extra = 'The story changed direction'; }
         }
-        state.quickLog = [...state.quickLog, { ...quickRecord(live.moment.reply ?? 0, result, outcome), ...(error ? { error } : {}), ...(quiet ? { quiet: true as const } : {}) }].slice(-QUICK_LOG);
+        state.quickLog = [...state.quickLog, { ...quickRecord(live.moment.reply ?? 0, result, outcome, plan), ...(error ? { error } : {}), ...(quiet ? { quiet: true as const } : {}) }].slice(-QUICK_LOG);
         // A check-up can't start while one runs; the next reply looks again.
         if (this.running.has(chatId)) { await this.save(state); return; }
         await this.decide(state, now, settings, extra, soft);

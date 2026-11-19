@@ -1,7 +1,7 @@
 import type { DecisionAnswer, DecisionQuestion, DecisionResult } from 'lumiverse-spindle-types';
 import { describeClock, type StoryClock } from './clock';
 import { dueThreads, type Moment, type Notebook, type Rhythm } from './notebook';
-import { seedPlan } from './note';
+import { DRIFT_SHOW, seedPlan } from './note';
 import { cluesToCheck, settleMystery } from './mystery';
 
 /**
@@ -38,7 +38,7 @@ export interface QuickPlan {
 }
 
 export function quickQuestions(notebook: Notebook, now: number | Moment, /** The latest exchange, to pick which clues to ask about. */ scene = '', /** The preset plans the story: only what keeps the record true is asked. */ light = false): QuickPlan {
-  if (light) return lightQuestions(notebook);
+  if (light) return lightQuestions(notebook, now, scene);
   const questions: Record<string, DecisionQuestion> = {}, marks: QuickPlan['marks'] = {};
   dueThreads(notebook, now).forEach(({ thread, step }, i) => {
     const key = `due_${i + 1}`;
@@ -46,8 +46,12 @@ export function quickQuestions(notebook: Notebook, now: number | Moment, /** The
       criteria: { true: 'The latest reply shows it or its sign.', false: 'The latest reply does not show it, or only hints vaguely.' } };
     marks[key] = { kind: 'step', thread: thread.id, step: step.id };
     // Whether it could arrive at all, as things stand. A step planned before the scene moved may no longer have a way in.
-    questions[`reach_${i + 1}`] = { type: 'noul', instructions: `Where the player is now and what is going on there, could this reach them in the next reply in a believable way? It could not if that would mean someone getting through a locked or barred door, walking in on a private moment no one would interrupt, or something turning up where it could not be. A message, a knock, or word arriving can still be believable. Event: ${step.text}${step.sign ? ` Sign: ${step.sign}` : ''}`,
-      criteria: { true: 'Yes, it could believably reach them now, in some form.', false: 'No, not in the scene as it stands; it would have to wait for the scene to change.' } };
+    // Is this its moment? A step with an opening waits for that moment; one without asks whether it could reach them at all.
+    questions[`reach_${i + 1}`] = step.opening
+      ? { type: 'noul', instructions: `Where the player is now and what is going on there, is this the moment this event needs, so it could happen in the next reply without forcing it? It needs: ${step.opening} It is not the moment if that would mean someone getting through a locked or barred door, walking in on a private moment no one would interrupt, or something turning up where it could not be. Event: ${step.text}${step.sign ? ` Sign: ${step.sign}` : ''}`,
+        criteria: { true: 'Yes, the scene gives it that moment now.', false: 'No, the scene does not give it that moment yet.' } }
+      : { type: 'noul', instructions: `Where the player is now and what is going on there, could this reach them in the next reply in a believable way? It could not if that would mean someone getting through a locked or barred door, walking in on a private moment no one would interrupt, or something turning up where it could not be. A message, a knock, or word arriving can still be believable. Event: ${step.text}${step.sign ? ` Sign: ${step.sign}` : ''}`,
+        criteria: { true: 'Yes, it could believably reach them now, in some form.', false: 'No, not in the scene as it stands; it would have to wait for the scene to change.' } };
     marks[`reach_${i + 1}`] = { kind: 'reach', thread: thread.id, step: step.id };
   });
   notebook.beats.filter(b => b.status === 'possible').slice(0, QUICK.maxBeats).forEach((beat, i) => {
@@ -120,7 +124,21 @@ export function quickQuestions(notebook: Notebook, now: number | Moment, /** The
   questions.rhythm = { type: 'choice', instructions: 'Which best describes the scene at the end of the latest reply?', criteria: RHYTHMS };
   questions.new_turn = { type: 'noul', instructions: 'Did the latest exchange bring in something the story notes do not cover yet: a new named person who matters, a new problem or goal, a big change of place or time, or a choice that changes where the story is heading?',
     criteria: { true: 'Yes, something important is new.', false: 'No, it continues what the notes already cover.' } };
+  voiceQuestion(notebook, now, scene, questions);
   return { questions, marks };
+}
+
+/**
+ * Someone the notes say has been slipping, who is in this exchange: did they sound like their whole self this time?
+ * Only counted, never acted on: it shows whether the narrator takes Grimoire's voice fixes (Behind the scenes).
+ */
+function voiceQuestion(notebook: Notebook, now: number | Moment, scene: string, questions: Record<string, DecisionQuestion>) {
+  const reply = typeof now === 'number' ? undefined : now.reply, text = scene.toLowerCase();
+  const person = notebook.people.find(p => p.status === 'active' && p.drift && (reply === undefined || p.driftAt === undefined || reply - p.driftAt <= DRIFT_SHOW)
+    && [p.name, ...p.aliases].some(n => n.trim().length > 1 && text.includes(n.toLowerCase())));
+  if (!person) return;
+  questions.voice_1 = { type: 'noul', instructions: `Does ${person.name} come across in the latest reply as their whole self, true to who they are, rather than shrunk to one trait or sounding like everyone else? Who they are: ${person.voice || person.hint || person.role}. What had gone wrong: ${person.drift}`,
+    criteria: { true: `Yes, ${person.name} sounds like themselves.`, false: `No, ${person.name} is still flattened or sounds like the others, or barely appears.` } };
 }
 
 /**
@@ -128,7 +146,7 @@ export function quickQuestions(notebook: Notebook, now: number | Moment, /** The
  * what keeps its record true: whether a secret came out, and whether something new happened that a check-up should
  * write down (a new person who matters, a big change).
  */
-function lightQuestions(notebook: Notebook): QuickPlan {
+function lightQuestions(notebook: Notebook, now: number | Moment = 0, scene = ''): QuickPlan {
   const questions: Record<string, DecisionQuestion> = {}, marks: QuickPlan['marks'] = {};
   notebook.story.hiddenTruth.slice(0, QUICK.maxTruths).forEach((truth, i) => {
     const key = `truth_${i + 1}`;
@@ -138,6 +156,7 @@ function lightQuestions(notebook: Notebook): QuickPlan {
   });
   questions.new_turn = { type: 'noul', instructions: 'Did the latest exchange bring in something the story notes do not cover yet: a new named person who matters, a new problem or goal, a big change of situation or place?',
     criteria: { true: 'Yes, something important is new.', false: 'No, it continues what the notes already cover.' } };
+  voiceQuestion(notebook, now, scene, questions);
   return { questions, marks };
 }
 
@@ -154,7 +173,7 @@ export function quickState(notebook: Notebook, clock: StoryClock, playerMessage:
 
 const yes = (answer: DecisionAnswer | undefined) => answer?.type === 'noul' && answer.noul >= QUICK.yes;
 
-export interface QuickOutcome { notebook: Notebook; changed: boolean; marked: number; /** Due steps that could not believably reach the player in this scene. */ blocked: string[]; needsCheckup: boolean; /** A new problem came up that no storyline covers. */ problem: boolean; /** A problem was solved too easily. */ easyFix: boolean; /** A secret came out. People's notes were written to keep it, so it can't wait. */ revealed: boolean; /** The reply hurried past things that needed room. */ rushing: boolean; /** The player named the mystery's answer, or it came out some other way: a check-up follows at once. */ mysteryEnded: boolean; /** An intimate scene is under way. */ intimate: boolean; /** The story changed direction: rework the notebook. */ shifted: boolean; /** Threads that clearly no longer fit for now. */ held: string[] }
+export interface QuickOutcome { notebook: Notebook; changed: boolean; marked: number; /** Due steps that could not believably reach the player in this scene. */ blocked: string[]; /** Due steps whose moment is here, and that did not happen in this reply. */ open: string[]; needsCheckup: boolean; /** A new problem came up that no storyline covers. */ problem: boolean; /** A problem was solved too easily. */ easyFix: boolean; /** A secret came out. People's notes were written to keep it, so it can't wait. */ revealed: boolean; /** The reply hurried past things that needed room. */ rushing: boolean; /** The player named the mystery's answer, or it came out some other way: a check-up follows at once. */ mysteryEnded: boolean; /** An intimate scene is under way. */ intimate: boolean; /** The story changed direction: rework the notebook. */ shifted: boolean; /** Threads that clearly no longer fit for now. */ held: string[] }
 /**
  * Apply answers onto the notebook as it is now (it may have changed while the
  * question was out). Only waiting steps and possible beats can be marked.
@@ -201,10 +220,12 @@ export function applyQuick(current: Notebook, plan: QuickPlan, result: DecisionR
   if (rhythm?.type === 'choice' && rhythm.confidence >= QUICK.rhythm && rhythm.choice in RHYTHMS && rhythm.choice !== notebook.rhythm) { notebook.rhythm = rhythm.choice as Rhythm; changed = true; }
   // Due steps that could not believably arrive in the scene as it stands, and did not.
   const blocked = Object.entries(plan.marks).flatMap(([key, mark]) => mark.kind === 'reach' && answers[key]?.type === 'noul' && (answers[key] as { noul: number }).noul <= QUICK.no && !yes(answers[key.replace('reach_', 'due_')]) ? [mark.step] : []);
+  // Due steps whose moment is here, and did not happen in this reply: the next reply should take it.
+  const open = Object.entries(plan.marks).flatMap(([key, mark]) => mark.kind === 'reach' && answers[key]?.type === 'noul' && (answers[key] as { noul: number }).noul >= QUICK.yes && !yes(answers[key.replace('reach_', 'due_')]) ? [mark.step] : []);
   const held = Object.entries(plan.marks).flatMap(([key, mark]) => mark.kind === 'fits' && answers[key]?.type === 'noul' && (answers[key] as { noul: number }).noul <= QUICK.no ? [mark.thread] : []);
   const cameOut = Object.entries(plan.marks).some(([key, mark]) => mark.kind === 'truth' && yes(answers[key]));
   const problem = yes(answers.new_problem), easyFix = yes(answers.easy_fix);
-  return { notebook, changed, marked, blocked, needsCheckup: yes(answers.new_turn) || held.length > 0 || cameOut || problem || easyFix, mysteryEnded, problem, easyFix, revealed: cameOut, rushing: yes(answers.rushing), intimate: yes(answers.intimate), shifted: yes(answers.story_shift), held };
+  return { notebook, changed, marked, blocked, open, needsCheckup: yes(answers.new_turn) || held.length > 0 || cameOut || problem || easyFix, mysteryEnded, problem, easyFix, revealed: cameOut, rushing: yes(answers.rushing), intimate: yes(answers.intimate), shifted: yes(answers.story_shift), held };
 }
 
 /** Fixed wording only: provider errors can echo what was sent. */

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { followRate, stockProblems } from '../src/cast';
+import { followRate, stockProblems, voiceRate } from '../src/cast';
+import { quickQuestions } from '../src/quick';
 import { validateNotebook, type Preferences } from '../src/notebook';
 import { checkupMessages, creationMessages } from '../src/prompts';
 import { applyChanges } from '../src/talk';
@@ -35,6 +36,22 @@ describe('is the narrator listening', () => {
     expect(followRate([r(1, 0), r(1, 1), r(2, 0), r(3, 0), r(4, 0)])).toEqual({ offered: 4, used: 1 });
     // Optional moments left out are not a miss: only due steps count.
     expect(followRate([1, 2, 3, 4, 5].map(n => r(n, 0, ['moment_1', 'detail_mentioned'])))).toBeNull();
+  });
+  test('with openings, only a step whose moment had come counts as asked for', () => {
+    const w = (reply: number, shown: boolean, open: string[] = []) => ({ reply, ok: true, marked: 0, steps: ['a'], answers: { due_1: shown ? 0.9 : 0.1 }, ...(open.length ? { open } : {}) });
+    // Held while its moment had not come: nothing was asked, so nothing was missed.
+    expect(followRate([1, 2, 3, 4, 5, 6].map(n => w(n, false)))).toBeNull();
+    // Its moment came after replies 1, 3, 5 and 7; the replies after took it twice.
+    expect(followRate([w(1, false, ['a']), w(2, true), w(3, false, ['a']), w(4, false), w(5, false, ['a']), w(6, true), w(7, false, ['a']), w(8, false)])).toEqual({ offered: 4, used: 2 });
+  });
+  test('voice fixes are counted when someone who had been slipping is in the exchange', () => {
+    const nb = validateNotebook(sampleNotebook()); nb.people[0].drift = 'all jokes lately; let her worry show'; nb.people[0].driftAt = 10;
+    expect(quickQuestions(nb, { hours: 42, reply: 12 }, 'Mira laughs and keeps patching.').questions.voice_1?.instructions).toContain('Does Mira come across');
+    expect(quickQuestions(nb, { hours: 42, reply: 12 }, 'Cole counts his coins.').questions.voice_1).toBeUndefined();
+    expect(quickQuestions(nb, { hours: 42, reply: 40 }, 'Mira laughs.').questions.voice_1).toBeUndefined();
+    const v = (x: number) => ({ ok: true, answers: { voice_1: x } });
+    expect(voiceRate([v(0.9), v(0.2)])).toBeNull();
+    expect(voiceRate([v(0.9), v(0.2), v(0.8), { ok: true, answers: {} }])).toEqual({ asked: 3, landed: 2 });
   });
 });
 
