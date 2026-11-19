@@ -531,6 +531,8 @@ describe('the redesigned panel', () => {
     const missed = harness({ tome: { ...tome, push: { look: true, landed: false } } }); await tick();
     expect(missed.bubble.querySelector('.gm-tome-push')!.textContent).toContain('the narrator went another way');
     const late = harness({ tome: { ...tome, push: { look: false } } }); await tick();
-    expect(late.bubble.querySelector('.gm-tome-push')!.textContent).toContain('wasn’t ready in time');
+    expect(late.bubble.querySelector('.gm-tome-push')!.textContent).toContain('Grimoire is still working on it');
+    const ready = harness({ tome: { ...tome, push: { look: false, ready: true } } }); await tick();
+    expect(ready.bubble.querySelector('.gm-tome-push')!.textContent).toContain('It’s ready now: swipe to use it.');
   });
 });

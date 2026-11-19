@@ -412,7 +412,7 @@ export class NotebookController {
         job: state.job, updatedAt: state.updatedAt, repliesSinceCheck: live ? this.repliesSince(live) : 0, skipHours: state.skipHours, notebook, behind: !!live && live.index !== state.versions.length - 1, earlierParts, quick: state.quick, dueIds: live ? dueThreads(live.version.notebook, live.moment).map(d => d.thread.id) : [],
         glance: live ? glance(live.version.notebook, live.moment) : null, reworking: !!live && this.reworking(state, live),
         talk: state.talk, notes: state.notes, quickLog: state.quickLog, traces: this.tracesOf(state), follow: followRate(state.quickLog), voices: voiceRate(state.quickLog), recap: notebook?.recap ?? '', mystery: mysteryView(notebook?.mystery), canUndo: this.undoable(state) !== null, spent: !!notebook && !storyLeft(notebook), memory: mem,
-        skipOffer: offer, tome: tome && state.pushed && live && state.pushed.player === [...live.turns].reverse().find(t => t.role === 'user')?.id ? { ...tome, push: { look: state.pushed.look, ...(state.pushed.landed !== undefined ? { landed: state.pushed.landed } : {}) } } : tome,
+        skipOffer: offer, tome: tome && state.pushed && live && state.pushed.player === [...live.turns].reverse().find(t => t.role === 'user')?.id ? { ...tome, push: { look: state.pushed.look, ...(state.pushed.landed !== undefined ? { landed: state.pushed.landed } : {}), ...(state.pushed.ready ? { ready: true } : {}), ...(state.pushed.failed ? { failed: true } : {}) } } : tome,
       };
     });
   }
@@ -1283,6 +1283,8 @@ export class NotebookController {
       const current = await this.load(chatId);
       if (!current) return;
       if (look) current.look = { key, look, at: Date.now() };
+      // A reply that went ahead without it: the chronicle can now say it's ready for a swipe, or that it didn't finish.
+      if (current.pushed?.player === player.id && !current.pushed.look) current.pushed = { ...current.pushed, ...(look ? { ready: true } : { failed: true }) };
       if (trace.requests.length) current.traces = [...(current.traces ?? []), trace.done(look ? 'complete' : 'failed')].slice(-TRACES_KEPT);
       await this.save(current);
     }).catch(() => {});

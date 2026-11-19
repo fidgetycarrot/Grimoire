@@ -1838,6 +1838,16 @@ describe('the $grimoire codeword', () => {
     const swipe: any = await c.intercept(prompt('I wait. $grimoire'), { chatId: 'chat-1', generationType: 'swipe' });
     expect(sent(swipe)).toContain('My plan for this reply: I have Oswin');
   }, 15_000);
+  test('when a reply went ahead without the deep look, the chronicle learns once it is ready', async () => {
+    let release!: () => void; const gate = new Promise<void>(r => { release = r; });
+    const { h, c } = await setup(async () => { await gate; return plan; }, { lookWait: 5 });
+    h.add('user', 'I wait. $grimoire');
+    await c.intercept(prompt('I wait. $grimoire'), { chatId: 'chat-1', generationType: 'normal' });
+    h.add('assistant', `A shout from the manor.${tracker('Day 1, 18:30', 'The ferry')}`);
+    expect((await c.view('chat-1'))!.tome?.push).toEqual({ look: false });
+    release(); await c.waitForJobs(); await new Promise(r => setTimeout(r, 20));
+    expect((await c.view('chat-1'))!.tome?.push).toEqual({ look: false, ready: true });
+  }, 15_000);
   test('it still works when the preset adds its own user message after the player\'s (as Sola does)', async () => {
     const { h, m, c } = await setup(() => plan);
     h.add('user', 'I lean on the rail. $grimoire');

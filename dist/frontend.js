@@ -167,6 +167,7 @@ var styles = `
 .gm-tome-push{display:flex;align-items:baseline;gap:9px;margin:0 0 8px;padding:7px 11px;border-radius:10px;background:linear-gradient(90deg,rgba(228,186,108,.12),rgba(255,255,255,.02));border:1px solid rgba(228,186,108,.3);font-size:12px;line-height:1.45;color:#e9dfcc}
 .gm-tome-push-mark{flex:none;font-size:10px;font-weight:750;letter-spacing:.12em;text-transform:uppercase;color:#f3d286}
 .gm-tome-push[data-landed=false]{border-color:rgba(216,140,164,.35);background:linear-gradient(90deg,rgba(216,140,164,.1),rgba(255,255,255,.02))}
+.gm-tome-push[data-state=working] .gm-tome-push-mark{animation:gm-pulse 1.4s ease-in-out infinite}.gm-tome-push[data-state=ready]{border-color:rgba(243,210,134,.6);box-shadow:0 0 12px rgba(243,210,134,.18)}
 `;
 
 // src/badges.ts
@@ -226,7 +227,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.39.2";
+var VERSION = "0.39.3";
 var CHAPTER_WORKING = "Starting a new chapter";
 var NO_MYSTERY = "Notebook ready, without the mystery";
 var CHAPTER_DONE = "New chapter ready";
@@ -1903,7 +1904,9 @@ function setup(ctx) {
       const p = tome.push, ribbon = el("div", "gm-tome-push");
       if (p.landed !== undefined)
         ribbon.dataset.landed = String(p.landed);
-      const words = !p.look ? "The deep look wasn’t ready in time, so this reply used Grimoire’s next step. A swipe can use the deep look once it’s done." : p.landed === true ? "Grimoire’s deep look shaped this reply, and it landed." : p.landed === false ? "Grimoire picked a move, but the narrator went another way. A swipe tries the same move again." : "Grimoire’s deep look shaped this reply.";
+      if (!p.look)
+        ribbon.dataset.state = p.ready ? "ready" : p.failed ? "failed" : "working";
+      const words = !p.look ? p.ready ? "This reply went ahead without the deep look. It’s ready now: swipe to use it." : p.failed ? "This reply went ahead without the deep look, and it didn’t finish. Send $grimoire again to retry." : "This reply went ahead without the deep look. Grimoire is still working on it; this line updates when it’s ready." : p.landed === true ? "Grimoire’s deep look shaped this reply, and it landed." : p.landed === false ? "Grimoire picked a move, but the narrator went another way. A swipe tries the same move again." : "Grimoire’s deep look shaped this reply.";
       ribbon.append(el("span", "gm-tome-push-mark", "✦ $grimoire"), el("span", "", words));
       tomeHost.append(ribbon);
     }

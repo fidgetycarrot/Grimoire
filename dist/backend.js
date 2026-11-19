@@ -4581,7 +4581,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.39.2";
+var VERSION = "0.39.3";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -5069,7 +5069,7 @@ class NotebookController {
         spent: !!notebook && !storyLeft(notebook),
         memory: mem,
         skipOffer: offer,
-        tome: tome && state.pushed && live && state.pushed.player === [...live.turns].reverse().find((t) => t.role === "user")?.id ? { ...tome, push: { look: state.pushed.look, ...state.pushed.landed !== undefined ? { landed: state.pushed.landed } : {} } } : tome
+        tome: tome && state.pushed && live && state.pushed.player === [...live.turns].reverse().find((t) => t.role === "user")?.id ? { ...tome, push: { look: state.pushed.look, ...state.pushed.landed !== undefined ? { landed: state.pushed.landed } : {}, ...state.pushed.ready ? { ready: true } : {}, ...state.pushed.failed ? { failed: true } : {} } } : tome
       };
     });
   }
@@ -6123,6 +6123,8 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
         return;
       if (look)
         current.look = { key, look, at: Date.now() };
+      if (current.pushed?.player === player.id && !current.pushed.look)
+        current.pushed = { ...current.pushed, ...look ? { ready: true } : { failed: true } };
       if (trace.requests.length)
         current.traces = [...current.traces ?? [], trace.done(look ? "complete" : "failed")].slice(-TRACES_KEPT);
       await this.save(current);

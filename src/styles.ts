@@ -166,4 +166,5 @@ export const styles = `
 .gm-tome-push{display:flex;align-items:baseline;gap:9px;margin:0 0 8px;padding:7px 11px;border-radius:10px;background:linear-gradient(90deg,rgba(228,186,108,.12),rgba(255,255,255,.02));border:1px solid rgba(228,186,108,.3);font-size:12px;line-height:1.45;color:#e9dfcc}
 .gm-tome-push-mark{flex:none;font-size:10px;font-weight:750;letter-spacing:.12em;text-transform:uppercase;color:#f3d286}
 .gm-tome-push[data-landed=false]{border-color:rgba(216,140,164,.35);background:linear-gradient(90deg,rgba(216,140,164,.1),rgba(255,255,255,.02))}
+.gm-tome-push[data-state=working] .gm-tome-push-mark{animation:gm-pulse 1.4s ease-in-out infinite}.gm-tome-push[data-state=ready]{border-color:rgba(243,210,134,.6);box-shadow:0 0 12px rgba(243,210,134,.18)}
 `;

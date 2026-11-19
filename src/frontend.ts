@@ -1117,7 +1117,10 @@ const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally']
     if (tome.push) {
       const p = tome.push, ribbon = el('div', 'gm-tome-push');
       if (p.landed !== undefined) ribbon.dataset.landed = String(p.landed);
-      const words = !p.look ? 'The deep look wasn’t ready in time, so this reply used Grimoire’s next step. A swipe can use the deep look once it’s done.'
+      if (!p.look) ribbon.dataset.state = p.ready ? 'ready' : p.failed ? 'failed' : 'working';
+      const words = !p.look ? (p.ready ? 'This reply went ahead without the deep look. It’s ready now: swipe to use it.'
+          : p.failed ? 'This reply went ahead without the deep look, and it didn’t finish. Send $grimoire again to retry.'
+          : 'This reply went ahead without the deep look. Grimoire is still working on it; this line updates when it’s ready.')
         : p.landed === true ? 'Grimoire’s deep look shaped this reply, and it landed.'
         : p.landed === false ? 'Grimoire picked a move, but the narrator went another way. A swipe tries the same move again.'
         : 'Grimoire’s deep look shaped this reply.';
