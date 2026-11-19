@@ -15,7 +15,7 @@ export interface RequestTrace {
 }
 export interface JobTrace {
   kind: string; label: string; startedAt: number; ms: number; status: string; requests: RequestTrace[];
-  /** Only while the job runs: the request still waiting for its answer. */ waiting?: { step: string; since: number };
+  /** Only while the job runs: the request still waiting for its answer, and the model it went to. */ waiting?: { step: string; since: number; model?: string };
 }
 export const TRACES_KEPT = 6;
 
@@ -29,7 +29,7 @@ export class Trace {
   private current: { step: string; since: number } | null = null;
   constructor(readonly kind: string, readonly label: string, readonly startedAt = Date.now(), private readonly onChange: () => void = () => {}) { this.step = label; }
   /** Called by the request itself with what the provider reported. */
-  meter = (usage: Usage) => { this.usage = usage; };
+  meter = (usage: Usage) => { const named = !!usage.model && !this.usage?.model; this.usage = usage; if (named && this.current) this.onChange(); };
   /** Mark the newest request as sent back, with Grimoire's reason. */
   sentBack = (reason: string) => { const last = this.requests.at(-1); if (last) last.sentBack = reason.slice(0, 200); };
   private nextBackup = false;
@@ -60,7 +60,7 @@ export class Trace {
   }
   /** The record so far, for showing while the job runs. */
   live(): JobTrace {
-    return { ...this.done('running'), requests: this.requests.map(r => ({ ...r })), ...(this.current ? { waiting: { ...this.current } } : {}) };
+    return { ...this.done('running'), requests: this.requests.map(r => ({ ...r })), ...(this.current ? { waiting: { ...this.current, ...(this.usage?.model ? { model: this.usage.model } : {}) } } : {}) };
   }
 }
 

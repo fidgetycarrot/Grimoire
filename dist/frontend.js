@@ -227,7 +227,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.39.3";
+var VERSION = "0.39.4";
 var CHAPTER_WORKING = "Starting a new chapter";
 var NO_MYSTERY = "Notebook ready, without the mystery";
 var CHAPTER_DONE = "New chapter ready";
@@ -537,6 +537,9 @@ function setup(ctx) {
     if (view.job.status === "running") {
       const words = el("span");
       words.append(document.createTextNode(`${view.job.label}… `), since(view.job.startedAt));
+      const running = view.traces?.find((t) => t.status === "running"), model = running?.waiting?.model ?? running?.requests.at(-1)?.model;
+      if (model)
+        words.append(el("span", "gm-meta", ` · ${model}`));
       box.append(words, button("Stop", async () => {
         await act("cancel", { chatId: view.chatId });
         notify("Stopped. Nothing was changed.");
@@ -1025,6 +1028,17 @@ function setup(ctx) {
     d.body.append(trackerPart(view));
     if (view.memory)
       d.body.append(memoryPart(view.memory));
+    if (view.codewords?.length) {
+      const s = part("$grimoire", "What came of the last few times you typed $grimoire: when Grimoire saw it, when the deep look started and finished, or why it wasn’t used. Never what it picked.");
+      const list = el("ul", "gm-fields");
+      for (const c of [...view.codewords].reverse()) {
+        const li = el("li");
+        li.append(el("span", "", ago(c.at)), el("span", "gm-dot", c.what));
+        list.append(li);
+      }
+      s.append(list);
+      d.body.append(s);
+    }
     if (view.traces?.length)
       d.body.append(timingPart(view.traces));
     d.body.append(el("p", "gm-hint", "Only shapes, counts, and numbers: no names, no plans."));
@@ -1465,6 +1479,10 @@ function setup(ctx) {
       if (node.scrollTop > 0)
         scrolled.push([node, node.scrollTop]);
     body.replaceChildren();
+    const backend = snapshot?.version;
+    footer.textContent = backend && backend !== VERSION ? `Grimoire ${VERSION} · the background part is still ${backend}` : `Grimoire ${VERSION}`;
+    if (backend && backend !== VERSION)
+      body.append(el("p", "gm-notice", `Grimoire updated, but its background part is still running version ${backend}. Restart Lumiverse (or turn Grimoire off and on in Extensions) to finish the update.`));
     if (page === "settings")
       renderSettings();
     else

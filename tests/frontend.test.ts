@@ -536,3 +536,11 @@ describe('the redesigned panel', () => {
     expect(ready.bubble.querySelector('.gm-tome-push')!.textContent).toContain('It’s ready now: swipe to use it.');
   });
 });
+
+describe('updates', () => {
+  test('the panel says when the background part is still an older version', async () => {
+    const h = harness(); h.state.version = '0.0.1'; await tick();
+    Array.from(h.root.querySelectorAll('button')).find(b => b.textContent === 'Settings')!.click(); await tick();
+    expect(h.root.textContent).toContain('its background part is still running version 0.0.1');
+  });
+});

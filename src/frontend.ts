@@ -177,6 +177,9 @@ const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally']
     const box = el('div', view.job.status === 'failed' ? 'gm-notice' : 'gm-card gm-small gm-row gm-spread');
     if (view.job.status === 'running') {
       const words = el('span'); words.append(document.createTextNode(`${view.job.label}… `), since(view.job.startedAt));
+      // Which model is at work, so it's clear whether the story planner or the record keeper took this one.
+      const running = view.traces?.find(t => t.status === 'running'), model = running?.waiting?.model ?? running?.requests.at(-1)?.model;
+      if (model) words.append(el('span', 'gm-meta', ` · ${model}`));
       box.append(words, button('Stop', async () => { await act('cancel', { chatId: view.chatId }); notify('Stopped. Nothing was changed.'); }));
     } else box.textContent = `${view.job.label}. ${view.job.error ?? ''}`;
     return box;
@@ -505,6 +508,12 @@ const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally']
     if (snapshot?.settings.quick.enabled || view.quickLog?.length) d.body.append(quickPart(view));
     d.body.append(trackerPart(view));
     if (view.memory) d.body.append(memoryPart(view.memory));
+    if (view.codewords?.length) {
+      const s = part('$grimoire', 'What came of the last few times you typed $grimoire: when Grimoire saw it, when the deep look started and finished, or why it wasn’t used. Never what it picked.');
+      const list = el('ul', 'gm-fields');
+      for (const c of [...view.codewords].reverse()) { const li = el('li'); li.append(el('span', '', ago(c.at)), el('span', 'gm-dot', c.what)); list.append(li); }
+      s.append(list); d.body.append(s);
+    }
     if (view.traces?.length) d.body.append(timingPart(view.traces));
     d.body.append(el('p', 'gm-hint', 'Only shapes, counts, and numbers: no names, no plans.'));
     return d.root;
@@ -794,6 +803,10 @@ const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally']
     const scrolled: Array<[Element, number]> = [];
     for (let node: Element | null = app; node; node = node.parentElement) if (node.scrollTop > 0) scrolled.push([node, node.scrollTop]);
     body.replaceChildren();
+    // After an update, Lumiverse can keep running the old backend until the extension restarts. Say so plainly.
+    const backend = snapshot?.version;
+    footer.textContent = backend && backend !== VERSION ? `Grimoire ${VERSION} · the background part is still ${backend}` : `Grimoire ${VERSION}`;
+    if (backend && backend !== VERSION) body.append(el('p', 'gm-notice', `Grimoire updated, but its background part is still running version ${backend}. Restart Lumiverse (or turn Grimoire off and on in Extensions) to finish the update.`));
     if (page === 'settings') renderSettings(); else renderChat();
     // Keep folds open across refreshes so a check-up never snaps the notebook shut.
     body.querySelectorAll('details').forEach((d, i) => { if (openDetails[i]) d.open = true; });

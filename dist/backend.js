@@ -496,7 +496,10 @@ class Trace {
     this.step = label;
   }
   meter = (usage) => {
+    const named = !!usage.model && !this.usage?.model;
     this.usage = usage;
+    if (named && this.current)
+      this.onChange();
   };
   sentBack = (reason) => {
     const last = this.requests.at(-1);
@@ -536,7 +539,7 @@ class Trace {
     return { kind: this.kind, label: this.label, startedAt: this.startedAt, ms: Date.now() - this.startedAt, status, requests: this.requests.slice(0, 20) };
   }
   live() {
-    return { ...this.done("running"), requests: this.requests.map((r) => ({ ...r })), ...this.current ? { waiting: { ...this.current } } : {} };
+    return { ...this.done("running"), requests: this.requests.map((r) => ({ ...r })), ...this.current ? { waiting: { ...this.current, ...this.usage?.model ? { model: this.usage.model } : {} } } : {} };
   }
 }
 function readUsage(value) {
@@ -4581,7 +4584,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.39.3";
+var VERSION = "0.39.4";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -4872,6 +4875,7 @@ class NotebookController {
         held: Array.isArray(saved.held) ? saved.held.filter((x) => typeof x === "string").slice(0, 12) : [],
         blocked: Array.isArray(saved.blocked) ? saved.blocked.filter((x) => typeof x === "string").slice(0, 6) : [],
         checkups: Number.isInteger(saved.checkups) ? saved.checkups : 0,
+        codewords: Array.isArray(saved.codewords) ? saved.codewords.filter((x) => x && typeof x.what === "string").slice(-8) : [],
         ...saved.pushed && typeof saved.pushed === "object" && typeof saved.pushed.player === "string" ? { pushed: saved.pushed } : {},
         ...saved.look && typeof saved.look === "object" && typeof saved.look.key === "string" ? { look: saved.look } : {},
         open: Array.isArray(saved.open) ? saved.open.filter((x) => typeof x === "string").slice(0, 6) : [],
@@ -5063,6 +5067,7 @@ class NotebookController {
         traces: this.tracesOf(state),
         follow: followRate(state.quickLog),
         voices: voiceRate(state.quickLog),
+        codewords: state.codewords ?? [],
         recap: notebook?.recap ?? "",
         mystery: mysteryView(notebook?.mystery),
         canUndo: this.undoable(state) !== null,
@@ -6055,10 +6060,12 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
               await this.save(current);
             }).catch(() => {});
         }
-      } catch {
+      } catch (error) {
         push = undefined;
+        this.noteCodeword(context.chatId, `Not used: something went wrong (${error instanceof Error ? error.message.slice(0, 120) : "unknown"}).`);
       }
-    }
+    } else if (typed && guided)
+      this.noteCodeword(context.chatId, "Not used: a swipe with guidance is your say on the reply, so the word steps back.");
     try {
       note = await this.noteFor(context.chatId, exclude, guided, push);
     } catch {
@@ -6070,21 +6077,39 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
     const at = messages.at(-1)?.role === "assistant" ? messages.length - 1 : messages.length;
     return { messages: [...messages.slice(0, at), { role: "system", content: note }, ...messages.slice(at)], breakdown: [{ messageIndex: at, name: "Grimoire" }] };
   }
+  async noteCodeword(chatId, what) {
+    await this.serial(chatId, async () => {
+      const current = await this.load(chatId);
+      if (!current)
+        return;
+      current.codewords = [...current.codewords ?? [], { at: Date.now(), what: what.slice(0, 200) }].slice(-8);
+      await this.save(current);
+    }).catch(() => {});
+    this.changed();
+  }
   looks = new Map;
   async lookFor(chatId, exclude, wait, dry) {
     const state = await this.load(chatId);
-    if (!state?.enabled || !state.versions.length)
+    if (!state?.enabled || !state.versions.length) {
+      this.noteCodeword(chatId, "Not used: Grimoire is off for this chat, or it has no notebook.");
       return null;
+    }
     const live = await this.live(state, await this.api.chat.getMessages(chatId), exclude);
     const player = live?.turns.at(-1);
-    if (!live || player?.role !== "user" || !player.asked)
+    if (!live || player?.role !== "user" || !player.asked) {
+      if (!live || player?.role !== "user")
+        this.noteCodeword(chatId, !live ? "Not used: the chat could not be read." : `Not used: the newest message in the chat was the narrator\u2019s, not yours (${player ? `${player.content.length} characters` : "none"}; left out: ${exclude ? "one reply" : "nothing"}).`);
       return null;
+    }
     const only = !splitOoc(player.content).story.trim();
     const key = `${player.id}:${(await fingerprints([player]))[0]}`;
-    if (state.look?.key === key)
+    if (state.look?.key === key) {
+      this.noteCodeword(chatId, "Used the deep look from before (a swipe).");
       return { only, look: state.look.look, player: player.id };
+    }
     if (dry)
       return { only, player: player.id };
+    this.noteCodeword(chatId, `Seen. Deep look started; the reply waits up to ${wait} seconds.`);
     let entry = this.looks.get(chatId);
     if (entry?.key !== key) {
       entry = { key, look: this.runLook(chatId, state, live, player, only, key) };
@@ -6096,6 +6121,8 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
     })]);
     if (timer)
       clearTimeout(timer);
+    if (!look)
+      this.noteCodeword(chatId, `The reply went ahead without it after ${wait} seconds (or the deep look failed; see the next line).`);
     return { only, ...look ? { look } : {}, player: player.id };
   }
   async runLook(chatId, state, live, player, only, key) {
@@ -6114,9 +6141,13 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
         present: presentPeople(live.version.notebook, this.narrated(live), this.listed(live)).map((p) => p.name),
         persona: await this.persona()
       }), checkLook, AbortSignal.timeout(180000), trace.sentBack);
-    } catch {
+    } catch (error) {
       look = null;
+      this.noteCodeword(chatId, `Deep look failed: ${error instanceof ModelError ? `${error.message} (${error.code})` : "the model\u2019s answer could not be used"}.`);
     }
+    const took = trace.done("").ms;
+    if (look)
+      this.noteCodeword(chatId, `Deep look finished in ${Math.round(took / 1000)} seconds.`);
     await this.serial(chatId, async () => {
       const current = await this.load(chatId);
       if (!current)

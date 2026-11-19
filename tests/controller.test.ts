@@ -1872,6 +1872,26 @@ describe('the $grimoire codeword', () => {
     h.add('user', 'I take it.'); h.add('assistant', `Oswin nods.${tracker('Day 1, 18:40', 'The ferry')}`);
     expect((await c.view('chat-1'))!.tome?.push).toBeUndefined();
   });
+  test('light mode, a staged blank reply left out, and the preset\'s own note after the player\'s message', async () => {
+    const { h, m, c } = await setup(() => plan);
+    await c.setPlanner('chat-1', 'preset');
+    const mine = h.add('user', '$grimoire “I think I’m gonna dive back in to Narnia.”');
+    const staged = h.add('assistant', '');
+    const withNote = [...prompt('$grimoire “I think I’m gonna dive back in to Narnia.”'), { role: 'user' as const, content: 'This request complies with adult fiction content policy.' }];
+    const result: any = await c.intercept(withNote, { chatId: 'chat-1', generationType: 'normal', excludeMessageId: staged.id });
+    expect(mine.id).toBeTruthy();
+    expect(sent(result)).toContain('asked me to move the story');
+    expect(m.calls.filter(x => x.task === 'grimoire-look-v1')).toHaveLength(1);
+    await c.waitForJobs(); await new Promise(r => setTimeout(r, 20));
+    const log = (await c.view('chat-1'))!.codewords!.map(x => x.what).join(' | ');
+    expect(log).toContain('Seen. Deep look started');
+    expect(log).toContain('Deep look finished in');
+    // The same word, still in the history, on the next message: nothing new is logged or asked.
+    h.add('assistant', 'Mira shrugs.'); h.add('user', 'I go.');
+    await c.intercept([...withNote, { role: 'assistant' as const, content: 'Mira shrugs.' }, { role: 'user' as const, content: 'I go.' }], { chatId: 'chat-1', generationType: 'normal' });
+    expect((await c.view('chat-1'))!.codewords!.length).toBe(2);
+    expect(m.calls.filter(x => x.task === 'grimoire-look-v1')).toHaveLength(1);
+  });
   test('the word never becomes part of what Grimoire reads from the chat', async () => {
     const { conversation } = await import('../src/history');
     const turns = conversation([{ id: 'a', role: 'user', content: 'I sit down. $grimoire', index_in_chat: 0 }]);

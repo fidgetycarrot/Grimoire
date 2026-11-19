@@ -10,7 +10,7 @@ import type { Glance, SkipOffer } from './skip';
 import type { TomeView } from './tome';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.39.3';
+export const VERSION = '0.39.4';
 export const MAX_VERSIONS = 16;
 
 /** One saved state of the notebook and the chat history it describes. */
@@ -47,6 +47,8 @@ export interface ChatState {
   look?: { key: string; look: Look; at: number };
   /** The player's last codeword: their message, whether a deep look shaped the reply, its plan (to grade), and whether the reply took it. */
   pushed?: { player: string; look: boolean; at: number; move?: string; landed?: boolean; /** The reply went ahead without it, and it has finished since: a swipe uses it. */ ready?: boolean; /** It went ahead without it, and it never finished. */ failed?: boolean };
+  /** What happened the last few times the player typed $grimoire, in plain words, newest last: to see why one didn't work. */
+  codewords?: Array<{ at: number; what: string }>;
   /** How many check-ups this chat has had, to send every few to the main connection for a full review. */
   checkups?: number;
   /** Due steps whose moment the quick check saw in the latest reply, which the reply didn't take: the next reply should. */
@@ -136,7 +138,7 @@ export interface ChatView {
   canUndo: boolean;
   /** This part of the story has nothing left to happen: a new chapter is offered. */
   spent: boolean;
-  /** Of recent replies where the note asked for a due step now, how many showed it. */ follow: { offered: number; used: number } | null; /** Of recent replies with someone who had been slipping, how many had them sound like themselves again. */ voices?: { asked: number; landed: number } | null;
+  /** Of recent replies where the note asked for a due step now, how many showed it. */ follow: { offered: number; used: number } | null; /** Of recent replies with someone who had been slipping, how many had them sound like themselves again. */ voices?: { asked: number; landed: number } | null; /** What came of the last few $grimoire tries. */ codewords?: Array<{ at: number; what: string }>;
   /** How long recent notebook jobs' requests took. */ traces?: JobTrace[];
   /** Where the story stands, for the player. */ recap: string;
   /** The mystery as the player may see it: the question and the clues they have found. Never the answer. */ mystery?: MysteryView | null;
