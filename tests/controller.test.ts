@@ -1892,6 +1892,14 @@ describe('the $grimoire codeword', () => {
     expect((await c.view('chat-1'))!.codewords!.length).toBe(2);
     expect(m.calls.filter(x => x.task === 'grimoire-look-v1')).toHaveLength(1);
   });
+  test('the empty reply being written is left out even when the host does not say so', async () => {
+    const { h, m, c } = await setup(() => plan);
+    h.add('user', 'I wait. $grimoire');
+    h.add('assistant', '');
+    const result: any = await c.intercept(prompt('I wait. $grimoire'), { chatId: 'chat-1', generationType: 'normal' });
+    expect(sent(result)).toContain('My plan for this reply: I have Oswin');
+    expect(m.calls.filter(x => x.task === 'grimoire-look-v1')).toHaveLength(1);
+  });
   test('the word never becomes part of what Grimoire reads from the chat', async () => {
     const { conversation } = await import('../src/history');
     const turns = conversation([{ id: 'a', role: 'user', content: 'I sit down. $grimoire', index_in_chat: 0 }]);

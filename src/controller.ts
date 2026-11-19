@@ -1213,7 +1213,9 @@ export class NotebookController {
     });
     let note = '', exclude = context.excludeMessageId;
     // Some hosts leave out which reply is being replaced. Then the newest reply is the one being redone.
-    if (!exclude && context.generationType !== 'normal') { try { const last = conversation(await this.api.chat.getMessages(context.chatId)).at(-1); if (last?.role === 'assistant') exclude = last.id; } catch { /* use the whole chat */ } }
+    // A new reply can also arrive as an empty message already in the chat, with nothing saying to leave it out: the
+    // reply being written now is never part of what Grimoire reads.
+    if (!exclude) { try { const last = conversation(await this.api.chat.getMessages(context.chatId)).at(-1); if (last?.role === 'assistant' && (context.generationType !== 'normal' || !last.content.trim())) exclude = last.id; } catch { /* use the whole chat */ } }
     // A swipe with guidance: the player has said what this reply should be, so the note must not pull another way.
     const guided = context.generationType !== 'normal' && typeof context.regenFeedback === 'string' && context.regenFeedback.trim().length > 0;
     // The player asked for the story to move: a deep look decides how, if it comes back in time.

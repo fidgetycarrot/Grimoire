@@ -4584,7 +4584,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.39.4";
+var VERSION = "0.39.5";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -6037,10 +6037,10 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
         return typeof m.content === "string" ? { ...m, content: clean(m.content) } : { ...m, content: m.content.map((p) => typeof p.text === "string" ? { ...p, text: clean(p.text) } : p) };
       });
     let note = "", exclude = context.excludeMessageId;
-    if (!exclude && context.generationType !== "normal") {
+    if (!exclude) {
       try {
         const last = conversation(await this.api.chat.getMessages(context.chatId)).at(-1);
-        if (last?.role === "assistant")
+        if (last?.role === "assistant" && (context.generationType !== "normal" || !last.content.trim()))
           exclude = last.id;
       } catch {}
     }
