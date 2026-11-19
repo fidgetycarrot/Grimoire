@@ -4581,7 +4581,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.39.1";
+var VERSION = "0.39.2";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -4872,6 +4872,7 @@ class NotebookController {
         held: Array.isArray(saved.held) ? saved.held.filter((x) => typeof x === "string").slice(0, 12) : [],
         blocked: Array.isArray(saved.blocked) ? saved.blocked.filter((x) => typeof x === "string").slice(0, 6) : [],
         checkups: Number.isInteger(saved.checkups) ? saved.checkups : 0,
+        ...saved.pushed && typeof saved.pushed === "object" && typeof saved.pushed.player === "string" ? { pushed: saved.pushed } : {},
         ...saved.look && typeof saved.look === "object" && typeof saved.look.key === "string" ? { look: saved.look } : {},
         open: Array.isArray(saved.open) ? saved.open.filter((x) => typeof x === "string").slice(0, 6) : [],
         missed: Array.isArray(saved.missed) ? saved.missed.filter((x) => typeof x === "string").slice(0, 6) : [],
@@ -5068,7 +5069,7 @@ class NotebookController {
         spent: !!notebook && !storyLeft(notebook),
         memory: mem,
         skipOffer: offer,
-        tome
+        tome: tome && state.pushed && live && state.pushed.player === [...live.turns].reverse().find((t) => t.role === "user")?.id ? { ...tome, push: { look: state.pushed.look, ...state.pushed.landed !== undefined ? { landed: state.pushed.landed } : {} } } : tome
       };
     });
   }
@@ -6019,15 +6020,14 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
     if (!["normal", "regenerate", "swipe"].includes(context.generationType) || !context.chatId)
       return messages;
     const text = (m) => typeof m.content === "string" ? m.content : m.content.map((p) => p.text ?? "").join(" ");
-    const lastUser = messages.map((m) => m.role).lastIndexOf("user");
-    const typed = lastUser >= 0 && hasCodeword(text(messages[lastUser]));
-    if (messages.some((m) => m.role === "user" && hasCodeword(text(m))))
-      messages = messages.map((m, i) => {
+    const typed = messages.some((m) => m.role === "user" && hasCodeword(text(m)));
+    if (typed)
+      messages = messages.map((m) => {
         if (m.role !== "user" || !hasCodeword(text(m)))
           return m;
         const clean = (t) => {
           const out = stripCodeword(t);
-          return i === lastUser && !out.trim() ? CARRY_ON : out;
+          return !out.trim() ? CARRY_ON : out;
         };
         return typeof m.content === "string" ? { ...m, content: clean(m.content) } : { ...m, content: m.content.map((p) => typeof p.text === "string" ? { ...p, text: clean(p.text) } : p) };
       });
@@ -6043,7 +6043,18 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
     let push;
     if (typed && !guided) {
       try {
-        push = await this.lookFor(context.chatId, exclude, (await this.settings()).lookWait ?? 15, !!context.isDryRun) ?? undefined;
+        const found = await this.lookFor(context.chatId, exclude, (await this.settings()).lookWait ?? 15, !!context.isDryRun);
+        if (found) {
+          push = { only: found.only, ...found.look ? { look: found.look } : {} };
+          if (!context.isDryRun)
+            await this.serial(context.chatId, async () => {
+              const current = await this.load(context.chatId);
+              if (!current)
+                return;
+              current.pushed = { player: found.player, look: !!found.look, at: Date.now(), ...found.look ? { move: found.look.move } : {} };
+              await this.save(current);
+            }).catch(() => {});
+        }
       } catch {
         push = undefined;
       }
@@ -6071,9 +6082,9 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
     const only = !splitOoc(player.content).story.trim();
     const key = `${player.id}:${(await fingerprints([player]))[0]}`;
     if (state.look?.key === key)
-      return { only, look: state.look.look };
+      return { only, look: state.look.look, player: player.id };
     if (dry)
-      return { only };
+      return { only, player: player.id };
     let entry = this.looks.get(chatId);
     if (entry?.key !== key) {
       entry = { key, look: this.runLook(chatId, state, live, player, only, key) };
@@ -6085,7 +6096,7 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
     })]);
     if (timer)
       clearTimeout(timer);
-    return { only, ...look ? { look } : {} };
+    return { only, ...look ? { look } : {}, player: player.id };
   }
   async runLook(chatId, state, live, player, only, key) {
     const settings = await this.settings(), trace = new Trace("look", "Deep look");
@@ -6250,6 +6261,14 @@ ${recallNote(recall)}`;
       const plan = quickQuestions(live.version.notebook, live.moment, `${said}
 ${readable(reply.content, 8000)}
 ${live.values.location ?? ""}`, light);
+      const playerTurn = [...live.turns].reverse().find((t) => t.role === "user");
+      const pushed = live.state.pushed?.player === playerTurn?.id ? live.state.pushed : undefined;
+      if (pushed?.move)
+        plan.questions.push_1 = {
+          type: "noul",
+          instructions: `Does the latest reply bring in this development, or something very close to it? Development: ${pushed.move}`,
+          criteria: { true: "Yes, it happens in the reply, in this form or close to it.", false: "No, the reply goes another way." }
+        };
       let result = null, error = "";
       try {
         result = await this.api.decisions.evaluate({
@@ -6280,6 +6299,9 @@ ${live.values.location ?? ""}`, light);
             now = await this.live(state, messages);
           }
         }
+        const pushAnswer = result?.answers.push_1;
+        if (state.pushed && pushAnswer?.type === "noul")
+          state.pushed = { ...state.pushed, landed: pushAnswer.noul >= 0.7 };
         if (result && covers(live.prints, now.prints)) {
           outcome = applyQuick(now.version.notebook, plan, result, now.moment, said);
           if (outcome.changed) {

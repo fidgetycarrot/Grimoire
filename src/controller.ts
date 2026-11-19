@@ -257,7 +257,7 @@ export class NotebookController {
         version: 1, chatId, enabled: saved.enabled === true, pace: PACES.includes(saved.pace as Pace) ? saved.pace as Pace : 'auto', preferences: validPreferences(saved.preferences),
         versions, recipe: validateRecipe(saved.recipe).recipe, checks: Array.isArray(saved.checks) ? saved.checks as ChatState['checks'] : [],
         skipHours: Number(saved.skipHours) > 0 ? Number(saved.skipHours) : 0, skipTurn: Number(saved.skipTurn) > 0 ? Number(saved.skipTurn) : 0, needsCheck: typeof saved.needsCheck === 'string' ? saved.needsCheck : '', queued: typeof saved.queued === 'string' ? saved.queued.slice(0, 200) : '', newFaceAt: Number.isInteger(saved.newFaceAt) ? saved.newFaceAt as number : 0, building: typeof saved.building === 'string' ? saved.building.slice(0, 80) : '', seen: Object.fromEntries(Object.entries(record(saved.seen)).filter(([k, v]) => typeof k === 'string' && Number.isInteger(v)).slice(0, 200)) as Record<string, number>, trackerTried: saved.trackerTried === true, skipDismissedAt: Number(saved.skipDismissedAt) > 0 ? Number(saved.skipDismissedAt) : 0,
-        held: Array.isArray(saved.held) ? saved.held.filter((x): x is string => typeof x === 'string').slice(0, 12) : [], blocked: Array.isArray(saved.blocked) ? saved.blocked.filter((x): x is string => typeof x === 'string').slice(0, 6) : [], checkups: Number.isInteger(saved.checkups) ? saved.checkups as number : 0, ...(saved.look && typeof saved.look === 'object' && typeof (saved.look as { key?: unknown }).key === 'string' ? { look: saved.look as ChatState['look'] } : {}), open: Array.isArray(saved.open) ? saved.open.filter((x): x is string => typeof x === 'string').slice(0, 6) : [], missed: Array.isArray(saved.missed) ? saved.missed.filter((x): x is string => typeof x === 'string').slice(0, 6) : [], traces: Array.isArray(saved.traces) ? (saved.traces as JobTrace[]).filter(t => t && typeof t === 'object' && Array.isArray(t.requests)).slice(-TRACES_KEPT) : [], resync: Number.isInteger(saved.resync) ? Number(saved.resync) : null,
+        held: Array.isArray(saved.held) ? saved.held.filter((x): x is string => typeof x === 'string').slice(0, 12) : [], blocked: Array.isArray(saved.blocked) ? saved.blocked.filter((x): x is string => typeof x === 'string').slice(0, 6) : [], checkups: Number.isInteger(saved.checkups) ? saved.checkups as number : 0, ...(saved.pushed && typeof saved.pushed === 'object' && typeof (saved.pushed as { player?: unknown }).player === 'string' ? { pushed: saved.pushed as ChatState['pushed'] } : {}), ...(saved.look && typeof saved.look === 'object' && typeof (saved.look as { key?: unknown }).key === 'string' ? { look: saved.look as ChatState['look'] } : {}), open: Array.isArray(saved.open) ? saved.open.filter((x): x is string => typeof x === 'string').slice(0, 6) : [], missed: Array.isArray(saved.missed) ? saved.missed.filter((x): x is string => typeof x === 'string').slice(0, 6) : [], traces: Array.isArray(saved.traces) ? (saved.traces as JobTrace[]).filter(t => t && typeof t === 'object' && Array.isArray(t.requests)).slice(-TRACES_KEPT) : [], resync: Number.isInteger(saved.resync) ? Number(saved.resync) : null,
         talk: talkLines(saved.talk), notes: playerNotes(saved.notes), quickLog: quickLog(saved.quickLog),
         intimate: Array.isArray(saved.intimate) ? saved.intimate.filter((x): x is string => typeof x === 'string').slice(-300) : [], intimateNow: saved.intimateNow === true,
         paceSignals: Array.isArray(saved.paceSignals) ? saved.paceSignals.filter((x): x is number => Number.isInteger(x)).slice(-12) : [], replan: saved.replan === true, replannedAt: Number(saved.replannedAt) || 0,
@@ -412,7 +412,7 @@ export class NotebookController {
         job: state.job, updatedAt: state.updatedAt, repliesSinceCheck: live ? this.repliesSince(live) : 0, skipHours: state.skipHours, notebook, behind: !!live && live.index !== state.versions.length - 1, earlierParts, quick: state.quick, dueIds: live ? dueThreads(live.version.notebook, live.moment).map(d => d.thread.id) : [],
         glance: live ? glance(live.version.notebook, live.moment) : null, reworking: !!live && this.reworking(state, live),
         talk: state.talk, notes: state.notes, quickLog: state.quickLog, traces: this.tracesOf(state), follow: followRate(state.quickLog), voices: voiceRate(state.quickLog), recap: notebook?.recap ?? '', mystery: mysteryView(notebook?.mystery), canUndo: this.undoable(state) !== null, spent: !!notebook && !storyLeft(notebook), memory: mem,
-        skipOffer: offer, tome,
+        skipOffer: offer, tome: tome && state.pushed && live && state.pushed.player === [...live.turns].reverse().find(t => t.role === 'user')?.id ? { ...tome, push: { look: state.pushed.look, ...(state.pushed.landed !== undefined ? { landed: state.pushed.landed } : {}) } } : tome,
       };
     });
   }
@@ -1202,11 +1202,13 @@ export class NotebookController {
     // The codeword is for Grimoire, never the narrator: it comes out of every message. A message that was only the
     // codeword becomes the player's character carrying on with what they were doing.
     const text = (m: LlmMessageDTO) => typeof m.content === 'string' ? m.content : m.content.map(p => (p as { text?: string }).text ?? '').join(' ');
-    const lastUser = messages.map(m => m.role).lastIndexOf('user');
-    const typed = lastUser >= 0 && hasCodeword(text(messages[lastUser]));
-    if (messages.some(m => m.role === 'user' && hasCodeword(text(m)))) messages = messages.map((m, i) => {
+    // The player's message isn't always the last user message in the prompt: presets add their own after the chat
+    // (Sola's content note, for one). So any message carrying the word counts here, and the chat itself decides whether
+    // it is the player's latest message (lookFor).
+    const typed = messages.some(m => m.role === 'user' && hasCodeword(text(m)));
+    if (typed) messages = messages.map(m => {
       if (m.role !== 'user' || !hasCodeword(text(m))) return m;
-      const clean = (t: string) => { const out = stripCodeword(t); return i === lastUser && !out.trim() ? CARRY_ON : out; };
+      const clean = (t: string) => { const out = stripCodeword(t); return !out.trim() ? CARRY_ON : out; };
       return typeof m.content === 'string' ? { ...m, content: clean(m.content) } : { ...m, content: m.content.map(p => typeof (p as { text?: unknown }).text === 'string' ? { ...p, text: clean((p as { text: string }).text) } : p) } as LlmMessageDTO;
     });
     let note = '', exclude = context.excludeMessageId;
@@ -1216,7 +1218,21 @@ export class NotebookController {
     const guided = context.generationType !== 'normal' && typeof context.regenFeedback === 'string' && context.regenFeedback.trim().length > 0;
     // The player asked for the story to move: a deep look decides how, if it comes back in time.
     let push: { only: boolean; look?: Look } | undefined;
-    if (typed && !guided) { try { push = await this.lookFor(context.chatId, exclude, (await this.settings()).lookWait ?? 15, !!context.isDryRun) ?? undefined; } catch { push = undefined; } }
+    if (typed && !guided) {
+      try {
+        const found = await this.lookFor(context.chatId, exclude, (await this.settings()).lookWait ?? 15, !!context.isDryRun);
+        if (found) {
+          push = { only: found.only, ...(found.look ? { look: found.look } : {}) };
+          // Remembered so the chronicle can say what happened with it, and the reply checker can see whether it landed.
+          if (!context.isDryRun) await this.serial(context.chatId, async () => {
+            const current = await this.load(context.chatId);
+            if (!current) return;
+            current.pushed = { player: found.player, look: !!found.look, at: Date.now(), ...(found.look ? { move: found.look.move } : {}) };
+            await this.save(current);
+          }).catch(() => {});
+        }
+      } catch { push = undefined; }
+    }
     try { note = await this.noteFor(context.chatId, exclude, guided, push); } catch { return messages; }
     if (!note) return messages;
     note += await this.memoryNote(context.chatId, messages, exclude);
@@ -1231,7 +1247,7 @@ export class NotebookController {
    * The codeword's deep look, for the player message just sent. The reply waits for it up to `wait` seconds; if it
    * isn't back by then, the note uses the notebook's best ready step, and the look keeps going so a swipe can use it.
    */
-  private async lookFor(chatId: string, exclude: string | undefined, wait: number, dry: boolean): Promise<{ only: boolean; look?: Look } | null> {
+  private async lookFor(chatId: string, exclude: string | undefined, wait: number, dry: boolean): Promise<{ only: boolean; look?: Look; player: string } | null> {
     const state = await this.load(chatId);
     if (!state?.enabled || !state.versions.length) return null;
     const live = await this.live(state, await this.api.chat.getMessages(chatId), exclude);
@@ -1240,14 +1256,14 @@ export class NotebookController {
     if (!live || player?.role !== 'user' || !player.asked) return null;
     const only = !splitOoc(player.content).story.trim();
     const key = `${player.id}:${(await fingerprints([player]))[0]}`;
-    if (state.look?.key === key) return { only, look: state.look.look };
-    if (dry) return { only };
+    if (state.look?.key === key) return { only, look: state.look.look, player: player.id };
+    if (dry) return { only, player: player.id };
     let entry = this.looks.get(chatId);
     if (entry?.key !== key) { entry = { key, look: this.runLook(chatId, state, live, player, only, key) }; this.looks.set(chatId, entry); }
     let timer: ReturnType<typeof setTimeout> | undefined;
     const look = await Promise.race([entry.look, new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), wait * 1000); })]);
     if (timer) clearTimeout(timer);
-    return { only, ...(look ? { look } : {}) };
+    return { only, ...(look ? { look } : {}), player: player.id };
   }
   private async runLook(chatId: string, state: ChatState, live: Live, player: Turn, only: boolean, key: string): Promise<Look | null> {
     const settings = await this.settings(), trace = new Trace('look', 'Deep look');
@@ -1399,6 +1415,11 @@ export class NotebookController {
       const reply = live.turns.at(-1)!, player = [...live.turns].reverse().find(t => t.role === 'user');
       const said = readable(splitOoc(player?.content ?? '').story, 2000);
       const plan = quickQuestions(live.version.notebook, live.moment, `${said}\n${readable(reply.content, 8000)}\n${live.values.location ?? ''}`, light);
+      // The player asked for the story to move: did the reply bring in what the deep look picked?
+      const playerTurn = [...live.turns].reverse().find(t => t.role === 'user');
+      const pushed = live.state.pushed?.player === playerTurn?.id ? live.state.pushed : undefined;
+      if (pushed?.move) plan.questions.push_1 = { type: 'noul', instructions: `Does the latest reply bring in this development, or something very close to it? Development: ${pushed.move}`,
+        criteria: { true: 'Yes, it happens in the reply, in this form or close to it.', false: 'No, the reply goes another way.' } };
       let result: DecisionResult | null = null, error = '';
       try {
         result = await this.api.decisions.evaluate({
@@ -1420,6 +1441,8 @@ export class NotebookController {
         // No answer during an intimate scene: assume it goes on, so the scene stays protected and its replies stay uncounted.
         if (!result && state.intimateNow && settings.intimate === 'protect') { const judged = live.prints.at(-1); if (judged && !state.intimate.includes(judged)) { state.intimate = [...state.intimate, judged].slice(-300); now = (await this.live(state, messages))!; } }
         // The reply it judged must still be in the chat. A swipe or edit meanwhile means the answers are about a reply that is gone.
+        const pushAnswer = result?.answers.push_1;
+        if (state.pushed && pushAnswer?.type === 'noul') state.pushed = { ...state.pushed, landed: pushAnswer.noul >= 0.7 };
         if (result && covers(live.prints, now.prints)) {
           outcome = applyQuick(now.version.notebook, plan, result, now.moment, said);
           if (outcome.changed) {

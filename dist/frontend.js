@@ -163,6 +163,10 @@ var styles = `
 .gm-glance-text{min-width:0;flex:1;color:#d6ccb9}.gm-glance-label{font-weight:700;color:#fff6e5;margin-right:6px}
 .gm-glance-pulse{display:flex;align-items:center;gap:8px;font-size:12px;color:#d6ccb9}.gm-glance-pulse i{width:8px;height:8px;border-radius:50%;flex:none;box-shadow:0 0 8px currentColor}
 .gm-glance-empty{font-size:12px;color:var(--gm-sub);font-style:italic}
+
+.gm-tome-push{display:flex;align-items:baseline;gap:9px;margin:0 0 8px;padding:7px 11px;border-radius:10px;background:linear-gradient(90deg,rgba(228,186,108,.12),rgba(255,255,255,.02));border:1px solid rgba(228,186,108,.3);font-size:12px;line-height:1.45;color:#e9dfcc}
+.gm-tome-push-mark{flex:none;font-size:10px;font-weight:750;letter-spacing:.12em;text-transform:uppercase;color:#f3d286}
+.gm-tome-push[data-landed=false]{border-color:rgba(216,140,164,.35);background:linear-gradient(90deg,rgba(216,140,164,.1),rgba(255,255,255,.02))}
 `;
 
 // src/badges.ts
@@ -222,7 +226,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.39.1";
+var VERSION = "0.39.2";
 var CHAPTER_WORKING = "Starting a new chapter";
 var NO_MYSTERY = "Notebook ready, without the mystery";
 var CHAPTER_DONE = "New chapter ready";
@@ -1895,6 +1899,14 @@ function setup(ctx) {
       syncReplyTome();
     };
     tomeHost.replaceChildren();
+    if (tome.push) {
+      const p = tome.push, ribbon = el("div", "gm-tome-push");
+      if (p.landed !== undefined)
+        ribbon.dataset.landed = String(p.landed);
+      const words = !p.look ? "The deep look wasn’t ready in time, so this reply used Grimoire’s next step. A swipe can use the deep look once it’s done." : p.landed === true ? "Grimoire’s deep look shaped this reply, and it landed." : p.landed === false ? "Grimoire picked a move, but the narrator went another way. A swipe tries the same move again." : "Grimoire’s deep look shaped this reply.";
+      ribbon.append(el("span", "gm-tome-push-mark", "✦ $grimoire"), el("span", "", words));
+      tomeHost.append(ribbon);
+    }
     if (tome.mode === "intimate" && !ui.expanded) {
       const veil = el("div", "gm-tome-veil");
       const left = el("div", "gm-tome-veil-left");

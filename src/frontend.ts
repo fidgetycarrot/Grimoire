@@ -1113,6 +1113,17 @@ const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally']
 
     const redraw = () => { tomeDrawnKey = ''; syncReplyTome(); };
     tomeHost.replaceChildren();
+    // The player typed $grimoire for this reply: say what came of it, never what was planned.
+    if (tome.push) {
+      const p = tome.push, ribbon = el('div', 'gm-tome-push');
+      if (p.landed !== undefined) ribbon.dataset.landed = String(p.landed);
+      const words = !p.look ? 'The deep look wasn’t ready in time, so this reply used Grimoire’s next step. A swipe can use the deep look once it’s done.'
+        : p.landed === true ? 'Grimoire’s deep look shaped this reply, and it landed.'
+        : p.landed === false ? 'Grimoire picked a move, but the narrator went another way. A swipe tries the same move again.'
+        : 'Grimoire’s deep look shaped this reply.';
+      ribbon.append(el('span', 'gm-tome-push-mark', '✦ $grimoire'), el('span', '', words));
+      tomeHost.append(ribbon);
+    }
 
     if (tome.mode === 'intimate' && !ui.expanded) {
       const veil = el('div', 'gm-tome-veil');

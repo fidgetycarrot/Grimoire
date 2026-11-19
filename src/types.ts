@@ -10,7 +10,7 @@ import type { Glance, SkipOffer } from './skip';
 import type { TomeView } from './tome';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.39.1';
+export const VERSION = '0.39.2';
 export const MAX_VERSIONS = 16;
 
 /** One saved state of the notebook and the chat history it describes. */
@@ -45,6 +45,8 @@ export interface ChatState {
   blocked?: string[];
   /** The codeword's last deep look: the player message it answers (id and fingerprint) and its plan, so a swipe reuses it. */
   look?: { key: string; look: Look; at: number };
+  /** The player's last codeword: their message, whether a deep look shaped the reply, its plan (to grade), and whether the reply took it. */
+  pushed?: { player: string; look: boolean; at: number; move?: string; landed?: boolean };
   /** How many check-ups this chat has had, to send every few to the main connection for a full review. */
   checkups?: number;
   /** Due steps whose moment the quick check saw in the latest reply, which the reply didn't take: the next reply should. */

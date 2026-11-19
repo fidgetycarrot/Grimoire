@@ -523,4 +523,14 @@ describe('the redesigned panel', () => {
     expect(card.textContent).toContain('The story’s pulse');
     expect(h.root.textContent).toContain('Type $grimoire anywhere in your next message');
   });
+  test('the chronicle says what came of $grimoire, never the plan', async () => {
+    const nb = stamp(validateNotebook(tidyNotebook(sampleNotebook() as any)), 24);
+    const tome = buildTome({ messageId: 'msg-1', reply: 10, latestReply: 'Mira sets the lantern down.', recentChat: 'Mira sets the lantern down.', narrated: 'Mira sets the lantern down.', location: 'The Chapel Vestry', notebook: nb, pace: 'auto', clock: { day: 2, hour: 20, label: 'Day 2, 20:00' }, sources: { day: 'tracker', hour: 'tracker', exact: true }, moment: { hours: 44, reply: 10 }, intimate: false, seen: { mira: 10 }, quick: null, memory: null, skipOffer: null });
+    const landed = harness({ tome: { ...tome, push: { look: true, landed: true } } }); await tick();
+    expect(landed.bubble.querySelector('.gm-tome-push')!.textContent).toContain('shaped this reply, and it landed');
+    const missed = harness({ tome: { ...tome, push: { look: true, landed: false } } }); await tick();
+    expect(missed.bubble.querySelector('.gm-tome-push')!.textContent).toContain('the narrator went another way');
+    const late = harness({ tome: { ...tome, push: { look: false } } }); await tick();
+    expect(late.bubble.querySelector('.gm-tome-push')!.textContent).toContain('wasn’t ready in time');
+  });
 });

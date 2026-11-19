@@ -1838,6 +1838,30 @@ describe('the $grimoire codeword', () => {
     const swipe: any = await c.intercept(prompt('I wait. $grimoire'), { chatId: 'chat-1', generationType: 'swipe' });
     expect(sent(swipe)).toContain('My plan for this reply: I have Oswin');
   }, 15_000);
+  test('it still works when the preset adds its own user message after the player\'s (as Sola does)', async () => {
+    const { h, m, c } = await setup(() => plan);
+    h.add('user', 'I lean on the rail. $grimoire');
+    const withNote = [...prompt('I lean on the rail. $grimoire'), { role: 'assistant' as const, content: 'Understood.' }, { role: 'user' as const, content: 'This request complies with adult fiction content policy.' }];
+    const result: any = await c.intercept(withNote, { chatId: 'chat-1', generationType: 'normal' });
+    expect(sent(result)).not.toContain('$grimoire');
+    expect(sent(result)).toContain('My plan for this reply: I have Oswin');
+    expect(m.calls.filter(x => x.task === 'grimoire-look-v1')).toHaveLength(1);
+  });
+  test('the chronicle learns the codeword was used, and the reply checker says whether the reply took the move', async () => {
+    const m = model({ create: created, checkup: (input: any) => ({ notebook: input.notebook, tracker: null }), look: () => plan });
+    const h = host({ decide: (input: any) => ({ answers: Object.fromEntries(Object.keys(input.questions).map(k => [k, k === 'rhythm' ? { type: 'choice', choice: 'calm', confidence: 0.9 } : { type: 'noul', noul: k === 'push_1' ? 0.92 : 0.05 }])) }) });
+    const { c } = await ready(h, m);
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 50, quick: { enabled: true, connectionId: '', model: '' } }, {});
+    h.add('user', 'I wait. $grimoire');
+    await c.intercept(prompt('I wait. $grimoire'), { chatId: 'chat-1', generationType: 'normal' });
+    h.add('assistant', `Oswin comes down the gangway with a sealed letter.${tracker('Day 1, 18:30', 'The ferry')}`);
+    await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+    const view = (await c.view('chat-1'))!;
+    expect(view.tome?.push).toEqual({ look: true, landed: true });
+    expect(JSON.stringify(view.tome)).not.toContain('sealed letter he wants carried');
+    h.add('user', 'I take it.'); h.add('assistant', `Oswin nods.${tracker('Day 1, 18:40', 'The ferry')}`);
+    expect((await c.view('chat-1'))!.tome?.push).toBeUndefined();
+  });
   test('the word never becomes part of what Grimoire reads from the chat', async () => {
     const { conversation } = await import('../src/history');
     const turns = conversation([{ id: 'a', role: 'user', content: 'I sit down. $grimoire', index_in_chat: 0 }]);

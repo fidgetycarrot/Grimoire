@@ -76,6 +76,8 @@ export interface TomeView {
     statusLine: string;
   };
   tabs: TomeTab[];
+  /** The player typed $grimoire for this reply: whether a deep look shaped it, and (once the reply checker has read it) whether the reply took it. Never the plan itself. */
+  push?: { look: boolean; landed?: boolean };
 }
 
 export interface TomeInput {
