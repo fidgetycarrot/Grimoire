@@ -553,6 +553,21 @@ describe('the quick check', () => {
     expect(checkups[0].messages[0].content).not.toContain('This update is also a full review');
     expect(sent.find(r => JSON.parse(r.messages.at(-1).content).task === 'grimoire-create-v1').connection_id).toBe('model');
   });
+  test('routine check-ups can use another model on the same connection, while the backup keeps its own', async () => {
+    const h = host();
+    h.add('assistant', `The ferry bell rings.${tracker('Day 1, 18:00', 'The ferry')}`);
+    const m = model({ create: created, checkup: (input: any) => ({ notebook: input.notebook, tracker: null }) });
+    const sent: any[] = [];
+    (h.api as any).connections.get = async (id: string) => ({ id, provider: 'openrouter', model: 'big/model' });
+    (h.api as any).generate = { raw: async (request: any) => { sent.push(request); return { content: await m.ask(request.messages) }; } };
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', checkupModel: 'small/model', every: 50 }, {});
+    const c = new NotebookController(h.api);
+    await c.create('chat-1', {}); await c.waitForJobs();
+    for (const reason of ['3 replies since the last update', 'A secret came out']) { h.add('user', 'I wait.'); h.add('assistant', `Time passes.${tracker('Day 1, 18:00', 'The ferry')}`); await c.checkup('chat-1', reason); await c.waitForJobs(); }
+    const task = (r: any) => JSON.parse(r.messages.at(-1).content).task;
+    expect(sent.filter(r => task(r) === 'grimoire-checkup-v1').map(r => [r.connection_id, r.model])).toEqual([['model', 'small/model'], ['model', 'big/model']]);
+    expect(sent.find(r => task(r) === 'grimoire-create-v1').model).toBe('big/model');
+  });
   test('check-ups think less than notebook writing unless the player chooses otherwise', async () => {
     const h = host(), c = new NotebookController(h.api, undefined, () => {});
     expect((await c.settings()).checkupReasoning).toBe('low');

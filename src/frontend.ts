@@ -61,7 +61,7 @@ export function setup(ctx: SpindleFrontendContext) {
   let draft = '', draftKeep = false, draftChat = '';
   let refreshing: Promise<void> | null = null, again = false, againForced = false, polling: ReturnType<typeof setInterval> | undefined;
   /** What the panel last drew, so a refresh that changes nothing draws nothing. */
-  let drawn = '', pendingDraw = false;
+  let drawn = '', pendingDraw = false, drawnPage: 'chat' | 'settings' = 'chat';
   const tab = ctx.ui.registerDrawerTab({ id: 'grimoire', title: 'Grimoire', shortName: 'Grimoire', description: 'The story behind your chat: where it is going, why, and how fast.', keywords: ['story', 'notebook', 'plot', 'pace', 'pacing'], iconSvg: ICON });
   const teardown: Array<() => void> = [ctx.dom.addStyle(styles)];
   const app = el('div', 'gm-app'); tab.root.append(app);
@@ -82,11 +82,35 @@ export function setup(ctx: SpindleFrontendContext) {
     return b;
   }
   let fieldCount = 0;
-  function labeled(label: string, control: HTMLElement, hint?: string) {
+  /** Explanations the player opened, kept open across redraws. */
+  const openTips = new Set<string>();
+  /**
+   * A quiet ⓘ that opens a plain explanation in place. Tap or click, so it works on a phone, where hover tooltips
+   * don't. Returns the button and the explanation; put the explanation where it should open.
+   */
+  function tip(key: string, text: string) {
+    const b = el('button', 'gm-tip', 'i'), more = el('p', 'gm-tip-text', text);
+    b.type = 'button'; b.setAttribute('aria-label', 'What is this?'); b.title = 'What is this?';
+    const sync = () => { const on = openTips.has(key); more.hidden = !on; b.setAttribute('aria-expanded', String(on)); };
+    b.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); if (openTips.has(key)) openTips.delete(key); else openTips.add(key); sync(); });
+    sync();
+    return { button: b, text: more };
+  }
+  /** A labelled control: a short line under it that is always shown, and, behind ⓘ, the longer explanation. */
+  function labeled(label: string, control: HTMLElement, hint?: string, more?: string) {
     const wrap = el('div', 'gm-field'), caption = el('label', 'gm-label', label), id = `gm-${++fieldCount}`;
-    control.id = id; caption.htmlFor = id; wrap.append(caption, control);
+    control.id = id; caption.htmlFor = id;
+    if (more) { const t = tip(`field:${label}`, more), row = el('div', 'gm-row'); row.style.gap = '0'; row.append(caption, t.button); wrap.append(row, t.text, control); }
+    else wrap.append(caption, control);
     if (hint) wrap.append(el('p', 'gm-hint', hint));
     return wrap;
+  }
+  /** A heading with an optional ⓘ beside it. */
+  function heading(tag: 'h2' | 'h3' | 'h4', text: string, more?: string) {
+    const box = el('div', 'gm-section-head'), row = el('div', 'gm-row'); row.style.gap = '0';
+    row.append(el(tag, '', text)); box.append(row);
+    if (more) { const t = tip(`head:${text}`, more); row.append(t.button); box.append(t.text); }
+    return box;
   }
   function select(options: Array<[string, string]>, value: string) {
     const s = el('select'); for (const [v, l] of options) { const o = el('option', '', l); o.value = v; s.append(o); } s.value = value; return s;
@@ -169,6 +193,66 @@ const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally']
     card.append(choices);
     return card;
   }
+  /**
+   * The story as it stands, at a glance and with no spoilers: where you are, where you left off, what's in front of
+   * you, who's here, what came back from earlier, and what has happened. The chronicle under a reply shows one of these
+   * at a time; this shows them together. It reads only what the chronicle reads, so it can't give anything away.
+   */
+  function renderGlance(view: ChatView) {
+    const card = el('section', 'gm-card gm-glance'), tome = view.tome;
+    card.append(heading('h4', 'At a glance', 'Your story as it stands, with no spoilers: only what has already happened in the chat, the people you can see, and what you already know. The plans themselves stay in The notebook at the bottom.'));
+    const place = view.checks.find(c => c.name === 'location' && c.value)?.value ?? '';
+    const where = el('div', 'gm-glance-where');
+    where.append(el('span', 'gm-glance-place', place || view.name || 'This story'));
+    if (view.clockText) where.append(el('span', 'gm-glance-time', `${view.clockText} · ${PACE_LABELS[view.pace].name} pace`));
+    card.append(where);
+    if (view.recap) card.append(el('p', 'gm-glance-recap', view.recap));
+    if (!tome) { if (!view.recap) card.append(el('p', 'gm-glance-empty', 'Play a reply and this fills in.')); return card; }
+    const block = (title: string, about: string, items: Array<{ badge: string; label: string; detail: string; highlight?: boolean }>, empty: string) => {
+      const b = el('div', 'gm-glance-block');
+      b.append(heading('h4', title, about));
+      if (!items.length) b.append(el('p', 'gm-glance-empty', empty));
+      for (const item of items) {
+        const row = el('div', 'gm-glance-item'), words = el('span', 'gm-glance-text');
+        if (item.highlight) row.dataset.hot = 'true';
+        if (item.label) words.append(el('span', 'gm-glance-label', item.label));
+        if (item.detail) words.append(document.createTextNode(item.detail));
+        row.append(el('span', 'gm-glance-badge', item.badge), words);
+        b.append(row);
+      }
+      return b;
+    };
+    const tab = (id: TomeTab['id']) => tome.tabs.find(t => t.id === id);
+    // What's in front of you right now.
+    if (tome.compass && tome.compass.hookCount) {
+      const front = el('div', 'gm-glance-block');
+      front.append(heading('h4', `In front of you · ${tome.compass.hookCount} waiting on your move`, 'Things the latest reply left for you to pick up: someone waiting on an answer, an offer, something in reach. Open Read the Room under the reply for a plain retelling and ideas for what to do.'));
+      front.append(el('p', 'gm-small', tome.compass.whisperLine));
+      card.append(front);
+    }
+    const cast = tab('cast');
+    if (cast) card.append(block('Who’s here', cast.about ?? '', cast.items, 'Nobody else is in the scene.'));
+    const beats = tab('clue');
+    if (beats) {
+      const items = [{ badge: beats.isNew ? 'NEW' : 'LATEST', label: '', detail: beats.title, highlight: beats.isNew }, ...beats.items];
+      const b = block(beats.short === 'Clue Found' ? 'Clues you’ve found' : 'What has happened', beats.about ?? '', beats.title && !/^No clues|^Storylines are in motion/.test(beats.title) ? items : beats.items, beats.short === 'Clue Found' ? 'No clues found yet. Look around, ask people.' : 'Nothing has played out yet.');
+      if (beats.pips) b.append(el('p', 'gm-meta', `${beats.pips.found} of ${beats.pips.total} clues found`));
+      card.append(b);
+    }
+    const because = tab('because');
+    if (because) {
+      const items = because.title && !/^Grimoire is watching/.test(because.title) ? [{ badge: because.isNew ? 'NOW' : 'EARLIER', label: because.title, detail: because.body, highlight: because.isNew }, ...because.items] : because.items;
+      card.append(block('Because of what you did', because.about ?? 'Details from earlier that came back, things that came out in the open, and what people remember you said.', items, 'Nothing has come back yet. Small details you notice now can matter later.'));
+    }
+    const world = tab('world');
+    if (world) {
+      const pulse = el('div', 'gm-glance-pulse'), dot = el('i'); dot.style.background = tome.pulse.color; dot.style.color = tome.pulse.color;
+      pulse.append(dot, document.createTextNode(`${world.title}${world.body ? `. ${world.body}` : ''}`));
+      const b = el('div', 'gm-glance-block'); b.append(heading('h4', 'The story’s pulse', 'How the story feels right now (building, a big moment, the aftermath, quiet), and whether the world moved somewhere you weren’t. Grimoire paces what comes next by it.'), pulse);
+      card.append(b);
+    }
+    return card;
+  }
   /** Where the story stands: time, pace, and when Grimoire last updated. */
   function renderNow(view: ChatView, toggle: HTMLElement) {
     const card = el('section', 'gm-card gm-stack');
@@ -176,19 +260,18 @@ const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally']
     const hero = el('div', 'gm-hero'), words = el('div');
     words.append(el('h2', '', view.name || 'This chat'), el('p', 'gm-hint', view.enabled ? 'Grimoire is guiding this story.' : 'Turned off. The narrator gets no notes from Grimoire.'));
     hero.append(words, toggle); card.append(hero);
-    if (view.recap) { const recap = el('div', 'gm-recap'); recap.append(el('h4', '', 'Where you left off'), el('p', '', view.recap)); card.append(recap); }
     // Story time and pace, side by side.
     const s = view.sources;
     const source = !s ? '' : s.day === 'tracker' && s.hour === 'tracker' ? 'From your preset’s tracker' : s.day === 'tracker' || s.hour === 'tracker' ? `${s.day === 'tracker' ? 'Day' : 'Hour'} from your preset’s tracker, the rest kept by Grimoire` : 'Kept by Grimoire, updated at check-ups';
     const time = el('div', 'gm-stat');
-    time.append(el('h4', '', 'Story time'), el('p', 'gm-clock', view.clockText || 'Not set yet'), el('p', 'gm-source', `${source}${s && s.hour !== 'unknown' && !s.exact ? ' · approximate' : ''}`));
+    time.append(heading('h4', 'Story time', 'What time it is in the story. Grimoire uses it to keep things believable: a search party can’t arrive in five minutes, and a shop is shut at night.'), el('p', 'gm-clock', view.clockText || 'Not set yet'), el('p', 'gm-source', `${source}${s && s.hour !== 'unknown' && !s.exact ? ' · approximate' : ''}`));
     const group = el('div', 'gm-pace'); group.setAttribute('role', 'group'); group.setAttribute('aria-label', 'Story pace');
     for (const pace of ORDER) {
       const b = el('button', '', PACE_LABELS[pace].name); b.type = 'button'; b.setAttribute('aria-pressed', String(view.pace === pace));
       b.addEventListener('click', () => { void act('pace', { chatId: view.chatId, pace }).catch(error => notify(error.message, 'error')); });
       group.append(b);
     }
-    const pace = el('div', 'gm-stat'); pace.append(el('h4', '', 'Pace'), group, el('p', 'gm-source', PACE_LABELS[view.pace].help));
+    const pace = el('div', 'gm-stat'); pace.append(heading('h4', 'Pace', 'Auto: Grimoire reads the story’s rhythm and picks. Quiet: no new trouble, so a scene can breathe. Fast: things happen sooner. The same button sits above the message box.'), group, el('p', 'gm-source', PACE_LABELS[view.pace].help));
     const stats = el('div', 'gm-stats'); stats.append(time, pace); card.append(stats);
     if (view.skipHours) card.append(el('p', 'gm-hint', `The narrator will be told that about ${describeDuration(view.skipHours)} have passed.`));
     card.append(renderChapter(view));
@@ -217,7 +300,7 @@ const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally']
     const start = button('Start a new chapter', async () => { await act('push', { chatId: view.chatId, kind: 'chapter' }); notify('Starting a new chapter. One model request.'); }, view.spent ? 'primary' : '');
     start.disabled = job?.status === 'running' || offline || !view.enabled;
     const row = el('div', 'gm-act'), about = el('div');
-    about.append(el('h4', '', 'Chapter'), el('p', 'gm-source', 'Wraps up this part and starts the next, sometimes after a jump in time. No spoilers.'));
+    about.append(heading('h4', 'Chapter', 'Ends this part of the story the way it has gone so far, and plans the next one from what happened. You won’t be told what’s coming. One request to the story planner.'), el('p', 'gm-source', 'Wraps up this part and starts the next, sometimes after a jump in time. No spoilers.'));
     row.append(about, start); box.append(row);
     return box;
   }
@@ -227,7 +310,7 @@ const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally']
     const card = el('section', 'gm-card gm-stack gm-talk');
     if (draftChat !== view.chatId) { draft = ''; draftKeep = false; draftChat = view.chatId; }
     const busy = view.job?.status === 'running', offline = !snapshot?.settings.connectionId;
-    card.append(el('h4', '', 'Talk to Grimoire'), el('p', 'gm-hint', 'Say what you’d like from the story, or ask for ideas. Grimoire changes its plans without telling you what they are.'));
+    card.append(heading('h4', 'Talk to Grimoire', 'Tell Grimoire what you’d like, like “less romance for now” or “I want a road trip”. The story planner changes its plans to fit, without telling you how. Tick “Keep this as a lasting note” for wishes that should always apply. You can undo a change until the next reply.'), el('p', 'gm-hint', 'Say what you’d like from the story, or ask for ideas. Grimoire changes its plans without telling you what they are.'));
     if (view.notes.length) {
       const notes = el('div', 'gm-stack gm-notes'); notes.append(el('p', 'gm-label', 'Your notes'));
       for (const note of view.notes) {
@@ -282,7 +365,7 @@ const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally']
     if (busy && view.job?.kind !== 'talk') card.append(el('p', 'gm-hint', 'Grimoire is updating the notebook. You can send once it’s done.'));
     // A stalled story: say so in the box above, or tap one of these.
     const stuck = el('div', 'gm-sub gm-stack');
-    stuck.append(el('p', 'gm-label', 'Story feeling stuck?'), el('p', 'gm-hint', 'Say “I’m bored” above, or tap one. Grimoire sets something already in your story in motion. It starts small, and you won’t be told what it is. You can undo it until the next reply.'));
+    stuck.append(el('p', 'gm-label', 'Story feeling stuck?'), el('p', 'gm-hint', 'Type $grimoire anywhere in your next message and something happens in that very reply. Or tap one of these: it sets something already in your story in motion, starts small, and you won’t be told what it is.'));
     const chips = el('div', 'gm-chips');
     for (const [kind, label] of PUSHES) {
       const b = button(label, async () => { await act('push', { chatId: view.chatId, kind }); notify('Setting something in motion. One model request.'); });
@@ -325,9 +408,9 @@ const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally']
   const QUICK_WORDS: Array<[RegExp, string]> = [[/^due_/, 'Planned development shown'], [/^reach_/, 'It could reach you here'], [/^moment_/, 'Possible moment happened'], [/^detail_mentioned$/, 'Breadcrumb mentioned'], [/^echo_heard$/, 'Echo heard'], [/^callback_/, 'Breadcrumb paid off'], [/^fits_/, 'Storyline still fits'], [/^truth_/, 'Secret came out'], [/^clue_/, 'Clue found'], [/^theory$/, 'You named an answer'], [/^story_shift$/, 'Change of direction'], [/^rushing$/, 'Rushing'], [/^intimate$/, 'Intimate scene'], [/^new_turn$/, 'Something new'], [/^new_problem$/, 'New problem'], [/^easy_fix$/, 'Solved too easily']];
   const RHYTHM_WORDS: Record<string, string> = { calm: 'calm', rising: 'building', peak: 'big moment', aftermath: 'aftermath', stalled: 'stalled' };
   const STAGE_WORDS: Record<string, string> = { setup: 'setup', rising: 'rising action', climax: 'climax', resolution: 'resolution', ki: 'introduction', sho: 'development', ten: 'the turn', ketsu: 'bringing it together' };
-  const part = (title: string) => { const s = el('section', 'gm-stack gm-part'); s.append(el('h4', '', title)); return s; };
+  const part = (title: string, about?: string) => { const s = el('section', 'gm-stack gm-part'); s.append(heading('h4', title, about)); return s; };
   function glancePart(view: ChatView) {
-    const s = part('At a glance'), g = view.glance;
+    const s = part('The plan in numbers', 'Counts from the notebook, so you can see it’s working without reading any of it: how many storylines are open, how many small details have been planted and paid off, how many people you’ve met.'), g = view.glance;
     if (!g) return s;
     const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
     const speeds = [g.threads.urgent && `${g.threads.urgent} urgent`, g.threads.steady && `${g.threads.steady} steady`, g.threads.slow && `${g.threads.slow} slow`].filter(Boolean).join(', ');
@@ -346,7 +429,7 @@ const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally']
     return s;
   }
   function quickPart(view: ChatView) {
-    const s = part('Quick check answers');
+    const s = part('Quick check answers', 'After each reply, the reply checker answers a few yes-or-no questions. These are its answers, as how sure it was (70% or more counts as yes). “Is the narrator listening” counts how often a planned step whose moment had come actually happened. If it’s low, your preset may be following its own plans instead.');
     const records = [...(view.quickLog ?? [])].reverse().slice(0, 12);
     if (!records.length) { s.append(el('p', 'gm-small', 'No quick checks yet.')); return s; }
     if (view.voices) s.append(el('p', 'gm-small', `Voice fixes: in ${view.voices.landed} of the last ${view.voices.asked} replies with someone who had been slipping, they sounded like themselves again.`));
@@ -372,7 +455,7 @@ const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally']
     return s;
   }
   function trackerPart(view: ChatView) {
-    const s = part('What Grimoire reads from your preset');
+    const s = part('What Grimoire reads from your preset', 'If your preset writes a status block (time, place, who’s here), Grimoire reads it instead of guessing. These are the facts it found and where they come from.');
     if (!view.checks.length) { s.append(el('p', 'gm-small', 'No tracker was found in this chat, so Grimoire keeps the story time itself. If your preset adds a status block later, a check-up can learn to read it.')); return s; }
     const list = el('ul', 'gm-fields');
     for (const check of view.checks) { const li = el('li'); const state = el('span', 'gm-dot', STATUS_WORDS[check.status]); state.dataset.state = check.status; li.append(el('span', '', `${FIELD_WORDS[check.name] ?? check.name}${check.value ? `: ${check.value}` : ''}`), state); list.append(li); }
@@ -428,7 +511,7 @@ const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally']
   }
   /** How long Grimoire's model requests took, newest job first: to find out what makes a job slow. */
   function timingPart(traces: NonNullable<ChatView['traces']>) {
-    const s = part('How long Grimoire took');
+    const s = part('How long Grimoire took', 'Each recent job, how long it took, and which model did it. Tokens out (thinking included) are what costs the most. Useful when something feels slow or pricey.');
     const time = (ms: number) => ms < 60_000 ? `${Math.max(1, Math.round(ms / 1000))} s` : `${Math.floor(ms / 60_000)} min ${Math.round((ms % 60_000) / 1000)} s`;
     const num = (n: number) => n.toLocaleString('en-US');
     const KIND: Record<string, string> = { create: 'Writing the notebook', checkup: 'Check-up', talk: 'Talk', look: 'Deep look ($grimoire)' };
@@ -451,7 +534,7 @@ const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally']
   }
   /** How well Lumiverse's Memory Cortex is keeping up with this chat, in counts. */
   function memoryPart(m: NonNullable<ChatView['memory']>) {
-    const s = part('Lumiverse memory');
+    const s = part('Lumiverse memory', 'What Lumiverse’s Memory Cortex remembers about this chat, and whether Grimoire passed any of it to the narrator on the last reply.');
     const list = el('ul', 'gm-fields');
     const row = (label: string, value: string) => { const li = el('li'); li.append(el('span', '', label), el('span', 'gm-dot', value)); list.append(li); };
     row('People and places remembered', String(m.people));
@@ -569,80 +652,144 @@ const SIZE_CHOICES: Array<[string, string]> = [['auto', 'Let it grow naturally']
     else if (view.behind && view.enabled) body.append(el('p', 'gm-hint', 'You went back in the chat, so Grimoire is using its notebook from before that point. Nothing from the removed replies counts.'));
     if (view.reworking && view.enabled) body.append(el('p', 'gm-hint', 'The story changed direction. Grimoire is reworking its plans to fit, and holds older plans back meanwhile. Nothing it already set up is forgotten.'));
     body.append(renderNow(view, toggle));
+    if (view.enabled) body.append(renderGlance(view));
     if (view.skipOffer && view.enabled) body.append(renderSkipOffer(view));
     body.append(renderSteer(view), ...(view.hasNotebook ? [...(view.preferences.planner === 'preset' && view.mystery?.status !== 'open' ? [] : [renderMystery(view)]), renderTaste(view)] : []), renderBehind(view), renderSpoilers(view), renderMore(view));
   }
 
   // ----- Settings -----
+  /** The connection list as choices, with what the first choice means. */
+  function connectionChoices(first: string): Array<[string, string]> {
+    return [['', first], ...(snapshot?.connections ?? []).map(c => [c.id, `${c.name}${c.model ? ` · ${c.model}` : ''}`] as [string, string])];
+  }
+  /** Which model a helper ends up using, in a few words, so it is clear at a glance a week later. */
+  function usesLine(connectionId: string, model: string, fallback: string) {
+    const c = (snapshot?.connections ?? []).find(x => x.id === connectionId);
+    return model.trim() ? `Uses: ${c?.name ?? fallback} · ${model.trim()}` : c ? `Uses: ${c.name}${c.model ? ` · ${c.model}` : ''}` : `Uses: ${fallback}`;
+  }
   function renderSettings() {
-    const settings: Settings = { ...(snapshot?.settings ?? { connectionId: '', backupId: '', maxOutputTokens: 16000, reasoningMode: 'inherit', checkupReasoning: 'low', checkupConnectionId: '', lookWait: 15, every: 8, quick: { enabled: false, connectionId: '', model: '' }, wait: 'medium', homeList: true, intimate: 'protect', memories: true }) };
-    const card = el('section', 'gm-card gm-stack');
-    const connection = select([['', 'Choose a connection'], ...(snapshot?.connections ?? []).map(c => [c.id, `${c.name}${c.model ? ` · ${c.model}` : ''}`] as [string, string])], settings.connectionId);
-    const backup = select([['', 'None'], ...(snapshot?.connections ?? []).map(c => [c.id, `${c.name}${c.model ? ` · ${c.model}` : ''}`] as [string, string])], settings.backupId ?? '');
-    const lookWait = select([['10', '10 seconds'], ['15', '15 seconds'], ['30', '30 seconds'], ['60', '1 minute'], ['120', '2 minutes']], String(settings.lookWait ?? 15));
-    const checkupConnection = select([['', 'The model connection above'], ...(snapshot?.connections ?? []).map(c => [c.id, `${c.name}${c.model ? ` · ${c.model}` : ''}`] as [string, string])], settings.checkupConnectionId ?? '');
-    const every = el('input'); every.type = 'number'; every.min = '2'; every.max = '50'; every.value = String(settings.every);
-    const tokens = select([['8000', '8,000'], ['16000', '16,000'], ['32000', '32,000'], ['64000', '64,000']], String(settings.maxOutputTokens));
-    const reasoning = select([['inherit', 'Use the connection’s setting'], ['off', 'Off'], ['low', 'Low']], settings.reasoningMode);
-    const checkupReasoning = select([['low', 'Low'], ['off', 'Off'], ['inherit', 'Same as above']], settings.checkupReasoning ?? 'low');
-    const wait = select([['short', 'A few replies (about 8)'], ['medium', 'Some replies (about 15)'], ['long', 'Many replies (about 30)']], settings.wait ?? 'medium');
-    const grid = el('div', 'gm-grid'); grid.append(labeled('Response room (tokens)', tokens), labeled('Reasoning', reasoning), labeled('Reasoning for check-ups', checkupReasoning));
-    card.append(el('h2', '', 'Settings'),
-      labeled('Model connection', connection, 'Used to write notebooks and run check-ups. Your chat keeps its own connection. A cheaper model may do, but test it on a chat first.'),
-      labeled('Check-ups use', checkupConnection, 'Routine check-ups only keep records, so a cheaper model can do them. Big moments (a secret coming out, the story changing direction) and a full review every 5 check-ups still use the model connection above.'),
-      labeled('Wait for the deep look', lookWait, 'Type $grimoire anywhere in your message when you want the story to move. Grimoire takes a deep look first, using the model connection above, and the reply waits for it this long. If it takes longer, that reply uses the notebook’s best ready step, and the deep look is kept for a swipe. Lumiverse also stops waiting for extensions after its own time limit, in its extension settings: set that a little longer than this.'),
-      labeled('Backup connection', backup, 'Some models refuse some stories. If the main connection declines a request, Grimoire sends it here instead, so the check-up isn’t lost.'),
-      labeled('Longest a story thread waits', wait, 'A thread moves on when enough story time has passed, or after this many replies, whichever comes first, so a long scene never leaves the story stuck. Urgent threads wait less and slow ones longer. Big scenes still aren’t interrupted for slow threads; they come in at the next break.'),
-      labeled('Check-up after this many replies', every, 'With the quick check on, a check-up waits until something has happened (a new scene, a step in a storyline, someone new), and a quiet stretch waits 15 replies. Without it, check-ups also run when the scene changes or time jumps.'), grid,
-      el('p', 'gm-hint', 'Check-ups mostly keep records, so low reasoning is usually enough and costs much less. Writing a notebook always uses the Reasoning setting above.'));
+    const settings: Settings = { ...(snapshot?.settings ?? { connectionId: '', backupId: '', maxOutputTokens: 16000, reasoningMode: 'inherit', checkupReasoning: 'low', checkupConnectionId: '', checkupModel: '', lookWait: 15, every: 8, quick: { enabled: false, connectionId: '', model: '' }, wait: 'medium', homeList: true, intimate: 'protect', memories: true }) };
+    const status = el('p', 'gm-hint', 'Changes save on their own.');
+    const text = (value: string, placeholder: string) => { const i = el('input'); i.type = 'text'; i.value = value; i.placeholder = placeholder; i.spellcheck = false; return i; };
+    const MODEL_HINT = 'Leave empty to use the connection’s model';
+    const MODEL_MORE = 'To use a different model on the same connection without making a new one, type its exact ID as the provider lists it (for example anthropic/claude-sonnet-5.5 on OpenRouter). Pick one with a version in its name rather than one ending in “latest”, so it doesn’t change without you knowing.';
 
-    // Quick check: a small decision model after each reply.
+    // Who does what: one row per helper, with how often it runs and which model it uses.
+    const roles = el('section', 'gm-card gm-stack');
+    roles.append(heading('h2', 'Who does what', 'Your chat’s own connection, picked in Lumiverse, always writes the story replies. These are Grimoire’s helpers. Each can use a different model: a strong one where judgment matters, cheap ones for the frequent small jobs.'),
+      el('p', 'gm-hint', 'Your chat’s own connection writes the story replies. These are Grimoire’s helpers, from the one that matters most to the one you’ll rarely need.'), status);
+    const list = el('div', 'gm-roles');
+    const role = (icon: string, name: string, when: string, does: string, more: string, ...controls: HTMLElement[]) => {
+      const box = el('div', 'gm-role'), head = el('div', 'gm-role-head'), ic = el('span', 'gm-role-icon', icon), words = el('div', 'gm-role-words'), title = el('div', 'gm-role-name');
+      ic.setAttribute('aria-hidden', 'true');
+      const t = tip(`role:${name}`, more);
+      title.append(document.createTextNode(name), el('span', 'gm-when', when), t.button);
+      words.append(title, el('p', 'gm-role-does', does));
+      head.append(ic, words); box.append(head, t.text, ...controls); list.append(box);
+      return box;
+    };
+    const connection = select(connectionChoices('Choose a connection'), settings.connectionId);
+    const plannerUses = el('p', 'gm-uses');
+    role('✦', 'Story planner', 'Now and then', 'Plans the story: writes the notebook, new chapters and mysteries, check-ups after big moments, and the $grimoire deep look.',
+      'This is the helper that needs good judgment, so give it your best model. It runs when a notebook is written, a chapter starts, a mystery is added, you talk to Grimoire, you type $grimoire, after big moments (a secret coming out, the story changing direction), and for a full review every 5 check-ups.',
+      labeled('Connection', connection), plannerUses);
+    const checkupConnection = select(connectionChoices('Same as the story planner'), settings.checkupConnectionId ?? '');
+    const checkupModel = text(settings.checkupModel ?? '', MODEL_HINT);
+    const keeperUses = el('p', 'gm-uses');
+    role('✎', 'Record keeper', 'Every few replies', 'Routine check-ups: writes down what happened so the notebook stays true to the chat. It only runs once something has happened.',
+      'Most check-ups are this one, so it’s where most of Grimoire’s cost goes. It mostly keeps records, so a cheaper model does fine. You can pick another connection, or keep the same connection and type a cheaper model below. Big moments and the review every 5 check-ups still go to the story planner.',
+      labeled('Connection', checkupConnection), labeled('Model (optional)', checkupModel, undefined, MODEL_MORE), keeperUses);
     const decisions = snapshot?.decisions ?? { available: false, reason: '', connections: [] };
-    const quickCard = el('section', 'gm-card gm-stack');
     const quickRow = el('label', 'gm-switch'), quickOn = el('input'); quickOn.type = 'checkbox'; quickOn.checked = settings.quick.enabled; quickOn.setAttribute('role', 'switch');
     quickOn.setAttribute('aria-label', 'Quick check after each reply');
-    quickRow.append(el('h3', '', 'Quick check after each reply'), quickOn);
+    quickRow.append(el('span', 'gm-small', 'Quick check after each reply'), quickOn);
     const fallback = decisions.connections.find(c => c.isDefault);
     const decision = select([['', fallback ? `Your default: ${fallback.name}${fallback.model ? ` · ${fallback.model}` : ''}` : 'Your default decision connection'], ...decisions.connections.map(c => [c.id, `${c.name}${c.model ? ` · ${c.model}` : ''}`] as [string, string])], settings.quick.connectionId);
-    const model = el('input'); model.type = 'text'; model.value = settings.quick.model; model.placeholder = 'Leave empty to use the connection’s model'; model.spellcheck = false;
-    quickCard.append(quickRow, el('p', 'gm-hint', 'A small decision model reads each new reply and answers a few yes-or-no questions: did a planned development happen, how intense is the scene, did something new come up. The notebook stays current between check-ups, and a full check-up runs only when it’s needed. One small request per reply.'));
-    if (!decisions.available) { quickOn.disabled = true; quickCard.append(el('p', 'gm-notice', decisions.reason || 'Decision models aren’t available.')); }
+    const decisionModel = text(settings.quick.model, MODEL_HINT);
+    const checker = role('◎', 'Reply checker', 'Every reply', 'Reads each new reply and answers a few yes-or-no questions: did the planned moment happen, is now a good moment for the next one, did a secret come out.',
+      'A tiny, cheap model, one small request per reply. A lot depends on it: things arriving at their moment instead of on a clock, clues and guesses in a mystery, keeping intimate scenes undisturbed, and check-ups only running when something happened. Leave it on unless you have a reason not to.',
+      quickRow);
+    checker.dataset.role = 'quick';
+    if (!decisions.available) { quickOn.disabled = true; checker.append(el('p', 'gm-notice', decisions.reason || 'Decision models aren’t available.')); }
     else {
-      if (!decisions.connections.length) quickCard.append(el('p', 'gm-notice', 'Add a decision connection in Lumiverse’s connection settings first (OpenRouter or TypeSafe).'));
-      quickCard.append(labeled('Decision connection', decision), labeled('Model', model, 'Any decision model works. To use a different one than the connection’s, type its exact ID. Pick one with a version in its name rather than one ending in “latest”, so it doesn’t change without you knowing.'));
+      if (!decisions.connections.length) checker.append(el('p', 'gm-notice', 'Add a decision connection in Lumiverse’s connection settings first (OpenRouter or TypeSafe).'));
+      checker.append(labeled('Decision connection', decision), labeled('Model (optional)', decisionModel, undefined, MODEL_MORE));
     }
+    const room = select(connectionChoices('Same as the story planner'), settings.roomConnectionId ?? '');
+    const roomModel = text(settings.roomModel ?? '', MODEL_HINT);
+    const roomUses = el('p', 'gm-uses');
+    role('❖', 'Room reader', 'When you open it', 'When you open Read the Room under a reply, it retells that reply in plain words, with a few things you could do next.',
+      'One small request each time you open it on a new reply, and none if you don’t. A fast, cheap model is plenty. It only sees what you can already see, so it can’t spoil anything.',
+      labeled('Connection', room), labeled('Read the Room model', roomModel, undefined, MODEL_MORE), roomUses);
+    const backup = select(connectionChoices('None'), settings.backupId ?? '');
+    role('⛨', 'Backup', 'Only if needed', 'If a model refuses a request (some do, for some stories), Grimoire tries it here instead, so the work isn’t lost.',
+      'Only used when the story planner or record keeper declines. A model that refused once may refuse again, so pick one from a different maker.',
+      labeled('Connection', backup));
+    roles.append(list);
+    const refreshUses = () => {
+      plannerUses.textContent = connection.value ? usesLine(connection.value, '', '') : 'Choose a connection: nothing can be planned without one.';
+      keeperUses.textContent = usesLine(checkupConnection.value || connection.value, checkupModel.value, 'the story planner’s connection');
+      roomUses.textContent = usesLine(room.value || connection.value, roomModel.value, 'the story planner’s connection');
+    };
+    refreshUses();
+
+    // How the story moves.
+    const moves = el('section', 'gm-card gm-stack');
+    const wait = select([['short', 'A few replies (about 8)'], ['medium', 'Some replies (about 15)'], ['long', 'Many replies (about 30)']], settings.wait ?? 'medium');
+    const every = el('input'); every.type = 'number'; every.min = '2'; every.max = '50'; every.value = String(settings.every);
+    const lookWait = select([['10', '10 seconds'], ['15', '15 seconds'], ['30', '30 seconds'], ['60', '1 minute'], ['120', '2 minutes']], String(settings.lookWait ?? 15));
+    moves.append(heading('h2', 'How the story moves'),
+      labeled('Longest a story thread waits', wait, 'Shorter keeps things happening; longer gives scenes room.', 'Each step of a storyline waits for a good moment, like the right people being there. If that moment doesn’t come, it finds its own way in after about half this many replies: someone comes looking, or word reaches you. A whole storyline moves on after about this many replies at most. Urgent storylines wait less, slow ones longer, and big scenes aren’t interrupted for slow ones.'),
+      labeled('Check-up after this many replies', every, 'How often the record keeper catches up, once something has happened.', 'With the reply checker on, a check-up waits until something has happened (a new scene, a step in a storyline, someone new) and then this many replies. A quiet stretch waits 15 replies. With the reply checker off, check-ups also run whenever the scene changes or time jumps.'),
+      labeled('When you type $grimoire, wait up to', lookWait, 'Type $grimoire anywhere in your message when you’re stuck or bored, and the story planner picks what happens next.', 'The narrator never sees the word. The story planner looks at the story and picks one thing that grows out of what’s already there. Your message happens first; if it was only $grimoire, your character carries on with what they were doing. If the planner takes longer than this, that reply uses the notebook’s best ready step, and the planner’s idea is kept for a swipe. Lumiverse also stops waiting for extensions after its own time limit, in its extension settings: keep that a little longer than this.'));
+
+    // Scenes and memory.
+    const scenes = el('section', 'gm-card gm-stack');
     const intimate = select([['protect', 'Keep the story out until the scene ends'], ['allow', 'Let the story carry on as usual']], settings.intimate ?? 'protect');
-    card.append(labeled('During intimate scenes', intimate, 'The quick check notices these scenes. Kept out: while one plays out, nothing planned interrupts it, and its replies don’t count toward moving storylines along, so nothing piles up for afterward. Carry on: the story keeps moving through them like any other scene, which suits a card where most scenes are intimate. Needs the quick check.'));
     const memRow = el('label', 'gm-row gm-small'), mem = el('input'); mem.type = 'checkbox'; mem.checked = settings.memories !== false; mem.style.width = 'auto';
     memRow.append(mem, document.createTextNode('Add Lumiverse’s memories to the note'));
-    card.append(memRow, el('p', 'gm-hint', 'Gives the narrator what Lumiverse’s Memory Cortex remembers about the scene, so any preset has it. Skipped on its own when your preset already includes memories. Grimoire also reads the memory when it plans, either way.'));
-    const homeRow = el('label', 'gm-row gm-small'), home = el('input'); home.type = 'checkbox'; home.checked = settings.homeList !== false; home.style.width = 'auto';
-    homeRow.append(home, document.createTextNode('Mark my stories on the home page'));
+    const memTip = tip('field:memories', 'Gives the narrator what Lumiverse’s Memory Cortex remembers about the scene, so any preset has it. Skipped on its own when your preset already includes memories. Grimoire also reads the memory when it plans, either way.');
+    memRow.append(memTip.button);
+    scenes.append(heading('h2', 'Scenes and memory'),
+      labeled('During intimate scenes', intimate, 'Needs the reply checker.', 'Kept out: while one plays out, nothing planned interrupts it, and its replies don’t count toward moving storylines along, so nothing piles up for afterward. Carry on: the story keeps moving through them like any other scene, which suits a card where most scenes are intimate.'),
+      memRow, memTip.text);
+
+    // On screen.
+    const screen = el('section', 'gm-card gm-stack');
     const cardRow = el('label', 'gm-row gm-small'), replyCard = el('input'); replyCard.type = 'checkbox'; replyCard.checked = settings.replyCard !== false; replyCard.style.width = 'auto';
     cardRow.append(replyCard, document.createTextNode('Show the story chronicle under the latest reply'));
-    const room = select([['', 'Grimoire’s connection'], ...(snapshot?.connections ?? []).map(c => [c.id, `${c.name}${c.model ? ` · ${c.model}` : ''}`] as [string, string])], settings.roomConnectionId ?? '');
-    const roomModel = el('input'); roomModel.type = 'text'; roomModel.value = settings.roomModel ?? ''; roomModel.placeholder = 'Leave empty to use the connection’s model'; roomModel.spellcheck = false;
-    card.append(homeRow, cardRow, el('p', 'gm-hint', 'Attaches a spoiler-free chronicle beneath the newest reply showing what Grimoire is using, callbacks to your choices, found clues, and a collapsible “In Front of You” room reader.'),
-      labeled('Read the Room uses', room, 'Opening Read the Room retells the latest reply in plain words, with things you could do next. One small request each time you open it on a new reply, and none if you don’t. A fast, cheap model is plenty.'),
-      labeled('Read the Room model', roomModel, 'To use a different model on that connection without making a new one, type its exact ID as the provider lists it.'));
-    // Every change saves on its own, so nothing is lost to a button below the fold.
-    const status = el('p', 'gm-hint', 'Changes save on their own.');
+    const homeRow = el('label', 'gm-row gm-small'), home = el('input'); home.type = 'checkbox'; home.checked = settings.homeList !== false; home.style.width = 'auto';
+    homeRow.append(home, document.createTextNode('Mark my stories on the home page'));
+    screen.append(heading('h2', 'On screen'), cardRow, el('p', 'gm-hint', 'A spoiler-free panel under the newest reply: who’s here, what came back from earlier, clues you found, and Read the Room.'), homeRow);
+
+    // Cost and thinking, for later.
+    const cost = details('Cost and thinking', 'How hard the helpers think, and how long they may answer');
+    const tokens = select([['8000', '8,000'], ['16000', '16,000'], ['32000', '32,000'], ['64000', '64,000']], String(settings.maxOutputTokens));
+    const reasoning = select([['inherit', 'Use the connection’s setting'], ['off', 'Off'], ['low', 'Low']], settings.reasoningMode);
+    const checkupReasoning = select([['low', 'Low'], ['off', 'Off'], ['inherit', 'Same as the story planner']], settings.checkupReasoning ?? 'low');
+    cost.body.append(el('p', 'gm-hint', 'Thinking makes answers better but costs more, and you pay for it even though you never see it. In Grimoire’s records, thinking was about two thirds of a check-up’s cost.'),
+      labeled('How hard the story planner thinks', reasoning, 'Planning is where thinking pays off.'),
+      labeled('How hard the record keeper thinks', checkupReasoning, 'Low is usually enough for keeping records, and costs much less.'),
+      labeled('Longest answer (tokens)', tokens, 'Room for the answer, thinking included. Raise it if Grimoire says a model ran out of room.'));
+
     const save = async () => {
       // Saved without redrawing the page, so the next change isn't interrupted.
-      try { await rpc.request('settings', { settings: { connectionId: connection.value, backupId: backup.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, checkupReasoning: checkupReasoning.value, checkupConnectionId: checkupConnection.value, lookWait: Number(lookWait.value), wait: wait.value, homeList: home.checked, replyCard: replyCard.checked, roomConnectionId: room.value, roomModel: roomModel.value.trim(), intimate: intimate.value, memories: mem.checked, quick: { enabled: quickOn.checked, connectionId: decision.value, model: model.value } } }); }
+      refreshUses();
+      try { await rpc.request('settings', { settings: { connectionId: connection.value, backupId: backup.value, every: Number(every.value), maxOutputTokens: Number(tokens.value), reasoningMode: reasoning.value, checkupReasoning: checkupReasoning.value, checkupConnectionId: checkupConnection.value, checkupModel: checkupModel.value.trim(), lookWait: Number(lookWait.value), wait: wait.value, homeList: home.checked, replyCard: replyCard.checked, roomConnectionId: room.value, roomModel: roomModel.value.trim(), intimate: intimate.value, memories: mem.checked, quick: { enabled: quickOn.checked, connectionId: decision.value, model: decisionModel.value } } }); }
       catch (error) { notify(error instanceof Error ? error.message : String(error), 'error'); return; }
       status.textContent = 'Saved.';
       void refresh();
     };
-    for (const part of [card, quickCard]) part.addEventListener('change', () => { void save(); });
-    card.insertBefore(status, card.children[1] ?? null);
-    body.append(card, quickCard);
+    for (const part of [roles, moves, scenes, screen, cost.root]) part.addEventListener('change', () => { void save(); });
+    body.append(roles, moves, scenes, screen, cost.root);
   }
 
   function render() {
     if (destroyed) return;
     for (const [key, b] of tabButtons) { b.setAttribute('aria-selected', String(page === key)); }
-    const openDetails = [...body.querySelectorAll('details')].map(d => d.open);
+    // Folds are matched by position, so only within the same tab: another tab's folds are different ones.
+    const openDetails = drawnPage === page ? [...body.querySelectorAll('details')].map(d => d.open) : [];
+    drawnPage = page;
     // Redrawing empties the panel for a moment, and the drawer would jump to the top. Put every scroll position back.
     const scrolled: Array<[Element, number]> = [];
     for (let node: Element | null = app; node; node = node.parentElement) if (node.scrollTop > 0) scrolled.push([node, node.scrollTop]);

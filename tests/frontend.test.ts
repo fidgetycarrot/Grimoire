@@ -182,7 +182,7 @@ describe('the panel', () => {
 describe('at a glance', () => {
   test('shows shapes and counts in its own fold, closed by default', async () => {
     const h = harness({ glance: { shape: 'kishotenketsu', stage: 'sho', threads: { open: 3, urgent: 0, steady: 2, slow: 1, closed: 1 }, seeds: { waiting: 3, planted: 2, paid: 1, echo: 0 }, moments: { possible: 5, big: 1, happened: 2 }, people: { total: 6, met: 4 }, nextInReplies: 7, dueNow: 0, part: { elapsed: 12, length: 60 } } }); await tick();
-    const fold = Array.from(h.root.querySelectorAll('details')).find(d => d.textContent?.includes('At a glance'))!;
+    const fold = Array.from(h.root.querySelectorAll('details')).find(d => d.textContent?.includes('The plan in numbers'))!;
     expect(fold.open).toBe(false);
     for (const text of ['Kishōtenketsu, development', '3 open threads (2 steady, 1 slow), 1 finished', 'within about 7 replies', '2 planted, 3 waiting, 1 paid off', '5 possible (1 big), 2 happened', '6, 4 met so far', 'about 12 of roughly 60 replies in'])
       expect(fold.textContent).toContain(text);
@@ -230,8 +230,9 @@ describe('the quick check settings', () => {
     Array.from(h.root.querySelectorAll('button')).find(b => b.textContent === 'Settings')!.click(); await tick();
     expect(h.root.textContent).toContain('Quick check after each reply');
     expect(h.root.textContent).toContain('Your default: Jev · ~typesafe/jev-latest');
-    const toggle = Array.from(h.root.querySelectorAll('input[type=checkbox]')).at(-1) as unknown as HTMLInputElement; toggle.checked = true;
-    const model = [...h.root.querySelectorAll('input[type=text]')].find(i => i.closest('section')?.textContent?.includes('Quick check after each reply')) as unknown as HTMLInputElement; model.value = 'openai/some-decider';
+    const row = h.root.querySelector('[data-role=quick]')!;
+    const toggle = row.querySelector('input[role=switch]') as unknown as HTMLInputElement; toggle.checked = true;
+    const model = row.querySelector('input[type=text]') as unknown as HTMLInputElement; model.value = 'openai/some-decider';
     model.dispatchEvent(new h.window.Event('change', { bubbles: true }) as any); await tick();
     expect(h.requests.filter(r => r.action === 'settings').at(-1)!.input.settings.quick).toEqual({ enabled: true, connectionId: '', model: 'openai/some-decider' });
   });
@@ -241,7 +242,7 @@ describe('the quick check settings', () => {
     await tick();
     Array.from(h.root.querySelectorAll('button')).find(b => b.textContent === 'Settings')!.click(); await tick();
     expect(h.root.textContent).toContain('Update Lumiverse to use the quick check');
-    expect((Array.from(h.root.querySelectorAll('input[type=checkbox]')).at(-1) as unknown as HTMLInputElement).disabled).toBe(true);
+    expect((h.root.querySelector('[data-role=quick] input[role=switch]') as unknown as HTMLInputElement).disabled).toBe(true);
   });
   test('the chat page says when the quick check last ran', async () => {
     const h = harness({ quick: { at: Date.now() - 120_000, ok: false, error: 'The decision model took too long to answer.' } }, { quick: { enabled: true, connectionId: '', model: '' } }); await tick();
@@ -484,5 +485,42 @@ describe('how long Grimoire took, in the panel', () => {
     expect(text).toContain('Writing the notebook · still going · ');
     expect(text).toContain('waiting for the model · ');
     expect(text).toContain('10 min 0 s · slow-model · failed (TIMEOUT)');
+  });
+});
+
+describe('the redesigned panel', () => {
+  test('settings say plainly which helper does what, how often, and which model it uses', async () => {
+    const h = harness({}, { checkupModel: 'small/cheap-model' } as any); await tick();
+    Array.from(h.root.querySelectorAll('button')).find(b => b.textContent === 'Settings')!.click(); await tick();
+    const text = h.root.textContent!;
+    for (const name of ['Who does what', 'Story planner', 'Record keeper', 'Reply checker', 'Room reader', 'Backup', 'Every reply', 'Every few replies', 'When you open it'])
+      expect(text).toContain(name);
+    expect(text).toContain('small/cheap-model');
+    // The longer explanation opens in place, by tap or click.
+    const role = Array.from(h.root.querySelectorAll('.gm-role')).find(r => r.textContent?.includes('Record keeper'))!;
+    const more = role.querySelector('.gm-tip-text') as unknown as HTMLElement;
+    expect(more.hidden).toBe(true);
+    (role.querySelector('.gm-tip') as unknown as HTMLButtonElement).click();
+    expect(more.hidden).toBe(false);
+  });
+  test('the record keeper\'s model is saved', async () => {
+    const h = harness(); await tick();
+    Array.from(h.root.querySelectorAll('button')).find(b => b.textContent === 'Settings')!.click(); await tick();
+    const role = Array.from(h.root.querySelectorAll('.gm-role')).find(r => r.textContent?.includes('Record keeper'))!;
+    const input = role.querySelector('input[type=text]') as unknown as HTMLInputElement;
+    input.value = 'anthropic/claude-sonnet-5.5';
+    input.dispatchEvent(new h.window.Event('change', { bubbles: true }) as any); await tick();
+    expect(h.requests.filter(r => r.action === 'settings').at(-1)!.input.settings.checkupModel).toBe('anthropic/claude-sonnet-5.5');
+  });
+  test('the chat tab shows the story at a glance, with no plans', async () => {
+    const nb = stamp(validateNotebook(tidyNotebook(sampleNotebook() as any)), 24);
+    const tome = buildTome({ messageId: 'msg-1', reply: 10, latestReply: 'Mira sets the lantern down. "What do we tell Oswin?"', recentChat: 'Mira sets the lantern down.', narrated: 'Mira sets the lantern down.', location: 'The Chapel Vestry', notebook: nb, pace: 'auto', clock: { day: 2, hour: 20, label: 'Day 2, 20:00' }, sources: { day: 'tracker', hour: 'tracker', exact: true }, moment: { hours: 44, reply: 10 }, intimate: false, seen: { mira: 10 }, quick: null, memory: null, skipOffer: null });
+    const h = harness({ recap: 'You crossed the river and Mira owes you one.', tome }); await tick();
+    expect(JSON.stringify(nb.story.hiddenTruth).length > 2 && h.root.querySelector('.gm-glance')!.textContent!.includes(nb.story.hiddenTruth[0])).toBe(false);
+    const card = h.root.querySelector('.gm-glance')!;
+    expect(card.textContent).toContain('You crossed the river and Mira owes you one.');
+    expect(card.textContent).toContain('Who’s here');
+    expect(card.textContent).toContain('The story’s pulse');
+    expect(h.root.textContent).toContain('Type $grimoire anywhere in your next message');
   });
 });

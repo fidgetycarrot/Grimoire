@@ -209,6 +209,7 @@ export function validSettings(value: unknown): Settings {
     reasoningMode: ['inherit', 'off', 'low'].includes(v.reasoningMode as string) ? v.reasoningMode as Settings['reasoningMode'] : 'inherit',
     checkupReasoning: ['inherit', 'off', 'low'].includes(v.checkupReasoning as string) ? v.checkupReasoning as Settings['reasoningMode'] : DEFAULT_SETTINGS.checkupReasoning,
     checkupConnectionId: typeof v.checkupConnectionId === 'string' ? v.checkupConnectionId : '',
+    checkupModel: typeof v.checkupModel === 'string' ? v.checkupModel.trim().slice(0, 200) : '',
     lookWait: Number.isInteger(v.lookWait) && (v.lookWait as number) >= 5 && (v.lookWait as number) <= 280 ? v.lookWait as number : DEFAULT_SETTINGS.lookWait,
     every: Number.isInteger(every) && every >= 2 && every <= 50 ? every : DEFAULT_SETTINGS.every,
     quick: { enabled: quick.enabled === true, connectionId: plainSetting(quick.connectionId, 120), model: plainSetting(quick.model, 200) },
@@ -382,7 +383,8 @@ export class NotebookController {
       const mem = state.enabled ? this.memoryView(chatId) : null;
       const offer = live && state.enabled && state.job?.status !== 'running' && !state.skipHours && !state.intimateNow && !this.reworking(state, live) ? skipOffer(live.version.notebook, live.moment, live.clock, state.skipDismissedAt) : null;
       const lastTurn = live ? [...live.turns].reverse().find(t => t.role === 'assistant' && !t.ooc) : undefined;
-      const tome = live && notebook && state.enabled && settings.replyCard !== false && lastTurn ? buildTome({
+      // Built even with the chronicle off: the drawer's At a glance reads it too.
+      const tome = live && notebook && state.enabled && lastTurn ? buildTome({
         messageId: lastTurn.id,
         reply: live.moment.reply ?? 0,
         latestReply: lastTurn.content,
@@ -445,14 +447,15 @@ export class NotebookController {
   }
 
   // ----- Writing the notebook -------------------------------------------------
-  private asker(settings: Settings, trace?: Trace): Ask {
+  /** `model` picks another model on the main connection; the backup connection always uses its own. */
+  private asker(settings: Settings, trace?: Trace, model = ''): Ask {
     if (this.ask) return trace ? trace.wrap(this.ask) : this.ask;
     if (!settings.connectionId) throw new Error('Choose a connection in Grimoire settings first.');
-    const on = (connectionId: string): Ask => {
-      const ask: Ask = (messages, signal) => askModel(this.api, this.userId, { ...settings, connectionId, ...(trace ? { meter: trace.meter } : {}) }, messages, signal);
+    const on = (connectionId: string, chosen = ''): Ask => {
+      const ask: Ask = (messages, signal) => askModel(this.api, this.userId, { ...settings, connectionId, model: chosen, ...(trace ? { meter: trace.meter } : {}) }, messages, signal);
       return trace ? trace.wrap(ask) : ask;
     };
-    return withBackup(on(settings.connectionId), settings.backupId ? on(settings.backupId) : null, trace?.backup);
+    return withBackup(on(settings.connectionId, model), settings.backupId ? on(settings.backupId) : null, trace?.backup);
   }
   /** Timing records of running jobs, by job id. */
   private traces = new Map<string, Trace>();
@@ -797,12 +800,14 @@ export class NotebookController {
     // Routine check-ups are bookkeeping and can go to a cheaper connection. Big moments, and a full review every few
     // check-ups, go to the main one, where judgment matters.
     state.checkups = (state.checkups ?? 0) + 1;
-    const cheap = settings.checkupConnectionId && settings.checkupConnectionId !== settings.connectionId ? settings.checkupConnectionId : '';
+    // The cheaper choice can be another connection, another model on the same one, or both.
+    const cheapModel = settings.checkupModel?.trim() ?? '';
+    const cheap = (settings.checkupConnectionId && settings.checkupConnectionId !== settings.connectionId) || cheapModel ? settings.checkupConnectionId || settings.connectionId : '';
     const review = !!cheap && state.checkups % REVIEW_EVERY === 0;
     const strong = !cheap || review || BIG_MOMENTS.some(b => reason.startsWith(b));
     const { job, signal } = this.startJob(state, 'checkup', review ? 'Reviewing the whole notebook' : 'Updating the notebook');
     // Check-ups think less than notebook writing does, unless the player chose otherwise. A review thinks like notebook writing.
-    const traced = this.asker({ ...settings, connectionId: strong ? settings.connectionId : cheap, reasoningMode: review ? settings.reasoningMode : settings.checkupReasoning ?? settings.reasoningMode }, this.traces.get(job.id));
+    const traced = this.asker({ ...settings, connectionId: strong ? settings.connectionId : cheap, reasoningMode: review ? settings.reasoningMode : settings.checkupReasoning ?? settings.reasoningMode }, this.traces.get(job.id), strong ? '' : cheapModel);
     await this.save(state); this.changed();
     const base = live.version, read = live.prints.slice();
     // Words, not markup: preset panels and styling can be most of a reply.

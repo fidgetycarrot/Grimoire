@@ -114,4 +114,52 @@ export const styles = `
 .gm-tome-veil{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;border-radius:13px;background:linear-gradient(90deg,rgba(42,22,34,.92),rgba(24,15,24,.94));border:1px solid rgba(216,140,164,.34);box-shadow:0 8px 22px rgba(0,0,0,.36);color:#f0dce4;font-size:12px}
 .gm-tome-veil-left{display:flex;align-items:center;gap:9px;min-width:0;flex:1}
 .gm-tome-veil-dot{width:7px;height:7px;border-radius:50%;background:var(--gm-rose);box-shadow:0 0 8px var(--gm-rose);flex:none}
+
+/* ----- The relic look: the whole drawer wears the chronicle's dark parchment and gold. ----- */
+.gm-app{--gm-gold:#f3d286;--gm-gold-soft:#e5c178;--gm-gold-dim:rgba(218,175,97,.32);--gm-bg:#110f16;--gm-ink:#f6efe2;--gm-muted:#b5aa99;--gm-sub:#8c8273;--gm-line:rgba(228,186,108,.24);--gm-rule:rgba(255,232,185,.09);--gm-fill:rgba(255,248,230,.045);--gm-card:transparent;--gm-accent:#e2b462;--gm-good:#9ad6a4;--gm-warn:#e7ad5c;--gm-serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;color:var(--gm-ink);color-scheme:dark;background:radial-gradient(130% 50% at 0% 0%,rgba(226,180,98,.09) 0%,transparent 60%),radial-gradient(90% 40% at 100% 100%,rgba(139,92,246,.07) 0%,transparent 60%),linear-gradient(180deg,#171420 0%,#110f16 100%)}
+.gm-app h1{font:700 17px/1.2 var(--gm-serif);letter-spacing:.03em;color:#fff7e6}.gm-mark{color:var(--gm-gold)}
+.gm-app h2{font:700 17px/1.3 var(--gm-serif);color:#fff8eb;letter-spacing:.01em}.gm-app h3{font:700 14.5px/1.3 var(--gm-serif);color:#fff8eb}
+.gm-app h4{font-size:10px;font-weight:750;letter-spacing:.15em;text-transform:uppercase;color:var(--gm-gold-soft)}
+.gm-card,.gm-details{position:relative;border:1px solid var(--gm-line);border-radius:14px;background:radial-gradient(120% 90% at 12% 0%,rgba(226,180,98,.08) 0%,transparent 55%),linear-gradient(180deg,rgba(255,248,230,.035),rgba(255,248,230,.012));box-shadow:0 10px 26px rgba(0,0,0,.38),inset 0 1px 0 rgba(255,238,195,.1)}
+.gm-details>summary:hover{background:rgba(228,186,108,.06)}.gm-sum-title{font:700 14px/1.3 var(--gm-serif);color:#fff8eb}.gm-sum-sub{color:var(--gm-sub)}.gm-details>summary:after{border-color:var(--gm-gold-soft)}
+.gm-tabs{background:rgba(0,0,0,.28);border:1px solid var(--gm-rule)}.gm-tab[aria-selected=true]{color:var(--gm-gold);background:rgba(228,186,108,.14);box-shadow:inset 0 0 0 1px rgba(228,186,108,.32)}
+.gm-button{background:rgba(255,248,230,.05);border-color:rgba(255,232,185,.12);color:var(--gm-ink)}.gm-button:hover:not(:disabled){border-color:var(--gm-gold-dim);background:rgba(228,186,108,.09)}
+.gm-primary{background:linear-gradient(180deg,#f0cd83,#c99a4c);border-color:#f3d286;color:#1a1308;font-weight:750}.gm-primary:hover:not(:disabled){background:linear-gradient(180deg,#f6d993,#d4a656);border-color:#fff0c8}
+.gm-danger{color:#e9998b;background:transparent;border-color:rgba(233,153,139,.4)}
+.gm-chips .gm-button{border-color:rgba(228,186,108,.28);background:rgba(228,186,108,.08)}
+.gm-app :is(input,select,textarea){background:rgba(0,0,0,.32);border-color:rgba(255,232,185,.16);color:var(--gm-ink)}.gm-app :is(input,select,textarea):focus{outline-color:rgba(228,186,108,.55)}.gm-app select option{background:#171420;color:var(--gm-ink)}
+.gm-app input[role=switch]{background:rgba(255,232,185,.16)}.gm-app input[role=switch]:checked{background:linear-gradient(180deg,#f0cd83,#c99a4c)}.gm-app input[role=switch]:checked:before{background:#1a1308}
+.gm-app input[type=checkbox]:not([role=switch]){accent-color:#d9ac5c}
+.gm-pace{background:rgba(0,0,0,.3)}.gm-pace button[aria-pressed=true]{background:rgba(228,186,108,.18);color:var(--gm-gold);box-shadow:inset 0 0 0 1px rgba(228,186,108,.35)}
+.gm-stat,.gm-act,.gm-recap{background:rgba(0,0,0,.22);border:1px solid var(--gm-rule)}
+.gm-clock{font-family:var(--gm-serif);color:#fff7e6}
+.gm-chip{border-color:rgba(228,186,108,.3);color:var(--gm-gold-soft);background:rgba(228,186,108,.08)}
+.gm-notice{background:rgba(231,173,92,.09);border-color:rgba(231,173,92,.35)}
+.gm-line{background:rgba(0,0,0,.22);border:1px solid var(--gm-rule)}.gm-line-you{background:rgba(228,186,108,.1);border-color:rgba(228,186,108,.22)}
+.gm-note{border-left-color:var(--gm-gold-soft)}
+.gm-live{border-color:rgba(228,186,108,.45)}.gm-pulse-dot{background:var(--gm-gold)}
+.gm-fields li{border-bottom-color:var(--gm-rule)}.gm-dot{color:#d6ccb9}
+.gm-footer{color:var(--gm-sub);text-align:center;letter-spacing:.2em}
+/* What each thing is for: a quiet ⓘ that opens a plain explanation in place, by tap or click, on any screen. */
+.gm-tip{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;margin-left:6px;padding:0;border-radius:50%;border:1px solid rgba(228,186,108,.35);background:rgba(228,186,108,.08);color:var(--gm-gold-soft);font:700 10px/1 ui-serif,Georgia,serif;cursor:pointer;vertical-align:1px;flex:none}.gm-tip[aria-expanded=true]{background:rgba(228,186,108,.22);color:var(--gm-gold)}
+.gm-tip-text{font-size:12px;line-height:1.5;color:#d6ccb9;padding:8px 11px;border-radius:10px;background:rgba(0,0,0,.28);border:1px solid var(--gm-rule);border-left:2px solid var(--gm-gold-soft)}
+.gm-label{display:flex;align-items:center;gap:0;font-weight:700;color:#f3eadb}
+/* Settings: one row per helper, so it is clear what each connection does. */
+.gm-roles{display:flex;flex-direction:column;gap:10px}
+.gm-role{display:flex;flex-direction:column;gap:7px;padding:11px 12px;border-radius:12px;background:rgba(0,0,0,.22);border:1px solid var(--gm-rule)}
+.gm-role-head{display:flex;align-items:flex-start;gap:10px}.gm-role-icon{flex:none;width:28px;height:28px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;background:radial-gradient(circle,rgba(228,186,108,.25),rgba(228,186,108,.06));border:1px solid rgba(228,186,108,.38);color:var(--gm-gold);font-size:14px}
+.gm-role-words{flex:1;min-width:0}.gm-role-name{font:700 14px/1.25 var(--gm-serif);color:#fff8eb;display:flex;align-items:center;flex-wrap:wrap;gap:6px}.gm-role-does{font-size:12px;color:#d6ccb9;line-height:1.45;margin-top:2px!important}
+.gm-when{font:750 9.5px/1.4 ui-sans-serif,system-ui,sans-serif;letter-spacing:.1em;text-transform:uppercase;padding:2px 7px;border-radius:5px;background:rgba(228,186,108,.13);color:var(--gm-gold);border:1px solid rgba(228,186,108,.3)}
+.gm-uses{font-size:11px;color:var(--gm-sub)}
+.gm-section-head{display:flex;flex-direction:column;gap:3px}
+/* At a glance: the story as it stands, in the chronicle's style. */
+.gm-glance{display:flex;flex-direction:column;gap:12px}
+.gm-glance-where{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 10px}.gm-glance-place{font:700 16px/1.3 var(--gm-serif);color:#fff8eb}.gm-glance-time{font-size:12px;color:var(--gm-gold-soft);font-weight:650}
+.gm-glance-recap{font:13.5px/1.58 var(--gm-serif);color:#f3eadb}
+.gm-glance-block{display:flex;flex-direction:column;gap:6px}
+.gm-glance-item{display:flex;align-items:baseline;gap:8px;padding:7px 10px;border-radius:9px;background:rgba(0,0,0,.22);border:1px solid rgba(255,232,185,.08);font-size:12px;line-height:1.42}.gm-glance-item[data-hot=true]{border-color:rgba(228,186,108,.4);background:rgba(228,186,108,.07)}
+.gm-glance-badge{flex:none;font-size:9.5px;font-weight:750;letter-spacing:.1em;text-transform:uppercase;padding:2px 6px;border-radius:5px;background:rgba(228,186,108,.15);color:#f3d286;border:1px solid rgba(228,186,108,.3)}
+.gm-glance-text{min-width:0;flex:1;color:#d6ccb9}.gm-glance-label{font-weight:700;color:#fff6e5;margin-right:6px}
+.gm-glance-pulse{display:flex;align-items:center;gap:8px;font-size:12px;color:#d6ccb9}.gm-glance-pulse i{width:8px;height:8px;border-radius:50%;flex:none;box-shadow:0 0 8px currentColor}
+.gm-glance-empty{font-size:12px;color:var(--gm-sub);font-style:italic}
 `;

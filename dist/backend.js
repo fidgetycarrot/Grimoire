@@ -4581,11 +4581,11 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.38.0";
+var VERSION = "0.39.0";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
-var DEFAULT_SETTINGS = { connectionId: "", backupId: "", maxOutputTokens: 16000, reasoningMode: "inherit", checkupReasoning: "low", checkupConnectionId: "", lookWait: 15, every: 8, quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true, intimate: "protect", memories: true, replyCard: true };
+var DEFAULT_SETTINGS = { connectionId: "", backupId: "", maxOutputTokens: 16000, reasoningMode: "inherit", checkupReasoning: "low", checkupConnectionId: "", checkupModel: "", lookWait: 15, every: 8, quick: { enabled: false, connectionId: "", model: "" }, wait: "medium", homeList: true, intimate: "protect", memories: true, replyCard: true };
 var DEFAULT_PREFERENCES = { tone: "balanced", twist: true, shape: "auto", lockShape: false, size: "auto" };
 var CHAPTER_WORKING = "Starting a new chapter";
 var NO_MYSTERY = "Notebook ready, without the mystery";
@@ -4793,6 +4793,7 @@ function validSettings(value) {
     reasoningMode: ["inherit", "off", "low"].includes(v.reasoningMode) ? v.reasoningMode : "inherit",
     checkupReasoning: ["inherit", "off", "low"].includes(v.checkupReasoning) ? v.checkupReasoning : DEFAULT_SETTINGS.checkupReasoning,
     checkupConnectionId: typeof v.checkupConnectionId === "string" ? v.checkupConnectionId : "",
+    checkupModel: typeof v.checkupModel === "string" ? v.checkupModel.trim().slice(0, 200) : "",
     lookWait: Number.isInteger(v.lookWait) && v.lookWait >= 5 && v.lookWait <= 280 ? v.lookWait : DEFAULT_SETTINGS.lookWait,
     every: Number.isInteger(every) && every >= 2 && every <= 50 ? every : DEFAULT_SETTINGS.every,
     quick: { enabled: quick.enabled === true, connectionId: plainSetting(quick.connectionId, 120), model: plainSetting(quick.model, 200) },
@@ -5008,7 +5009,7 @@ class NotebookController {
       const mem = state.enabled ? this.memoryView(chatId) : null;
       const offer = live && state.enabled && state.job?.status !== "running" && !state.skipHours && !state.intimateNow && !this.reworking(state, live) ? skipOffer(live.version.notebook, live.moment, live.clock, state.skipDismissedAt) : null;
       const lastTurn = live ? [...live.turns].reverse().find((t) => t.role === "assistant" && !t.ooc) : undefined;
-      const tome = live && notebook && state.enabled && settings.replyCard !== false && lastTurn ? buildTome({
+      const tome = live && notebook && state.enabled && lastTurn ? buildTome({
         messageId: lastTurn.id,
         reply: live.moment.reply ?? 0,
         latestReply: lastTurn.content,
@@ -5121,16 +5122,16 @@ class NotebookController {
     }
     return { version: VERSION, permissions, connections, settings: await this.settings(), chat, notice, decisions };
   }
-  asker(settings, trace) {
+  asker(settings, trace, model = "") {
     if (this.ask)
       return trace ? trace.wrap(this.ask) : this.ask;
     if (!settings.connectionId)
       throw new Error("Choose a connection in Grimoire settings first.");
-    const on = (connectionId) => {
-      const ask = (messages, signal) => askModel(this.api, this.userId, { ...settings, connectionId, ...trace ? { meter: trace.meter } : {} }, messages, signal);
+    const on = (connectionId, chosen = "") => {
+      const ask = (messages, signal) => askModel(this.api, this.userId, { ...settings, connectionId, model: chosen, ...trace ? { meter: trace.meter } : {} }, messages, signal);
       return trace ? trace.wrap(ask) : ask;
     };
-    return withBackup(on(settings.connectionId), settings.backupId ? on(settings.backupId) : null, trace?.backup);
+    return withBackup(on(settings.connectionId, model), settings.backupId ? on(settings.backupId) : null, trace?.backup);
   }
   traces = new Map;
   tracesOf(state) {
@@ -5542,11 +5543,12 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
     if (!live)
       return null;
     state.checkups = (state.checkups ?? 0) + 1;
-    const cheap = settings.checkupConnectionId && settings.checkupConnectionId !== settings.connectionId ? settings.checkupConnectionId : "";
+    const cheapModel = settings.checkupModel?.trim() ?? "";
+    const cheap = settings.checkupConnectionId && settings.checkupConnectionId !== settings.connectionId || cheapModel ? settings.checkupConnectionId || settings.connectionId : "";
     const review = !!cheap && state.checkups % REVIEW_EVERY === 0;
     const strong = !cheap || review || BIG_MOMENTS.some((b) => reason.startsWith(b));
     const { job, signal } = this.startJob(state, "checkup", review ? "Reviewing the whole notebook" : "Updating the notebook");
-    const traced = this.asker({ ...settings, connectionId: strong ? settings.connectionId : cheap, reasoningMode: review ? settings.reasoningMode : settings.checkupReasoning ?? settings.reasoningMode }, this.traces.get(job.id));
+    const traced = this.asker({ ...settings, connectionId: strong ? settings.connectionId : cheap, reasoningMode: review ? settings.reasoningMode : settings.checkupReasoning ?? settings.reasoningMode }, this.traces.get(job.id), strong ? "" : cheapModel);
     await this.save(state);
     this.changed();
     const base = live.version, read = live.prints.slice();
