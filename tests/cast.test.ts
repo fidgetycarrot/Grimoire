@@ -185,6 +185,9 @@ describe('keeping people sounding like themselves', () => {
     const { checkupMessages } = require('../src/prompts');
     const input: any = { notebook: validateNotebook(sampleNotebook()), pace: 'auto', chat: [], trackerText: '', trackerValues: {}, trackerChecks: [], recipe: { fields: [], note: '' }, clockOwner: { day: 'notebook', hour: 'notebook' }, due: [], skipHours: 0, reason: 'test', preferences: prefs(), resync: false, held: [], notes: [], part: { elapsed: 0, length: 60 }, replan: false, replies: [], lore: { rules: [], entries: [], index: [], more: 0 }, away: [], places: ['Kitchen'] };
     expect(checkupMessages(input).map((m: any) => m.content).join('\n')).toContain('being shrunk to one trait');
+    // Giving up what they are after is drift too: a no changes how, not whether, and the card's standing patterns are kept.
+    expect(checkupMessages(input).map((m: any) => m.content).join('\n')).toContain('letting go of what they are after');
+    expect(checkupMessages(input).map((m: any) => m.content).join('\n')).toContain('Standing patterns');
   });
 });
 

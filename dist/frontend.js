@@ -227,7 +227,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.39.5";
+var VERSION = "0.39.6";
 var CHAPTER_WORKING = "Starting a new chapter";
 var NO_MYSTERY = "Notebook ready, without the mystery";
 var CHAPTER_DONE = "New chapter ready";

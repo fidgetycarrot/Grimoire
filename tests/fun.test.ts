@@ -47,6 +47,7 @@ describe('is the narrator listening', () => {
   test('voice fixes are counted when someone who had been slipping is in the exchange', () => {
     const nb = validateNotebook(sampleNotebook()); nb.people[0].drift = 'all jokes lately; let her worry show'; nb.people[0].driftAt = 10;
     expect(quickQuestions(nb, { hours: 42, reply: 12 }, 'Mira laughs and keeps patching.').questions.voice_1?.instructions).toContain('Does Mira come across');
+    expect(quickQuestions(nb, { hours: 42, reply: 12 }, 'Mira laughs and keeps patching.').questions.voice_1?.instructions).toContain('still going after what they want');
     expect(quickQuestions(nb, { hours: 42, reply: 12 }, 'Cole counts his coins.').questions.voice_1).toBeUndefined();
     expect(quickQuestions(nb, { hours: 42, reply: 40 }, 'Mira laughs.').questions.voice_1).toBeUndefined();
     const v = (x: number) => ({ ok: true, answers: { voice_1: x } });

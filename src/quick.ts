@@ -137,8 +137,8 @@ function voiceQuestion(notebook: Notebook, now: number | Moment, scene: string, 
   const person = notebook.people.find(p => p.status === 'active' && p.drift && (reply === undefined || p.driftAt === undefined || reply - p.driftAt <= DRIFT_SHOW)
     && [p.name, ...p.aliases].some(n => n.trim().length > 1 && text.includes(n.toLowerCase())));
   if (!person) return;
-  questions.voice_1 = { type: 'noul', instructions: `Does ${person.name} come across in the latest reply as their whole self, true to who they are, rather than shrunk to one trait or sounding like everyone else? Who they are: ${person.voice || person.hint || person.role}. What had gone wrong: ${person.drift}`,
-    criteria: { true: `Yes, ${person.name} sounds like themselves.`, false: `No, ${person.name} is still flattened or sounds like the others, or barely appears.` } };
+  questions.voice_1 = { type: 'noul', instructions: `Does ${person.name} come across in the latest reply as their whole self, true to who they are, rather than shrunk to one trait or sounding like everyone else, and still going after what they want in their own way? Who they are: ${person.voice || person.hint || person.role}. What had gone wrong: ${person.drift}`,
+    criteria: { true: `Yes, ${person.name} sounds like themselves.`, false: `No, ${person.name} is still flattened, sounds like the others, has let go of what they were after, or barely appears.` } };
 }
 
 /**
