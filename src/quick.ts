@@ -21,6 +21,10 @@ import { cluesToCheck, settleMystery } from './mystery';
  * The answers are probabilities. Only confident ones change anything, and they
  * only ever move the story forward: nothing is un-marked here.
  */
+/** A check-up called because someone came across as less than themselves two replies running. Named people follow a colon. */
+export const SLIPPING = 'Someone may be slipping';
+/** How many people the quick check asks about each reply, and how often their name must come up to count as having a real part. */
+const SELVES = { max: 2, mentions: 2 } as const;
 export const QUICK = { yes: 0.7, no: 0.3, rhythm: 0.6, maxBeats: 6, maxFits: 6, maxTruths: 4, soon: 5 } as const;
 
 const RHYTHMS: Record<Rhythm, string> = {
@@ -34,7 +38,7 @@ const RHYTHMS: Record<Rhythm, string> = {
 export interface QuickPlan {
   questions: Record<string, DecisionQuestion>;
   /** Question key → what a "yes" marks. */
-  marks: Record<string, { kind: 'step'; thread: string; step: string } | { kind: 'beat'; beat: string } | { kind: 'seed'; seed: string; to: 'planted' | 'paid' } | { kind: 'fits'; thread: string } | { kind: 'truth' } | { kind: 'clue'; clue: string } | { kind: 'reach'; thread: string; step: string }>;
+  marks: Record<string, { kind: 'step'; thread: string; step: string } | { kind: 'beat'; beat: string } | { kind: 'seed'; seed: string; to: 'planted' | 'paid' } | { kind: 'fits'; thread: string } | { kind: 'truth' } | { kind: 'clue'; clue: string } | { kind: 'reach'; thread: string; step: string } | { kind: 'self'; person: string }>;
 }
 
 export function quickQuestions(notebook: Notebook, now: number | Moment, /** The latest exchange, to pick which clues to ask about. */ scene = '', /** The preset plans the story: only what keeps the record true is asked. */ light = false): QuickPlan {
@@ -125,6 +129,7 @@ export function quickQuestions(notebook: Notebook, now: number | Moment, /** The
   questions.new_turn = { type: 'noul', instructions: 'Did the latest exchange bring in something the story notes do not cover yet: a new named person who matters, a new problem or goal, a big change of place or time, or a choice that changes where the story is heading?',
     criteria: { true: 'Yes, something important is new.', false: 'No, it continues what the notes already cover.' } };
   voiceQuestion(notebook, now, scene, questions);
+  selfQuestions(notebook, now, scene, questions, marks);
   return { questions, marks };
 }
 
@@ -132,13 +137,37 @@ export function quickQuestions(notebook: Notebook, now: number | Moment, /** The
  * Someone the notes say has been slipping, who is in this exchange: did they sound like their whole self this time?
  * Only counted, never acted on: it shows whether the narrator takes Grimoire's voice fixes (Behind the scenes).
  */
+const flagged = (notebook: Notebook, now: number | Moment) => {
+  const reply = typeof now === 'number' ? undefined : now.reply;
+  return (p: Notebook['people'][number]) => !!p.drift && (reply === undefined || p.driftAt === undefined || reply - p.driftAt <= DRIFT_SHOW);
+};
+const names = (p: Notebook['people'][number]) => [p.name, ...p.aliases].map(n => n.trim().toLowerCase()).filter(n => n.length > 1);
 function voiceQuestion(notebook: Notebook, now: number | Moment, scene: string, questions: Record<string, DecisionQuestion>) {
-  const reply = typeof now === 'number' ? undefined : now.reply, text = scene.toLowerCase();
-  const person = notebook.people.find(p => p.status === 'active' && p.drift && (reply === undefined || p.driftAt === undefined || reply - p.driftAt <= DRIFT_SHOW)
-    && [p.name, ...p.aliases].some(n => n.trim().length > 1 && text.includes(n.toLowerCase())));
+  const text = scene.toLowerCase(), slipping = flagged(notebook, now);
+  const person = notebook.people.find(p => p.status === 'active' && slipping(p) && names(p).some(n => text.includes(n)));
   if (!person) return;
   questions.voice_1 = { type: 'noul', instructions: `Does ${person.name} come across in the latest reply as their whole self, true to who they are, rather than shrunk to one trait or sounding like everyone else, and still going after what they want in their own way? Who they are: ${person.voice || person.hint || person.role}. What had gone wrong: ${person.drift}`,
     criteria: { true: `Yes, ${person.name} sounds like themselves.`, false: `No, ${person.name} is still flattened, sounds like the others, has let go of what they were after, or barely appears.` } };
+}
+
+/**
+ * The smoke detector for drift: the one or two people with the biggest part in this exchange, each asked whether they
+ * came across as their whole self. A low answer acts on nothing by itself; the same person low two replies running
+ * calls an early check-up, which looks properly and decides (see the controller). Someone already flagged is asked
+ * about by voiceQuestion instead.
+ */
+function selfQuestions(notebook: Notebook, now: number | Moment, scene: string, questions: Record<string, DecisionQuestion>, marks: QuickPlan['marks']) {
+  const text = scene.toLowerCase(), slipping = flagged(notebook, now);
+  const count = (p: Notebook['people'][number]) => Math.max(0, ...names(p).map(n => text.split(n).length - 1));
+  notebook.people.filter(p => p.status === 'active' && !slipping(p) && (p.voice || p.wants || p.hint))
+    .map(p => ({ p, n: count(p) })).filter(x => x.n >= SELVES.mentions).sort((a, b) => b.n - a.n).slice(0, SELVES.max)
+    .forEach(({ p }, i) => {
+      const key = `self_${i + 1}`;
+      const who = [p.voice && `How they sound: ${p.voice}`, p.wants && `What they want: ${p.wants}`, p.hint && `How to play them: ${p.hint}`].filter(Boolean).join(' ');
+      questions[key] = { type: 'noul', instructions: `Does ${p.name} come across in the latest reply as their whole self, true to who they are: sounding like themselves rather than like everyone else, more than one trait played louder and louder, and still going after what they want in their own way? A refusal or setback can change how they go after it, but should not make them simply give up. ${who}`,
+        criteria: { true: `Yes, ${p.name} is true to themselves, or has only a small part in this reply.`, false: `No: ${p.name} is flattened, sounds like the others, or has let go of what they were after.` } };
+      marks[key] = { kind: 'self', person: p.id };
+    });
 }
 
 /**
@@ -157,6 +186,7 @@ function lightQuestions(notebook: Notebook, now: number | Moment = 0, scene = ''
   questions.new_turn = { type: 'noul', instructions: 'Did the latest exchange bring in something the story notes do not cover yet: a new named person who matters, a new problem or goal, a big change of situation or place?',
     criteria: { true: 'Yes, something important is new.', false: 'No, it continues what the notes already cover.' } };
   voiceQuestion(notebook, now, scene, questions);
+  selfQuestions(notebook, now, scene, questions, marks);
   return { questions, marks };
 }
 
@@ -173,7 +203,7 @@ export function quickState(notebook: Notebook, clock: StoryClock, playerMessage:
 
 const yes = (answer: DecisionAnswer | undefined) => answer?.type === 'noul' && answer.noul >= QUICK.yes;
 
-export interface QuickOutcome { notebook: Notebook; changed: boolean; marked: number; /** Due steps that could not believably reach the player in this scene. */ blocked: string[]; /** Due steps whose moment is here, and that did not happen in this reply. */ open: string[]; needsCheckup: boolean; /** A new problem came up that no storyline covers. */ problem: boolean; /** A problem was solved too easily. */ easyFix: boolean; /** A secret came out. People's notes were written to keep it, so it can't wait. */ revealed: boolean; /** The reply hurried past things that needed room. */ rushing: boolean; /** The player named the mystery's answer, or it came out some other way: a check-up follows at once. */ mysteryEnded: boolean; /** An intimate scene is under way. */ intimate: boolean; /** The story changed direction: rework the notebook. */ shifted: boolean; /** Threads that clearly no longer fit for now. */ held: string[] }
+export interface QuickOutcome { notebook: Notebook; changed: boolean; marked: number; /** Due steps that could not believably reach the player in this scene. */ blocked: string[]; /** Due steps whose moment is here, and that did not happen in this reply. */ open: string[]; needsCheckup: boolean; /** A new problem came up that no storyline covers. */ problem: boolean; /** A problem was solved too easily. */ easyFix: boolean; /** A secret came out. People's notes were written to keep it, so it can't wait. */ revealed: boolean; /** The reply hurried past things that needed room. */ rushing: boolean; /** The player named the mystery's answer, or it came out some other way: a check-up follows at once. */ mysteryEnded: boolean; /** An intimate scene is under way. */ intimate: boolean; /** The story changed direction: rework the notebook. */ shifted: boolean; /** Threads that clearly no longer fit for now. */ held: string[]; /** People who came across as less than themselves in this reply. */ slipping: string[] }
 /**
  * Apply answers onto the notebook as it is now (it may have changed while the
  * question was out). Only waiting steps and possible beats can be marked.
@@ -184,7 +214,7 @@ export function applyQuick(current: Notebook, plan: QuickPlan, result: DecisionR
   let notebook = structuredClone(current);
   let marked = 0, mysteryEnded = false;
   for (const [key, mark] of Object.entries(plan.marks)) {
-    if (mark.kind === 'fits' || mark.kind === 'truth' || mark.kind === 'reach' || !yes(answers[key])) continue;
+    if (mark.kind === 'fits' || mark.kind === 'truth' || mark.kind === 'reach' || mark.kind === 'self' || !yes(answers[key])) continue;
     if (mark.kind === 'clue') {
       const clue = notebook.mystery?.status === 'open' ? notebook.mystery.clues.find(c => c.id === mark.clue) : undefined;
       if (clue?.status === 'hidden') { clue.status = 'found'; if (reply !== undefined) clue.foundAt = reply; clue.quick = true; marked++; }
@@ -225,7 +255,8 @@ export function applyQuick(current: Notebook, plan: QuickPlan, result: DecisionR
   const held = Object.entries(plan.marks).flatMap(([key, mark]) => mark.kind === 'fits' && answers[key]?.type === 'noul' && (answers[key] as { noul: number }).noul <= QUICK.no ? [mark.thread] : []);
   const cameOut = Object.entries(plan.marks).some(([key, mark]) => mark.kind === 'truth' && yes(answers[key]));
   const problem = yes(answers.new_problem), easyFix = yes(answers.easy_fix);
-  return { notebook, changed, marked, blocked, open, needsCheckup: yes(answers.new_turn) || held.length > 0 || cameOut || problem || easyFix, mysteryEnded, problem, easyFix, revealed: cameOut, rushing: yes(answers.rushing), intimate: yes(answers.intimate), shifted: yes(answers.story_shift), held };
+  const slipping = Object.entries(plan.marks).flatMap(([key, mark]) => mark.kind === 'self' && answers[key]?.type === 'noul' && (answers[key] as { noul: number }).noul <= QUICK.no ? [mark.person] : []);
+  return { notebook, changed, marked, blocked, open, needsCheckup: yes(answers.new_turn) || held.length > 0 || cameOut || problem || easyFix, mysteryEnded, problem, easyFix, revealed: cameOut, rushing: yes(answers.rushing), intimate: yes(answers.intimate), shifted: yes(answers.story_shift), held, slipping };
 }
 
 /** Fixed wording only: provider errors can echo what was sent. */

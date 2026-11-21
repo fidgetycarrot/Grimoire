@@ -2743,6 +2743,329 @@ function indexOf(left, room) {
   return { index, more };
 }
 
+// src/quick.ts
+var SLIPPING = "Someone may be slipping";
+var SELVES = { max: 2, mentions: 2 };
+var QUICK = { yes: 0.7, no: 0.3, rhythm: 0.6, maxBeats: 6, maxFits: 6, maxTruths: 4, soon: 5 };
+var RHYTHMS = {
+  calm: "Calm: ordinary time, nothing pressing in the scene.",
+  rising: "Rising: tension or trouble is building.",
+  peak: "Peak: a big moment is happening right now (a fight, a reveal, a crisis).",
+  aftermath: "Aftermath: just after a big moment; people are catching their breath.",
+  stalled: "Stalled: the scene is circling; nothing has changed for a while."
+};
+function quickQuestions(notebook, now, scene = "", light = false) {
+  if (light)
+    return lightQuestions(notebook, now, scene);
+  const questions = {}, marks = {};
+  dueThreads(notebook, now).forEach(({ thread, step }, i) => {
+    const key = `due_${i + 1}`;
+    questions[key] = {
+      type: "noul",
+      instructions: `In the latest reply, does this happen, or is its sign clearly shown? Event: ${step.text}${step.sign ? ` Sign: ${step.sign}` : ""}`,
+      criteria: { true: "The latest reply shows it or its sign.", false: "The latest reply does not show it, or only hints vaguely." }
+    };
+    marks[key] = { kind: "step", thread: thread.id, step: step.id };
+    questions[`reach_${i + 1}`] = step.opening ? {
+      type: "noul",
+      instructions: `Where the player is now and what is going on there, is this the moment this event needs, so it could happen in the next reply without forcing it? It needs: ${step.opening} It is not the moment if that would mean someone getting through a locked or barred door, walking in on a private moment no one would interrupt, or something turning up where it could not be. Event: ${step.text}${step.sign ? ` Sign: ${step.sign}` : ""}`,
+      criteria: { true: "Yes, the scene gives it that moment now.", false: "No, the scene does not give it that moment yet." }
+    } : {
+      type: "noul",
+      instructions: `Where the player is now and what is going on there, could this reach them in the next reply in a believable way? It could not if that would mean someone getting through a locked or barred door, walking in on a private moment no one would interrupt, or something turning up where it could not be. A message, a knock, or word arriving can still be believable. Event: ${step.text}${step.sign ? ` Sign: ${step.sign}` : ""}`,
+      criteria: { true: "Yes, it could believably reach them now, in some form.", false: "No, not in the scene as it stands; it would have to wait for the scene to change." }
+    };
+    marks[`reach_${i + 1}`] = { kind: "reach", thread: thread.id, step: step.id };
+  });
+  notebook.beats.filter((b) => b.status === "possible").slice(0, QUICK.maxBeats).forEach((beat, i) => {
+    const key = `moment_${i + 1}`;
+    questions[key] = {
+      type: "noul",
+      instructions: `Does this moment happen in the latest reply? Moment: ${beat.text}`,
+      criteria: { true: "It happens in the latest reply.", false: "It does not happen in the latest reply." }
+    };
+    marks[key] = { kind: "beat", beat: beat.id };
+  });
+  const seeds = seedPlan(notebook, now);
+  if (seeds.plant) {
+    questions.detail_mentioned = {
+      type: "noul",
+      instructions: `Does the latest reply mention this detail, even briefly or in passing? Detail: ${seeds.plant.detail}`,
+      criteria: { true: "The detail, or something plainly the same, appears in the latest reply.", false: "It does not appear." }
+    };
+    marks.detail_mentioned = { kind: "seed", seed: seeds.plant.id, to: "planted" };
+  }
+  if (seeds.echo) {
+    questions.echo_heard = {
+      type: "noul",
+      instructions: `Does the latest reply let the player hear of this, even in passing (news, a rumor, a remark, a message)? ${seeds.echo.detail}`,
+      criteria: { true: "It reaches the player in the latest reply.", false: "It does not come up." }
+    };
+    marks.echo_heard = { kind: "seed", seed: seeds.echo.id, to: "paid" };
+  }
+  seeds.ready.slice(0, 3).forEach((seed, i) => {
+    const key = `callback_${i + 1}`;
+    questions[key] = {
+      type: "noul",
+      instructions: `Does the latest reply bring back this earlier detail and give it its meaning? Detail: ${seed.detail} Meaning: ${seed.payoff}`,
+      criteria: { true: "The detail comes back and its meaning lands, or clearly starts to.", false: "It does not come back, or only in passing without its meaning." }
+    };
+    marks[key] = { kind: "seed", seed: seed.id, to: "paid" };
+  });
+  const m = typeof now === "number" ? { hours: now } : now;
+  const soon = dueThreads(notebook, m.reply === undefined ? m : { ...m, reply: m.reply + QUICK.soon });
+  soon.slice(0, QUICK.maxFits).forEach(({ thread }, i) => {
+    const key = `fits_${i + 1}`;
+    questions[key] = {
+      type: "noul",
+      instructions: `After the latest exchange, could this storyline still plausibly reach the player soon, where they are now? Storyline: ${thread.title}. ${thread.hint || ""}`.trim(),
+      criteria: { true: "Yes, it can still reach them (it could follow them, call them, or wait nearby).", false: "No, the player has left it behind and it no longer fits for now." }
+    };
+    marks[key] = { kind: "fits", thread: thread.id };
+  });
+  notebook.story.hiddenTruth.slice(0, QUICK.maxTruths).forEach((truth, i) => {
+    const key = `truth_${i + 1}`;
+    questions[key] = {
+      type: "noul",
+      instructions: `In the latest exchange, does the player learn this, or does it come out where they can see? A hint or a suspicion does not count. Hidden truth: ${truth}`,
+      criteria: { true: "The player now knows it, or it plainly came out in front of them.", false: "It stays hidden, or is only hinted at." }
+    };
+    marks[key] = { kind: "truth" };
+  });
+  const mystery = notebook.mystery;
+  if (mystery?.status === "open") {
+    cluesToCheck(mystery, scene, notebook.people, typeof now === "number" ? { hours: now } : now).forEach((clue, i) => {
+      const key = `clue_${i + 1}`;
+      questions[key] = {
+        type: "noul",
+        instructions: `In the latest reply, does the player see, hear, or get told this? ${clue.text}`,
+        criteria: { true: "Yes: it is shown or said to the player in the latest reply, plainly enough that they now know it.", false: "No, or it is only vaguely hinted at." }
+      };
+      marks[key] = { kind: "clue", clue: clue.id };
+    });
+    questions.theory = {
+      type: "noul",
+      instructions: `In the player's message, does the player's character put an answer to this question to someone, out loud or by acting on it: accusing or confronting a person, telling someone what they believe really happened, reporting it? Private thoughts, wondering, asking questions, and listing suspects do not count. Question: ${mystery.question}`,
+      criteria: { true: "Yes, the player states an answer or makes an accusation.", false: "No answer is stated." }
+    };
+    questions.theory_right = {
+      type: "noul",
+      instructions: `The true answer is: ${mystery.answer} Does the player's message name that same answer, in substance (the same person or the same cause)? If the player's message names no answer, or names someone or something else, the answer is no.`,
+      criteria: { true: "The player named the true answer.", false: "The player named something else, or nothing." }
+    };
+    questions.mystery_out = {
+      type: "noul",
+      instructions: `Does the latest reply reveal or confirm this to the player as a fact? Suspicion, hints, and accusations do not count. ${mystery.answer}`,
+      criteria: { true: "The reply states or confirms it as fact, where the player can see.", false: "It stays unknown or unconfirmed." }
+    };
+  }
+  questions.story_shift = {
+    type: "noul",
+    instructions: "Did the latest exchange take the story somewhere the story notes no longer fit: the player left the setting for good, walked away from the main situation, or changed what they are after?",
+    criteria: { true: "Yes, the story has changed direction and the notes need reworking.", false: "No, the story is still on the same ground, even if something new happened." }
+  };
+  questions.rushing = {
+    type: "noul",
+    instructions: "Did the latest reply rush the story: wrap up a problem, jump ahead, or move straight to the next big thing faster than the scene allowed, instead of letting it play out?",
+    criteria: { true: "Yes, it hurried past things that needed room.", false: "No, it took the time the scene needed, even if a lot happened." }
+  };
+  questions.intimate = {
+    type: "noul",
+    instructions: "Is the latest reply an intimate or sexual scene that is still going on at the end of the reply?",
+    criteria: { true: "Yes, an intimate or sexual scene is under way and has not ended.", false: "No, or it has ended." }
+  };
+  questions.new_problem = {
+    type: "noul",
+    instructions: "Did the player's message or the latest reply bring up a new problem for the player character (a debt, a threat, a loss, someone against them, something at risk) that the open storylines do not already cover?",
+    criteria: { true: "Yes, a new problem came up.", false: "No new problem, or it is one the storylines already cover." }
+  };
+  questions.easy_fix = {
+    type: "noul",
+    instructions: "Did the latest reply solve a problem too easily: in one go, at no real cost, through money, luck, or someone fixing it for the player character?",
+    criteria: { true: "Yes, a problem was solved too easily.", false: "No, or the solution took real effort or cost something." }
+  };
+  questions.rhythm = { type: "choice", instructions: "Which best describes the scene at the end of the latest reply?", criteria: RHYTHMS };
+  questions.new_turn = {
+    type: "noul",
+    instructions: "Did the latest exchange bring in something the story notes do not cover yet: a new named person who matters, a new problem or goal, a big change of place or time, or a choice that changes where the story is heading?",
+    criteria: { true: "Yes, something important is new.", false: "No, it continues what the notes already cover." }
+  };
+  voiceQuestion(notebook, now, scene, questions);
+  selfQuestions(notebook, now, scene, questions, marks);
+  return { questions, marks };
+}
+var flagged = (notebook, now) => {
+  const reply = typeof now === "number" ? undefined : now.reply;
+  return (p) => !!p.drift && (reply === undefined || p.driftAt === undefined || reply - p.driftAt <= DRIFT_SHOW);
+};
+var names2 = (p) => [p.name, ...p.aliases].map((n) => n.trim().toLowerCase()).filter((n) => n.length > 1);
+function voiceQuestion(notebook, now, scene, questions) {
+  const text = scene.toLowerCase(), slipping = flagged(notebook, now);
+  const person = notebook.people.find((p) => p.status === "active" && slipping(p) && names2(p).some((n) => text.includes(n)));
+  if (!person)
+    return;
+  questions.voice_1 = {
+    type: "noul",
+    instructions: `Does ${person.name} come across in the latest reply as their whole self, true to who they are, rather than shrunk to one trait or sounding like everyone else, and still going after what they want in their own way? Who they are: ${person.voice || person.hint || person.role}. What had gone wrong: ${person.drift}`,
+    criteria: { true: `Yes, ${person.name} sounds like themselves.`, false: `No, ${person.name} is still flattened, sounds like the others, has let go of what they were after, or barely appears.` }
+  };
+}
+function selfQuestions(notebook, now, scene, questions, marks) {
+  const text = scene.toLowerCase(), slipping = flagged(notebook, now);
+  const count = (p) => Math.max(0, ...names2(p).map((n) => text.split(n).length - 1));
+  notebook.people.filter((p) => p.status === "active" && !slipping(p) && (p.voice || p.wants || p.hint)).map((p) => ({ p, n: count(p) })).filter((x) => x.n >= SELVES.mentions).sort((a, b) => b.n - a.n).slice(0, SELVES.max).forEach(({ p }, i) => {
+    const key = `self_${i + 1}`;
+    const who = [p.voice && `How they sound: ${p.voice}`, p.wants && `What they want: ${p.wants}`, p.hint && `How to play them: ${p.hint}`].filter(Boolean).join(" ");
+    questions[key] = {
+      type: "noul",
+      instructions: `Does ${p.name} come across in the latest reply as their whole self, true to who they are: sounding like themselves rather than like everyone else, more than one trait played louder and louder, and still going after what they want in their own way? A refusal or setback can change how they go after it, but should not make them simply give up. ${who}`,
+      criteria: { true: `Yes, ${p.name} is true to themselves, or has only a small part in this reply.`, false: `No: ${p.name} is flattened, sounds like the others, or has let go of what they were after.` }
+    };
+    marks[key] = { kind: "self", person: p.id };
+  });
+}
+function lightQuestions(notebook, now = 0, scene = "") {
+  const questions = {}, marks = {};
+  notebook.story.hiddenTruth.slice(0, QUICK.maxTruths).forEach((truth, i) => {
+    const key = `truth_${i + 1}`;
+    questions[key] = {
+      type: "noul",
+      instructions: `In the latest exchange, does the player learn this, or does it come out where they can see? A hint or a suspicion does not count. Hidden truth: ${truth}`,
+      criteria: { true: "Yes, it comes out plainly.", false: "No, it stays hidden or only hinted at." }
+    };
+    marks[key] = { kind: "truth" };
+  });
+  questions.new_turn = {
+    type: "noul",
+    instructions: "Did the latest exchange bring in something the story notes do not cover yet: a new named person who matters, a new problem or goal, a big change of situation or place?",
+    criteria: { true: "Yes, something important is new.", false: "No, it continues what the notes already cover." }
+  };
+  voiceQuestion(notebook, now, scene, questions);
+  selfQuestions(notebook, now, scene, questions, marks);
+  return { questions, marks };
+}
+function quickState(notebook, clock, playerMessage, latestReply) {
+  return {
+    storyTime: describeClock(clock),
+    storyQuestion: notebook.story.question,
+    people: notebook.people.filter((p) => p.status === "active").map((p) => p.name),
+    openThreads: notebook.threads.filter((t) => t.status === "open").map((t) => t.title),
+    playerMessage,
+    latestReply
+  };
+}
+var yes = (answer) => answer?.type === "noul" && answer.noul >= QUICK.yes;
+function applyQuick(current, plan, result, now, playerMessage = "") {
+  const hours = typeof now === "number" ? now : now.hours, reply = typeof now === "number" ? undefined : now.reply;
+  const answers = result.answers;
+  let notebook = structuredClone(current);
+  let marked = 0, mysteryEnded = false;
+  for (const [key, mark] of Object.entries(plan.marks)) {
+    if (mark.kind === "fits" || mark.kind === "truth" || mark.kind === "reach" || mark.kind === "self" || !yes(answers[key]))
+      continue;
+    if (mark.kind === "clue") {
+      const clue = notebook.mystery?.status === "open" ? notebook.mystery.clues.find((c) => c.id === mark.clue) : undefined;
+      if (clue?.status === "hidden") {
+        clue.status = "found";
+        if (reply !== undefined)
+          clue.foundAt = reply;
+        clue.quick = true;
+        marked++;
+      }
+    } else if (mark.kind === "step") {
+      const step = notebook.threads.find((t) => t.id === mark.thread)?.steps.find((s) => s.id === mark.step);
+      if (step?.status === "waiting") {
+        step.status = "shown";
+        step.at = hours;
+        if (reply !== undefined)
+          step.atReply = reply;
+        step.quick = true;
+        marked++;
+      }
+    } else if (mark.kind === "seed") {
+      const seed = notebook.seeds.find((x) => x.id === mark.seed);
+      if (seed && mark.to === "planted" && seed.status === "waiting") {
+        seed.status = "planted";
+        if (reply !== undefined)
+          seed.plantedAt = reply;
+        seed.quick = true;
+        marked++;
+      }
+      if (seed && mark.to === "paid" && (seed.status === "planted" || seed.status === "echo")) {
+        seed.status = "paid";
+        if (reply !== undefined)
+          seed.paidAt = reply;
+        seed.quick = true;
+        marked++;
+      }
+    } else {
+      const beat = notebook.beats.find((b) => b.id === mark.beat);
+      if (beat?.status === "possible") {
+        beat.status = "happened";
+        beat.quick = true;
+        marked++;
+      }
+    }
+  }
+  const mystery = notebook.mystery;
+  if (mystery?.status === "open") {
+    const right = answers.theory_right, score = right?.type === "noul" ? right.noul : 0.5;
+    const said = playerMessage.replace(/\s+/g, " ").trim().slice(0, 300);
+    const again = mystery.theories.some((t) => t.text === said);
+    if (yes(answers.theory) && said && !again) {
+      const verdict = score >= QUICK.yes ? "right" : score <= QUICK.no ? "wrong" : "partly";
+      mystery.theories = [...mystery.theories, { text: said, verdict, ...reply !== undefined ? { atReply: reply } : {}, quick: true }].slice(-8);
+      if (verdict === "right") {
+        mystery.status = "solved";
+        if (reply !== undefined)
+          mystery.endReply = reply;
+        mysteryEnded = true;
+      }
+      marked++;
+    } else if (yes(answers.mystery_out)) {
+      mystery.status = "revealed";
+      if (reply !== undefined)
+        mystery.endReply = reply;
+      mysteryEnded = true;
+      marked++;
+    }
+    if (mysteryEnded)
+      notebook = settleMystery(notebook);
+  }
+  const rhythm = answers.rhythm;
+  let changed = marked > 0;
+  if (rhythm?.type === "choice" && rhythm.confidence >= QUICK.rhythm && rhythm.choice in RHYTHMS && rhythm.choice !== notebook.rhythm) {
+    notebook.rhythm = rhythm.choice;
+    changed = true;
+  }
+  const blocked = Object.entries(plan.marks).flatMap(([key, mark]) => mark.kind === "reach" && answers[key]?.type === "noul" && answers[key].noul <= QUICK.no && !yes(answers[key.replace("reach_", "due_")]) ? [mark.step] : []);
+  const open = Object.entries(plan.marks).flatMap(([key, mark]) => mark.kind === "reach" && answers[key]?.type === "noul" && answers[key].noul >= QUICK.yes && !yes(answers[key.replace("reach_", "due_")]) ? [mark.step] : []);
+  const held = Object.entries(plan.marks).flatMap(([key, mark]) => mark.kind === "fits" && answers[key]?.type === "noul" && answers[key].noul <= QUICK.no ? [mark.thread] : []);
+  const cameOut = Object.entries(plan.marks).some(([key, mark]) => mark.kind === "truth" && yes(answers[key]));
+  const problem = yes(answers.new_problem), easyFix = yes(answers.easy_fix);
+  const slipping = Object.entries(plan.marks).flatMap(([key, mark]) => mark.kind === "self" && answers[key]?.type === "noul" && answers[key].noul <= QUICK.no ? [mark.person] : []);
+  return { notebook, changed, marked, blocked, open, needsCheckup: yes(answers.new_turn) || held.length > 0 || cameOut || problem || easyFix, mysteryEnded, problem, easyFix, revealed: cameOut, rushing: yes(answers.rushing), intimate: yes(answers.intimate), shifted: yes(answers.story_shift), held, slipping };
+}
+function quickError(error) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  if (/permission/i.test(message))
+    return "Grant decisions in Lumiverse\u2019s Extensions panel.";
+  if (/moderat|flagged|content.?(policy|filter|rules)|safety|refus|violat|not allowed/i.test(message))
+    return "The decision model refused this reply, most likely because of its content rules.";
+  if (/404|not found|no default|connection/i.test(message))
+    return "Choose a decision connection in Grimoire settings, or set a default one in Lumiverse.";
+  if (/timed?\s*out|timeout|504|deadline/i.test(message))
+    return "The decision model took too long to answer.";
+  if (/401|unauthori|api.?key|credential/i.test(message))
+    return "The decision connection could not sign in. Check it in Lumiverse.";
+  if (/429|rate|quota|credit/i.test(message))
+    return "The decision provider reported a rate or credit limit.";
+  if (/400|invalid|unsupported|protocol/i.test(message))
+    return "The decision model could not answer these questions. Try another decision model.";
+  const code = /\b([45]\d\d)\b/.exec(message)?.[1] ?? (error && typeof error === "object" && typeof error.code === "string" && /^[A-Z_]{3,40}$/.test(error.code) ? error.code : "");
+  return `The decision model request failed${code ? ` (code ${code})` : ""}.`;
+}
+
 // src/memory.ts
 var NO_RECALL = { moments: [], people: [], ties: [], arc: "" };
 var hasRecall = (r) => r.moments.length + r.people.length + r.ties.length > 0 || !!r.arc;
@@ -2934,6 +3257,8 @@ ${LORE(material.lore)}${MYSTERY_RULES}` },
     { role: "user", content: JSON.stringify({ task: "grimoire-mystery-first-v1", notebook, preferences, character: material.character, persona: material.persona, lore: material.lore, storySoFar: material.storySoFar, chat: material.chat.slice(-12) }) }
   ];
 }
+var SLIP = (who) => `- This check-up was called because the quick check saw ${who} come across as less than themselves in the last two replies: flattened, sounding like the others, or letting go of what they were after. Look at them closely under Drift. Set their "drift" if they have slipped; leave it empty if there was good reason (a quiet moment, or a real change of heart that would hold for them, which goes in "wants" instead).
+`;
 var REPLAN = `- The story has been running ahead of its plan: things kept happening sooner than planned. Re-plan the rest of this part so it fills the replies left: spread waiting steps out (raise afterHours), move big moments later, keep at most one urgent storyline, and give quieter stretches room. Do not undo anything that happened, and do not slow down what the player is actively doing; this is about the plan's own timing.
 `;
 var REVIEW = `- This update is also a full review. Besides the usual, read the whole notebook against the chat and fix what has drifted: people whose wants, doing, or voice no longer match how they have been; storylines whose plans no longer make sense after what happened; planted details whose payoff no longer fits (give them one that does); openings that can no longer come; hidden truths the chat has already let out. Keep what still works exactly as it is.
@@ -2946,7 +3271,7 @@ Return {"changes": {...}, "tracker": null or {"fields": [...], "note": ""}, "spe
 "changes" holds only what is different after this update, in the notebook's own shape: ${shapeWith(!!input.notebook.mystery)}
 In "changes": "people", "threads", "beats", "seeds", "covers" and "buildings" list only the items that are new or changed, each one complete (a changed thread includes all of its steps, a changed person all of their fields); anything you leave out stays exactly as it is. "story" and "arc" give only the fields that change (a list such as hiddenTruth is given whole). "events" gives only new events. Give "clock", "rhythm", "summary", "recap" and "taste" whenever they change. Leave everything else out; do not copy unchanged items.
 Rules for the update:
-${LORE(input.lore) ? `- ${LORE(input.lore)}` : ""}${MEMORY(input.memory) ? `- ${MEMORY(input.memory)}` : ""}${input.notes.length ? NOTES : ""}${input.replan ? REPLAN : ""}${input.review ? REVIEW : ""}${input.resync ? RESYNC(input.held) : ""}${input.part ? `- This part of the story is about ${input.part.elapsed} replies in, of roughly ${input.part.length}. Spread what is left across the rest of it: the climax and the biggest moments belong in the last third, and new storylines should fit the time that is left rather than pile on. If the player picks up the pace (Fast), parts are shorter. If everything resolves early anyway, open the next part as usual.
+${LORE(input.lore) ? `- ${LORE(input.lore)}` : ""}${MEMORY(input.memory) ? `- ${MEMORY(input.memory)}` : ""}${input.notes.length ? NOTES : ""}${input.replan ? REPLAN : ""}${input.review ? REVIEW : ""}${input.reason.startsWith(SLIPPING) ? SLIP(input.reason.slice(SLIPPING.length + 2)) : ""}${input.resync ? RESYNC(input.held) : ""}${input.part ? `- This part of the story is about ${input.part.elapsed} replies in, of roughly ${input.part.length}. Spread what is left across the rest of it: the climax and the biggest moments belong in the last third, and new storylines should fit the time that is left rather than pile on. If the player picks up the pace (Fast), parts are shorter. If everything resolves early anyway, open the next part as usual.
 ` : ""}- Speed: never make an existing storyline faster, or pull its waiting steps closer together (lower afterHours), unless something the player did made it more pressing; then say what in "speedUps": {"thread-id": "what the player did"}. Only one storyline may be urgent at a time.
 - The chat decides what actually happened. Record only what the messages establish. Lines marked out of character are the player talking to the narrator outside the story: never record them as events, but take what the player wants from them into account. "I try to return the ring" is an attempt, not a return.
 - Steps: mark "shown" when the player saw or heard the sign in the chat, "offscreen" when it happened where the player could not see, "skipped" when it no longer applies. A step that is merely due has not happened. Never mark shown something the chat does not show.
@@ -3396,305 +3721,6 @@ class MeaningIndex {
         out.set(id, (out.get(id) ?? 0) + 0.3);
     return out;
   }
-}
-
-// src/quick.ts
-var QUICK = { yes: 0.7, no: 0.3, rhythm: 0.6, maxBeats: 6, maxFits: 6, maxTruths: 4, soon: 5 };
-var RHYTHMS = {
-  calm: "Calm: ordinary time, nothing pressing in the scene.",
-  rising: "Rising: tension or trouble is building.",
-  peak: "Peak: a big moment is happening right now (a fight, a reveal, a crisis).",
-  aftermath: "Aftermath: just after a big moment; people are catching their breath.",
-  stalled: "Stalled: the scene is circling; nothing has changed for a while."
-};
-function quickQuestions(notebook, now, scene = "", light = false) {
-  if (light)
-    return lightQuestions(notebook, now, scene);
-  const questions = {}, marks = {};
-  dueThreads(notebook, now).forEach(({ thread, step }, i) => {
-    const key = `due_${i + 1}`;
-    questions[key] = {
-      type: "noul",
-      instructions: `In the latest reply, does this happen, or is its sign clearly shown? Event: ${step.text}${step.sign ? ` Sign: ${step.sign}` : ""}`,
-      criteria: { true: "The latest reply shows it or its sign.", false: "The latest reply does not show it, or only hints vaguely." }
-    };
-    marks[key] = { kind: "step", thread: thread.id, step: step.id };
-    questions[`reach_${i + 1}`] = step.opening ? {
-      type: "noul",
-      instructions: `Where the player is now and what is going on there, is this the moment this event needs, so it could happen in the next reply without forcing it? It needs: ${step.opening} It is not the moment if that would mean someone getting through a locked or barred door, walking in on a private moment no one would interrupt, or something turning up where it could not be. Event: ${step.text}${step.sign ? ` Sign: ${step.sign}` : ""}`,
-      criteria: { true: "Yes, the scene gives it that moment now.", false: "No, the scene does not give it that moment yet." }
-    } : {
-      type: "noul",
-      instructions: `Where the player is now and what is going on there, could this reach them in the next reply in a believable way? It could not if that would mean someone getting through a locked or barred door, walking in on a private moment no one would interrupt, or something turning up where it could not be. A message, a knock, or word arriving can still be believable. Event: ${step.text}${step.sign ? ` Sign: ${step.sign}` : ""}`,
-      criteria: { true: "Yes, it could believably reach them now, in some form.", false: "No, not in the scene as it stands; it would have to wait for the scene to change." }
-    };
-    marks[`reach_${i + 1}`] = { kind: "reach", thread: thread.id, step: step.id };
-  });
-  notebook.beats.filter((b) => b.status === "possible").slice(0, QUICK.maxBeats).forEach((beat, i) => {
-    const key = `moment_${i + 1}`;
-    questions[key] = {
-      type: "noul",
-      instructions: `Does this moment happen in the latest reply? Moment: ${beat.text}`,
-      criteria: { true: "It happens in the latest reply.", false: "It does not happen in the latest reply." }
-    };
-    marks[key] = { kind: "beat", beat: beat.id };
-  });
-  const seeds = seedPlan(notebook, now);
-  if (seeds.plant) {
-    questions.detail_mentioned = {
-      type: "noul",
-      instructions: `Does the latest reply mention this detail, even briefly or in passing? Detail: ${seeds.plant.detail}`,
-      criteria: { true: "The detail, or something plainly the same, appears in the latest reply.", false: "It does not appear." }
-    };
-    marks.detail_mentioned = { kind: "seed", seed: seeds.plant.id, to: "planted" };
-  }
-  if (seeds.echo) {
-    questions.echo_heard = {
-      type: "noul",
-      instructions: `Does the latest reply let the player hear of this, even in passing (news, a rumor, a remark, a message)? ${seeds.echo.detail}`,
-      criteria: { true: "It reaches the player in the latest reply.", false: "It does not come up." }
-    };
-    marks.echo_heard = { kind: "seed", seed: seeds.echo.id, to: "paid" };
-  }
-  seeds.ready.slice(0, 3).forEach((seed, i) => {
-    const key = `callback_${i + 1}`;
-    questions[key] = {
-      type: "noul",
-      instructions: `Does the latest reply bring back this earlier detail and give it its meaning? Detail: ${seed.detail} Meaning: ${seed.payoff}`,
-      criteria: { true: "The detail comes back and its meaning lands, or clearly starts to.", false: "It does not come back, or only in passing without its meaning." }
-    };
-    marks[key] = { kind: "seed", seed: seed.id, to: "paid" };
-  });
-  const m = typeof now === "number" ? { hours: now } : now;
-  const soon = dueThreads(notebook, m.reply === undefined ? m : { ...m, reply: m.reply + QUICK.soon });
-  soon.slice(0, QUICK.maxFits).forEach(({ thread }, i) => {
-    const key = `fits_${i + 1}`;
-    questions[key] = {
-      type: "noul",
-      instructions: `After the latest exchange, could this storyline still plausibly reach the player soon, where they are now? Storyline: ${thread.title}. ${thread.hint || ""}`.trim(),
-      criteria: { true: "Yes, it can still reach them (it could follow them, call them, or wait nearby).", false: "No, the player has left it behind and it no longer fits for now." }
-    };
-    marks[key] = { kind: "fits", thread: thread.id };
-  });
-  notebook.story.hiddenTruth.slice(0, QUICK.maxTruths).forEach((truth, i) => {
-    const key = `truth_${i + 1}`;
-    questions[key] = {
-      type: "noul",
-      instructions: `In the latest exchange, does the player learn this, or does it come out where they can see? A hint or a suspicion does not count. Hidden truth: ${truth}`,
-      criteria: { true: "The player now knows it, or it plainly came out in front of them.", false: "It stays hidden, or is only hinted at." }
-    };
-    marks[key] = { kind: "truth" };
-  });
-  const mystery = notebook.mystery;
-  if (mystery?.status === "open") {
-    cluesToCheck(mystery, scene, notebook.people, typeof now === "number" ? { hours: now } : now).forEach((clue, i) => {
-      const key = `clue_${i + 1}`;
-      questions[key] = {
-        type: "noul",
-        instructions: `In the latest reply, does the player see, hear, or get told this? ${clue.text}`,
-        criteria: { true: "Yes: it is shown or said to the player in the latest reply, plainly enough that they now know it.", false: "No, or it is only vaguely hinted at." }
-      };
-      marks[key] = { kind: "clue", clue: clue.id };
-    });
-    questions.theory = {
-      type: "noul",
-      instructions: `In the player's message, does the player's character put an answer to this question to someone, out loud or by acting on it: accusing or confronting a person, telling someone what they believe really happened, reporting it? Private thoughts, wondering, asking questions, and listing suspects do not count. Question: ${mystery.question}`,
-      criteria: { true: "Yes, the player states an answer or makes an accusation.", false: "No answer is stated." }
-    };
-    questions.theory_right = {
-      type: "noul",
-      instructions: `The true answer is: ${mystery.answer} Does the player's message name that same answer, in substance (the same person or the same cause)? If the player's message names no answer, or names someone or something else, the answer is no.`,
-      criteria: { true: "The player named the true answer.", false: "The player named something else, or nothing." }
-    };
-    questions.mystery_out = {
-      type: "noul",
-      instructions: `Does the latest reply reveal or confirm this to the player as a fact? Suspicion, hints, and accusations do not count. ${mystery.answer}`,
-      criteria: { true: "The reply states or confirms it as fact, where the player can see.", false: "It stays unknown or unconfirmed." }
-    };
-  }
-  questions.story_shift = {
-    type: "noul",
-    instructions: "Did the latest exchange take the story somewhere the story notes no longer fit: the player left the setting for good, walked away from the main situation, or changed what they are after?",
-    criteria: { true: "Yes, the story has changed direction and the notes need reworking.", false: "No, the story is still on the same ground, even if something new happened." }
-  };
-  questions.rushing = {
-    type: "noul",
-    instructions: "Did the latest reply rush the story: wrap up a problem, jump ahead, or move straight to the next big thing faster than the scene allowed, instead of letting it play out?",
-    criteria: { true: "Yes, it hurried past things that needed room.", false: "No, it took the time the scene needed, even if a lot happened." }
-  };
-  questions.intimate = {
-    type: "noul",
-    instructions: "Is the latest reply an intimate or sexual scene that is still going on at the end of the reply?",
-    criteria: { true: "Yes, an intimate or sexual scene is under way and has not ended.", false: "No, or it has ended." }
-  };
-  questions.new_problem = {
-    type: "noul",
-    instructions: "Did the player's message or the latest reply bring up a new problem for the player character (a debt, a threat, a loss, someone against them, something at risk) that the open storylines do not already cover?",
-    criteria: { true: "Yes, a new problem came up.", false: "No new problem, or it is one the storylines already cover." }
-  };
-  questions.easy_fix = {
-    type: "noul",
-    instructions: "Did the latest reply solve a problem too easily: in one go, at no real cost, through money, luck, or someone fixing it for the player character?",
-    criteria: { true: "Yes, a problem was solved too easily.", false: "No, or the solution took real effort or cost something." }
-  };
-  questions.rhythm = { type: "choice", instructions: "Which best describes the scene at the end of the latest reply?", criteria: RHYTHMS };
-  questions.new_turn = {
-    type: "noul",
-    instructions: "Did the latest exchange bring in something the story notes do not cover yet: a new named person who matters, a new problem or goal, a big change of place or time, or a choice that changes where the story is heading?",
-    criteria: { true: "Yes, something important is new.", false: "No, it continues what the notes already cover." }
-  };
-  voiceQuestion(notebook, now, scene, questions);
-  return { questions, marks };
-}
-function voiceQuestion(notebook, now, scene, questions) {
-  const reply = typeof now === "number" ? undefined : now.reply, text = scene.toLowerCase();
-  const person = notebook.people.find((p) => p.status === "active" && p.drift && (reply === undefined || p.driftAt === undefined || reply - p.driftAt <= DRIFT_SHOW) && [p.name, ...p.aliases].some((n) => n.trim().length > 1 && text.includes(n.toLowerCase())));
-  if (!person)
-    return;
-  questions.voice_1 = {
-    type: "noul",
-    instructions: `Does ${person.name} come across in the latest reply as their whole self, true to who they are, rather than shrunk to one trait or sounding like everyone else, and still going after what they want in their own way? Who they are: ${person.voice || person.hint || person.role}. What had gone wrong: ${person.drift}`,
-    criteria: { true: `Yes, ${person.name} sounds like themselves.`, false: `No, ${person.name} is still flattened, sounds like the others, has let go of what they were after, or barely appears.` }
-  };
-}
-function lightQuestions(notebook, now = 0, scene = "") {
-  const questions = {}, marks = {};
-  notebook.story.hiddenTruth.slice(0, QUICK.maxTruths).forEach((truth, i) => {
-    const key = `truth_${i + 1}`;
-    questions[key] = {
-      type: "noul",
-      instructions: `In the latest exchange, does the player learn this, or does it come out where they can see? A hint or a suspicion does not count. Hidden truth: ${truth}`,
-      criteria: { true: "Yes, it comes out plainly.", false: "No, it stays hidden or only hinted at." }
-    };
-    marks[key] = { kind: "truth" };
-  });
-  questions.new_turn = {
-    type: "noul",
-    instructions: "Did the latest exchange bring in something the story notes do not cover yet: a new named person who matters, a new problem or goal, a big change of situation or place?",
-    criteria: { true: "Yes, something important is new.", false: "No, it continues what the notes already cover." }
-  };
-  voiceQuestion(notebook, now, scene, questions);
-  return { questions, marks };
-}
-function quickState(notebook, clock, playerMessage, latestReply) {
-  return {
-    storyTime: describeClock(clock),
-    storyQuestion: notebook.story.question,
-    people: notebook.people.filter((p) => p.status === "active").map((p) => p.name),
-    openThreads: notebook.threads.filter((t) => t.status === "open").map((t) => t.title),
-    playerMessage,
-    latestReply
-  };
-}
-var yes = (answer) => answer?.type === "noul" && answer.noul >= QUICK.yes;
-function applyQuick(current, plan, result, now, playerMessage = "") {
-  const hours = typeof now === "number" ? now : now.hours, reply = typeof now === "number" ? undefined : now.reply;
-  const answers = result.answers;
-  let notebook = structuredClone(current);
-  let marked = 0, mysteryEnded = false;
-  for (const [key, mark] of Object.entries(plan.marks)) {
-    if (mark.kind === "fits" || mark.kind === "truth" || mark.kind === "reach" || !yes(answers[key]))
-      continue;
-    if (mark.kind === "clue") {
-      const clue = notebook.mystery?.status === "open" ? notebook.mystery.clues.find((c) => c.id === mark.clue) : undefined;
-      if (clue?.status === "hidden") {
-        clue.status = "found";
-        if (reply !== undefined)
-          clue.foundAt = reply;
-        clue.quick = true;
-        marked++;
-      }
-    } else if (mark.kind === "step") {
-      const step = notebook.threads.find((t) => t.id === mark.thread)?.steps.find((s) => s.id === mark.step);
-      if (step?.status === "waiting") {
-        step.status = "shown";
-        step.at = hours;
-        if (reply !== undefined)
-          step.atReply = reply;
-        step.quick = true;
-        marked++;
-      }
-    } else if (mark.kind === "seed") {
-      const seed = notebook.seeds.find((x) => x.id === mark.seed);
-      if (seed && mark.to === "planted" && seed.status === "waiting") {
-        seed.status = "planted";
-        if (reply !== undefined)
-          seed.plantedAt = reply;
-        seed.quick = true;
-        marked++;
-      }
-      if (seed && mark.to === "paid" && (seed.status === "planted" || seed.status === "echo")) {
-        seed.status = "paid";
-        if (reply !== undefined)
-          seed.paidAt = reply;
-        seed.quick = true;
-        marked++;
-      }
-    } else {
-      const beat = notebook.beats.find((b) => b.id === mark.beat);
-      if (beat?.status === "possible") {
-        beat.status = "happened";
-        beat.quick = true;
-        marked++;
-      }
-    }
-  }
-  const mystery = notebook.mystery;
-  if (mystery?.status === "open") {
-    const right = answers.theory_right, score = right?.type === "noul" ? right.noul : 0.5;
-    const said = playerMessage.replace(/\s+/g, " ").trim().slice(0, 300);
-    const again = mystery.theories.some((t) => t.text === said);
-    if (yes(answers.theory) && said && !again) {
-      const verdict = score >= QUICK.yes ? "right" : score <= QUICK.no ? "wrong" : "partly";
-      mystery.theories = [...mystery.theories, { text: said, verdict, ...reply !== undefined ? { atReply: reply } : {}, quick: true }].slice(-8);
-      if (verdict === "right") {
-        mystery.status = "solved";
-        if (reply !== undefined)
-          mystery.endReply = reply;
-        mysteryEnded = true;
-      }
-      marked++;
-    } else if (yes(answers.mystery_out)) {
-      mystery.status = "revealed";
-      if (reply !== undefined)
-        mystery.endReply = reply;
-      mysteryEnded = true;
-      marked++;
-    }
-    if (mysteryEnded)
-      notebook = settleMystery(notebook);
-  }
-  const rhythm = answers.rhythm;
-  let changed = marked > 0;
-  if (rhythm?.type === "choice" && rhythm.confidence >= QUICK.rhythm && rhythm.choice in RHYTHMS && rhythm.choice !== notebook.rhythm) {
-    notebook.rhythm = rhythm.choice;
-    changed = true;
-  }
-  const blocked = Object.entries(plan.marks).flatMap(([key, mark]) => mark.kind === "reach" && answers[key]?.type === "noul" && answers[key].noul <= QUICK.no && !yes(answers[key.replace("reach_", "due_")]) ? [mark.step] : []);
-  const open = Object.entries(plan.marks).flatMap(([key, mark]) => mark.kind === "reach" && answers[key]?.type === "noul" && answers[key].noul >= QUICK.yes && !yes(answers[key.replace("reach_", "due_")]) ? [mark.step] : []);
-  const held = Object.entries(plan.marks).flatMap(([key, mark]) => mark.kind === "fits" && answers[key]?.type === "noul" && answers[key].noul <= QUICK.no ? [mark.thread] : []);
-  const cameOut = Object.entries(plan.marks).some(([key, mark]) => mark.kind === "truth" && yes(answers[key]));
-  const problem = yes(answers.new_problem), easyFix = yes(answers.easy_fix);
-  return { notebook, changed, marked, blocked, open, needsCheckup: yes(answers.new_turn) || held.length > 0 || cameOut || problem || easyFix, mysteryEnded, problem, easyFix, revealed: cameOut, rushing: yes(answers.rushing), intimate: yes(answers.intimate), shifted: yes(answers.story_shift), held };
-}
-function quickError(error) {
-  const message = error instanceof Error ? error.message : String(error ?? "");
-  if (/permission/i.test(message))
-    return "Grant decisions in Lumiverse\u2019s Extensions panel.";
-  if (/moderat|flagged|content.?(policy|filter|rules)|safety|refus|violat|not allowed/i.test(message))
-    return "The decision model refused this reply, most likely because of its content rules.";
-  if (/404|not found|no default|connection/i.test(message))
-    return "Choose a decision connection in Grimoire settings, or set a default one in Lumiverse.";
-  if (/timed?\s*out|timeout|504|deadline/i.test(message))
-    return "The decision model took too long to answer.";
-  if (/401|unauthori|api.?key|credential/i.test(message))
-    return "The decision connection could not sign in. Check it in Lumiverse.";
-  if (/429|rate|quota|credit/i.test(message))
-    return "The decision provider reported a rate or credit limit.";
-  if (/400|invalid|unsupported|protocol/i.test(message))
-    return "The decision model could not answer these questions. Try another decision model.";
-  const code = /\b([45]\d\d)\b/.exec(message)?.[1] ?? (error && typeof error === "object" && typeof error.code === "string" && /^[A-Z_]{3,40}$/.test(error.code) ? error.code : "");
-  return `The decision model request failed${code ? ` (code ${code})` : ""}.`;
 }
 
 // src/skip.ts
@@ -4585,7 +4611,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.39.6";
+var VERSION = "0.39.7";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -4632,6 +4658,7 @@ function talkLines(value) {
     }];
   });
 }
+var ids2 = (x, key) => Array.isArray(x[key]) ? { [key]: x[key].filter((v) => typeof v === "string").slice(0, 12) } : {};
 function quickLog(value) {
   if (!Array.isArray(value))
     return [];
@@ -4648,7 +4675,7 @@ function quickLog(value) {
           answers[key] = { choice: c.choice.slice(0, 20), confidence: Number(c.confidence) };
       }
     }
-    return Number.isInteger(x.reply) ? [{ reply: Number(x.reply), at: Number(x.at) || 0, ok: x.ok === true, ...typeof x.error === "string" && x.error ? { error: x.error.slice(0, 200) } : {}, answers, marked: Number(x.marked) || 0, checkup: x.checkup === true, shifted: x.shifted === true, held: Number(x.held) || 0, ...x.quiet === true ? { quiet: true } : {} }] : [];
+    return Number.isInteger(x.reply) ? [{ reply: Number(x.reply), at: Number(x.at) || 0, ok: x.ok === true, ...typeof x.error === "string" && x.error ? { error: x.error.slice(0, 200) } : {}, answers, marked: Number(x.marked) || 0, checkup: x.checkup === true, shifted: x.shifted === true, held: Number(x.held) || 0, ...x.quiet === true ? { quiet: true } : {}, ...ids2(x, "steps"), ...ids2(x, "open"), ...ids2(x, "selves") }] : [];
   });
 }
 function quickRecord(reply, result, outcome, plan) {
@@ -4662,6 +4689,7 @@ function quickRecord(reply, result, outcome, plan) {
       answers[key] = { choice: a.choice, confidence: Math.round((a.confidence ?? 0) * 100) / 100 };
   }
   const steps = plan ? Object.entries(plan.marks).filter(([k, m]) => k.startsWith("due_") && m.step).map(([, m]) => m.step) : [];
+  const selves = plan ? Object.entries(plan.marks).filter(([k, m]) => k.startsWith("self_") && m.person).map(([, m]) => m.person) : [];
   return {
     reply,
     at: Date.now(),
@@ -4672,6 +4700,7 @@ function quickRecord(reply, result, outcome, plan) {
     shifted: !!outcome?.shifted,
     held: outcome?.held.length ?? 0,
     ...plan ? { steps } : {},
+    ...selves.length ? { selves } : {},
     ...outcome?.open?.length ? { open: outcome.open } : {}
   };
 }
@@ -4876,6 +4905,7 @@ class NotebookController {
         held: Array.isArray(saved.held) ? saved.held.filter((x) => typeof x === "string").slice(0, 12) : [],
         blocked: Array.isArray(saved.blocked) ? saved.blocked.filter((x) => typeof x === "string").slice(0, 6) : [],
         checkups: Number.isInteger(saved.checkups) ? saved.checkups : 0,
+        slipChecked: Object.fromEntries(Object.entries(record8(saved.slipChecked)).filter(([, v]) => Number.isInteger(v)).slice(0, 100)),
         codewords: Array.isArray(saved.codewords) ? saved.codewords.filter((x) => x && typeof x.what === "string").slice(-8) : [],
         ...saved.pushed && typeof saved.pushed === "object" && typeof saved.pushed.player === "string" ? { pushed: saved.pushed } : {},
         ...saved.look && typeof saved.look === "object" && typeof saved.look.key === "string" ? { look: saved.look } : {},
@@ -6365,6 +6395,21 @@ ${live.values.location ?? ""}`, light);
           if (outcome.shifted) {
             state.resync = now.moment.reply ?? 0;
             extra = "The story changed direction";
+          }
+          if (!extra && !quiet && outcome.slipping.length) {
+            const at = live.moment.reply ?? 0, gap = Math.max(settings.every, 4);
+            const before = [...state.quickLog].reverse().find((q) => q.ok && q.reply === at - 1);
+            const low = (before?.selves ?? []).filter((_, i) => {
+              const a = before.answers[`self_${i + 1}`];
+              return typeof a === "number" && a <= QUICK.no;
+            });
+            const checked = state.slipChecked ?? {};
+            const twice = outcome.slipping.filter((id) => low.includes(id) && !(at - (checked[id] ?? -Infinity) < gap));
+            const cast = now.version.notebook.people, people = twice.map((id) => cast.find((p) => p.id === id)).filter((p) => !!p);
+            if (people.length) {
+              state.slipChecked = { ...checked, ...Object.fromEntries(people.map((p) => [p.id, at])) };
+              extra = `${SLIPPING}: ${people.map((p) => p.name).join(", ")}`;
+            }
           }
         }
         state.quickLog = [...state.quickLog, { ...quickRecord(live.moment.reply ?? 0, result, outcome, plan), ...error ? { error } : {}, ...quiet ? { quiet: true } : {} }].slice(-QUICK_LOG);

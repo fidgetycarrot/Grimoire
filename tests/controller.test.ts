@@ -1429,9 +1429,32 @@ describe('when the story runs out', () => {
   });
 });
 
+describe('someone slipping', () => {
+  test('the same person less than themselves two replies running calls a check-up now, once per stretch', async () => {
+    const lows: number[] = [];
+    let reply = 0;
+    const h = host({ decide: (input: any) => ({ answers: Object.fromEntries(Object.keys(input.questions).map(k => [k, k === 'rhythm' ? { type: 'choice', choice: 'calm', confidence: 0.9 } : { type: 'noul', noul: k === 'self_1' && lows.includes(reply) ? 0.1 : k === 'self_1' || k.startsWith('fits_') ? 0.9 : 0 }])) }) });
+    const m = model({ create: created, checkup: (input: any) => ({ notebook: input.notebook, tracker: null }) });
+    h.add('assistant', `The ferry bell rings.${tracker('Day 1, 18:00', 'The ferry')}`);
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 50, quick: { enabled: true, connectionId: '', model: '' } }, {});
+    const c = new NotebookController(h.api, undefined, () => {}, m.ask);
+    await c.create('chat-1', {}); await c.waitForJobs();
+    lows.push(2, 4, 5, 6, 7);
+    for (let i = 1; i <= 7; i++) {
+      reply = i;
+      h.add('user', 'I wave.'); h.add('assistant', `Mira nods. Mira keeps patching the net.${tracker(`Day 1, 18:${10 + i}`, 'The ferry')}`);
+      await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
+    }
+    const checkups = m.calls.filter(x => x.task === 'grimoire-checkup-v1');
+    // Low once (reply 2) is nothing; low at 4 and 5 calls one; 6 and 7 are still within the stretch.
+    expect(checkups.map(x => x.input.reason)).toEqual(['Someone may be slipping: Mira']);
+    expect(checkups[0].messages[0].content).toContain('the quick check saw Mira come across as less than themselves');
+  });
+});
+
 describe('problems that come up', () => {
   test('a new problem, or one solved too easily, asks for a check-up that makes it a storyline', async () => {
-    const quickHost = (answer: Record<string, number>) => host({ decide: (input: any) => ({ answers: Object.fromEntries(Object.keys(input.questions).map(k => [k, k === 'rhythm' ? { type: 'choice', choice: 'calm', confidence: 0.9 } : { type: 'noul', noul: answer[k] ?? 0 }])) }) });
+    const quickHost = (answer: Record<string, number>) => host({ decide: (input: any) => ({ answers: Object.fromEntries(Object.keys(input.questions).map(k => [k, k === 'rhythm' ? { type: 'choice', choice: 'calm', confidence: 0.9 } : { type: 'noul', noul: answer[k] ?? (k.startsWith('self_') ? 1 : 0) }])) }) });
     for (const [answer, reason] of [[{ new_problem: 0.9 }, 'A new problem came up'], [{ easy_fix: 0.85 }, 'A problem was solved too easily']] as const) {
       const h = quickHost(answer);
       const m = model({ create: created, checkup: (input: any) => ({ notebook: input.notebook, tracker: null }) });

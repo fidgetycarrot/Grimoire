@@ -18,7 +18,7 @@ import { MeaningIndex, type Query } from './meaning';
 import { alreadyInPrompt, NO_RECALL, RECALL_ROOM, recallNote, toRecall, type Recall } from './memory';
 import type { CortexResultDTO } from 'lumiverse-spindle-types';
 import { plain, plainBlock, tidyNotebook } from './tidy';
-import { applyQuick, quickError, quickQuestions, quickState } from './quick';
+import { applyQuick, quickError, quickQuestions, quickState, QUICK, SLIPPING } from './quick';
 import { glance, skipOffer } from './skip';
 import { buildTome } from './tome';
 import { settleAlone } from './alone';
@@ -56,6 +56,7 @@ function talkLines(value: unknown): TalkLine[] {
       ...(Number(x.versionAt) > 0 ? { versionAt: Number(x.versionAt) } : {}), ...(Number(x.skipHours) > 0 ? { skipHours: Number(x.skipHours) } : {}), ...(typeof x.noteId === 'string' ? { noteId: x.noteId } : {}) }];
   });
 }
+const ids = (x: Record<string, unknown>, key: 'steps' | 'open' | 'selves') => Array.isArray(x[key]) ? { [key]: (x[key] as unknown[]).filter((v): v is string => typeof v === 'string').slice(0, 12) } : {};
 function quickLog(value: unknown): QuickRecord[] {
   if (!Array.isArray(value)) return [];
   return value.slice(-QUICK_LOG).flatMap((v): QuickRecord[] => {
@@ -65,11 +66,11 @@ function quickLog(value: unknown): QuickRecord[] {
       if (typeof a === 'number' && Number.isFinite(a)) answers[key] = a;
       else { const c = record(a); if (typeof c.choice === 'string' && Number.isFinite(Number(c.confidence))) answers[key] = { choice: c.choice.slice(0, 20), confidence: Number(c.confidence) }; }
     }
-    return Number.isInteger(x.reply) ? [{ reply: Number(x.reply), at: Number(x.at) || 0, ok: x.ok === true, ...(typeof x.error === 'string' && x.error ? { error: x.error.slice(0, 200) } : {}), answers, marked: Number(x.marked) || 0, checkup: x.checkup === true, shifted: x.shifted === true, held: Number(x.held) || 0, ...(x.quiet === true ? { quiet: true as const } : {}) }] : [];
+    return Number.isInteger(x.reply) ? [{ reply: Number(x.reply), at: Number(x.at) || 0, ok: x.ok === true, ...(typeof x.error === 'string' && x.error ? { error: x.error.slice(0, 200) } : {}), answers, marked: Number(x.marked) || 0, checkup: x.checkup === true, shifted: x.shifted === true, held: Number(x.held) || 0, ...(x.quiet === true ? { quiet: true as const } : {}), ...ids(x, 'steps'), ...ids(x, 'open'), ...ids(x, 'selves') }] : [];
   });
 }
 /** Numbers only: what the decision model answered, never the questions' story text. */
-export function quickRecord(reply: number, result: DecisionResult | null, outcome: { marked: number; needsCheckup: boolean; shifted: boolean; held: string[]; open?: string[] } | null, plan?: { marks: Record<string, { kind: string; step?: string }> }): QuickRecord {
+export function quickRecord(reply: number, result: DecisionResult | null, outcome: { marked: number; needsCheckup: boolean; shifted: boolean; held: string[]; open?: string[] } | null, plan?: { marks: Record<string, { kind: string; step?: string; person?: string }> }): QuickRecord {
   const answers: QuickRecord['answers'] = {};
   for (const [key, a] of Object.entries((result?.answers ?? {}) as Record<string, { type: string; noul?: number; choice?: string; confidence?: number }>)) {
     // Whether a guess at the mystery was right is the story's to tell, not the log's.
@@ -78,8 +79,9 @@ export function quickRecord(reply: number, result: DecisionResult | null, outcom
     else if (a?.type === 'choice' && typeof a.choice === 'string') answers[key] = { choice: a.choice, confidence: Math.round((a.confidence ?? 0) * 100) / 100 };
   }
   const steps = plan ? Object.entries(plan.marks).filter(([k, m]) => k.startsWith('due_') && m.step).map(([, m]) => m.step!) : [];
+  const selves = plan ? Object.entries(plan.marks).filter(([k, m]) => k.startsWith('self_') && m.person).map(([, m]) => m.person!) : [];
   return { reply, at: Date.now(), ok: !!result, answers, marked: outcome?.marked ?? 0, checkup: !!outcome && (outcome.needsCheckup || outcome.shifted), shifted: !!outcome?.shifted, held: outcome?.held.length ?? 0,
-    ...(plan ? { steps } : {}), ...(outcome?.open?.length ? { open: outcome.open } : {}) };
+    ...(plan ? { steps } : {}), ...(selves.length ? { selves } : {}), ...(outcome?.open?.length ? { open: outcome.open } : {}) };
 }
 function playerNotes(value: unknown): PlayerNote[] {
   if (!Array.isArray(value)) return [];
@@ -257,7 +259,7 @@ export class NotebookController {
         version: 1, chatId, enabled: saved.enabled === true, pace: PACES.includes(saved.pace as Pace) ? saved.pace as Pace : 'auto', preferences: validPreferences(saved.preferences),
         versions, recipe: validateRecipe(saved.recipe).recipe, checks: Array.isArray(saved.checks) ? saved.checks as ChatState['checks'] : [],
         skipHours: Number(saved.skipHours) > 0 ? Number(saved.skipHours) : 0, skipTurn: Number(saved.skipTurn) > 0 ? Number(saved.skipTurn) : 0, needsCheck: typeof saved.needsCheck === 'string' ? saved.needsCheck : '', queued: typeof saved.queued === 'string' ? saved.queued.slice(0, 200) : '', newFaceAt: Number.isInteger(saved.newFaceAt) ? saved.newFaceAt as number : 0, building: typeof saved.building === 'string' ? saved.building.slice(0, 80) : '', seen: Object.fromEntries(Object.entries(record(saved.seen)).filter(([k, v]) => typeof k === 'string' && Number.isInteger(v)).slice(0, 200)) as Record<string, number>, trackerTried: saved.trackerTried === true, skipDismissedAt: Number(saved.skipDismissedAt) > 0 ? Number(saved.skipDismissedAt) : 0,
-        held: Array.isArray(saved.held) ? saved.held.filter((x): x is string => typeof x === 'string').slice(0, 12) : [], blocked: Array.isArray(saved.blocked) ? saved.blocked.filter((x): x is string => typeof x === 'string').slice(0, 6) : [], checkups: Number.isInteger(saved.checkups) ? saved.checkups as number : 0, codewords: Array.isArray(saved.codewords) ? (saved.codewords as Array<{ at: number; what: string }>).filter(x => x && typeof x.what === 'string').slice(-8) : [], ...(saved.pushed && typeof saved.pushed === 'object' && typeof (saved.pushed as { player?: unknown }).player === 'string' ? { pushed: saved.pushed as ChatState['pushed'] } : {}), ...(saved.look && typeof saved.look === 'object' && typeof (saved.look as { key?: unknown }).key === 'string' ? { look: saved.look as ChatState['look'] } : {}), open: Array.isArray(saved.open) ? saved.open.filter((x): x is string => typeof x === 'string').slice(0, 6) : [], missed: Array.isArray(saved.missed) ? saved.missed.filter((x): x is string => typeof x === 'string').slice(0, 6) : [], traces: Array.isArray(saved.traces) ? (saved.traces as JobTrace[]).filter(t => t && typeof t === 'object' && Array.isArray(t.requests)).slice(-TRACES_KEPT) : [], resync: Number.isInteger(saved.resync) ? Number(saved.resync) : null,
+        held: Array.isArray(saved.held) ? saved.held.filter((x): x is string => typeof x === 'string').slice(0, 12) : [], blocked: Array.isArray(saved.blocked) ? saved.blocked.filter((x): x is string => typeof x === 'string').slice(0, 6) : [], checkups: Number.isInteger(saved.checkups) ? saved.checkups as number : 0, slipChecked: Object.fromEntries(Object.entries(record(saved.slipChecked)).filter(([, v]) => Number.isInteger(v)).slice(0, 100)) as Record<string, number>, codewords: Array.isArray(saved.codewords) ? (saved.codewords as Array<{ at: number; what: string }>).filter(x => x && typeof x.what === 'string').slice(-8) : [], ...(saved.pushed && typeof saved.pushed === 'object' && typeof (saved.pushed as { player?: unknown }).player === 'string' ? { pushed: saved.pushed as ChatState['pushed'] } : {}), ...(saved.look && typeof saved.look === 'object' && typeof (saved.look as { key?: unknown }).key === 'string' ? { look: saved.look as ChatState['look'] } : {}), open: Array.isArray(saved.open) ? saved.open.filter((x): x is string => typeof x === 'string').slice(0, 6) : [], missed: Array.isArray(saved.missed) ? saved.missed.filter((x): x is string => typeof x === 'string').slice(0, 6) : [], traces: Array.isArray(saved.traces) ? (saved.traces as JobTrace[]).filter(t => t && typeof t === 'object' && Array.isArray(t.requests)).slice(-TRACES_KEPT) : [], resync: Number.isInteger(saved.resync) ? Number(saved.resync) : null,
         talk: talkLines(saved.talk), notes: playerNotes(saved.notes), quickLog: quickLog(saved.quickLog),
         intimate: Array.isArray(saved.intimate) ? saved.intimate.filter((x): x is string => typeof x === 'string').slice(-300) : [], intimateNow: saved.intimateNow === true,
         paceSignals: Array.isArray(saved.paceSignals) ? saved.paceSignals.filter((x): x is number => Number.isInteger(x)).slice(-12) : [], replan: saved.replan === true, replannedAt: Number(saved.replannedAt) || 0,
@@ -1490,6 +1492,20 @@ export class NotebookController {
           state.open = outcome.open;
           // The story changed direction: hold old plans back and rework the notebook now.
           if (outcome.shifted) { state.resync = now.moment.reply ?? 0; extra = 'The story changed direction'; }
+          // The same person less than themselves two replies running: a check-up looks now instead of waiting its turn.
+          // Once per person per stretch, so a quiet character doesn't call one every reply.
+          if (!extra && !quiet && outcome.slipping.length) {
+            const at = live.moment.reply ?? 0, gap = Math.max(settings.every, 4);
+            const before = [...state.quickLog].reverse().find(q => q.ok && q.reply === at - 1);
+            const low = (before?.selves ?? []).filter((_, i) => { const a = before!.answers[`self_${i + 1}`]; return typeof a === 'number' && a <= QUICK.no; });
+            const checked = state.slipChecked ?? {};
+            const twice = outcome.slipping.filter(id => low.includes(id) && !(at - (checked[id] ?? -Infinity) < gap));
+            const cast = now.version.notebook.people, people = twice.map(id => cast.find(p => p.id === id)).filter((p): p is NonNullable<typeof p> => !!p);
+            if (people.length) {
+              state.slipChecked = { ...checked, ...Object.fromEntries(people.map(p => [p.id, at])) };
+              extra = `${SLIPPING}: ${people.map(p => p.name).join(', ')}`;
+            }
+          }
         }
         state.quickLog = [...state.quickLog, { ...quickRecord(live.moment.reply ?? 0, result, outcome, plan), ...(error ? { error } : {}), ...(quiet ? { quiet: true as const } : {}) }].slice(-QUICK_LOG);
         // A check-up can't start while one runs; the next reply looks again.

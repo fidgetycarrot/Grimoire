@@ -10,7 +10,7 @@ import type { Glance, SkipOffer } from './skip';
 import type { TomeView } from './tome';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.39.6';
+export const VERSION = '0.39.7';
 export const MAX_VERSIONS = 16;
 
 /** One saved state of the notebook and the chat history it describes. */
@@ -49,6 +49,8 @@ export interface ChatState {
   pushed?: { player: string; look: boolean; at: number; move?: string; landed?: boolean; /** The reply went ahead without it, and it has finished since: a swipe uses it. */ ready?: boolean; /** It went ahead without it, and it never finished. */ failed?: boolean };
   /** What happened the last few times the player typed $grimoire, in plain words, newest last: to see why one didn't work. */
   codewords?: Array<{ at: number; what: string }>;
+  /** Person id → the reply when the quick check last called a check-up because they seemed to be slipping. */
+  slipChecked?: Record<string, number>;
   /** How many check-ups this chat has had, to send every few to the main connection for a full review. */
   checkups?: number;
   /** Due steps whose moment the quick check saw in the latest reply, which the reply didn't take: the next reply should. */
@@ -105,6 +107,7 @@ export interface QuickRecord {
   /** The note for this reply offered nothing (an intimate scene it was protecting), so it says nothing about whether the narrator listens. */ quiet?: true;
   /** The due steps asked about, in question order (due_1 is the first). */ steps?: string[];
   /** Steps whose moment the reply left open: the next note offers them. */ open?: string[];
+  /** People asked about as their whole self, in question order (self_1 is the first). */ selves?: string[];
 }
 export const QUICK_LOG = 40;
 export interface PlayerNote { id: string; text: string; at: number }

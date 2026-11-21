@@ -50,6 +50,12 @@ describe('is the narrator listening', () => {
     expect(quickQuestions(nb, { hours: 42, reply: 12 }, 'Mira laughs and keeps patching.').questions.voice_1?.instructions).toContain('still going after what they want');
     expect(quickQuestions(nb, { hours: 42, reply: 12 }, 'Cole counts his coins.').questions.voice_1).toBeUndefined();
     expect(quickQuestions(nb, { hours: 42, reply: 40 }, 'Mira laughs.').questions.voice_1).toBeUndefined();
+    // Everyone else with a real part in the exchange is asked about too: a name said once is not a part.
+    expect(quickQuestions(nb, { hours: 42, reply: 12 }, 'Mira laughs and keeps patching.').questions.self_1).toBeUndefined();
+    const plan = quickQuestions(nb, { hours: 42, reply: 12 }, 'Cole counts his coins. Cole sighs. Mira laughs.', true);
+    expect(plan.questions.self_1?.instructions).toContain('Does Cole come across');
+    expect(plan.marks.self_1).toEqual({ kind: 'self', person: nb.people.find(p => p.name === 'Cole')!.id });
+    expect(plan.questions.self_2).toBeUndefined();
     const v = (x: number) => ({ ok: true, answers: { voice_1: x } });
     expect(voiceRate([v(0.9), v(0.2)])).toBeNull();
     expect(voiceRate([v(0.9), v(0.2), v(0.8), { ok: true, answers: {} }])).toEqual({ asked: 3, landed: 2 });
