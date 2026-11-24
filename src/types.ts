@@ -10,7 +10,7 @@ import type { Glance, SkipOffer } from './skip';
 import type { TomeView } from './tome';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.39.7';
+export const VERSION = '0.40.0';
 export const MAX_VERSIONS = 16;
 
 /** One saved state of the notebook and the chat history it describes. */

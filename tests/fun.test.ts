@@ -4,6 +4,8 @@ import { quickQuestions } from '../src/quick';
 import { validateNotebook, type Preferences } from '../src/notebook';
 import { checkupMessages, creationMessages } from '../src/prompts';
 import { applyChanges } from '../src/talk';
+import { validPreferences } from '../src/controller';
+import { lookMessages } from '../src/look';
 import { tidyNotebook } from '../src/tidy';
 import { sampleNotebook } from './fixtures';
 
@@ -24,6 +26,21 @@ describe('a plan that runs dry', () => {
     dry.covers[0].status = 'strained';
     expect(stockProblems(before, dry, prefs()).join(' ')).not.toContain('strain');
     expect(stockProblems(before, dry, prefs({ size: 'close' })).join(' ')).not.toContain('Every secret');
+  });
+});
+
+describe('goon mode', () => {
+  test('is kept as a story choice, and plans the story around the scenes', () => {
+    expect(validPreferences({ goon: true }).goon).toBe(true);
+    expect(validPreferences({ goon: 'yes' }).goon).toBeUndefined();
+    const nb = validateNotebook(sampleNotebook());
+    const create = creationMessages({ character: { name: 'Mira', description: '', personality: '', scenario: '', firstMessage: '' }, persona: null, lore: { rules: [], entries: [], index: [], more: 0 } } as any, validPreferences({ goon: true }))[0].content;
+    expect(create).toContain('the intimate scenes are the main story');
+    const light = creationMessages({ character: { name: 'Mira', description: '', personality: '', scenario: '', firstMessage: '' }, persona: null, lore: { rules: [], entries: [], index: [], more: 0 } } as any, validPreferences({ goon: true, planner: 'preset' }))[0].content;
+    expect(light).toContain('keep who they want');
+    expect(light).not.toContain('the intimate scenes are the main story');
+    expect(lookMessages({ said: '', light: false, notebook: nb, chat: [], raw: [], place: '', present: [], persona: null, goon: true })[0].content).toContain('builds heat');
+    expect(lookMessages({ said: '', light: false, notebook: nb, chat: [], raw: [], place: '', present: [], persona: null })[0].content).not.toContain('builds heat');
   });
 });
 

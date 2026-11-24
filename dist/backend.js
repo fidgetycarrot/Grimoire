@@ -1742,6 +1742,8 @@ var STAGE = {
   ketsu: "Arc: bringing it together. Let the turn and what came before settle into something new: an understanding, a choice, a changed bond."
 };
 var INTIMATE = "Pace: an intimate scene is under way. Let it play out at its own pace, for as long as the player wants. Nothing from outside interrupts it: planned developments wait until it is over.";
+var GOON_INTIMATE = "Pace: an intimate scene is under way, and in this story it is the main event. Give it everything, at its own pace, for as long as the player wants. Nothing from outside interrupts it: the story's next step comes after.";
+var GOON_SCENE = "An intimate scene is under way, and in this story it is the main event. A planned development comes in now only if it belongs inside the scene (someone joining, being caught, something said in the moment); anything else waits until it is over.";
 var GUIDED = "The player gave guidance for this reply. It comes first: follow it, and where anything below disagrees, the guidance wins. No new developments this time.";
 var DEEPENING = "Pace: the scene is deepening. Let it grow through what people say and do; there is no need to escalate.";
 var GROUND = "People hold their ground: pleading, charm, tears, flirting, or a good speech earn no automatic yes, and closeness does not make anyone more generous, patient, or agreeable. Before anyone speaks, know what they are not saying. Hard does not mean joyless: when the player earns something, let it land (people notice, something gets better, there is room to enjoy it), and let people be funny, warm, and at ease when the moment allows.";
@@ -1856,7 +1858,9 @@ function buildNote(input) {
   if (guided)
     must(GUIDED);
   else if (intimate)
-    must(INTIMATE);
+    must(input.goon ? GOON_INTIMATE : INTIMATE);
+  else if (input.goon && input.scene)
+    must(GOON_SCENE);
   else {
     lines.push(pace === "auto" ? gentle ? DEEPENING : RHYTHM[notebook.rhythm] : PACE[pace]);
     if (STAGE[notebook.arc.stage])
@@ -3224,6 +3228,8 @@ Return {"record": "..."}: the story so far, rewritten to include this part. Keep
     { role: "user", content: JSON.stringify({ task: "grimoire-digest-v1", ...input }) }
   ];
 }
+var GOON = "This story is erotic first: the intimate scenes are the main story, and the rest exists to lead to the next one. Plan for that. Storylines are about desire, attraction, tension, and who ends up with whom. Their steps build heat and bring people together: a charged moment, an invitation, a dare, a rival, a confession, a door left open, being caught. A storyline's payoff is usually an encounter. Pace it in waves: build-up, the encounter, afterglow, then a new spark; no long stretch goes by without someone wanting someone. Keep what makes it a good story: people with their own wants and tastes, who hold their ground and say no as well as yes, so a yes is earned; threads and breadcrumbs that pay off; a world that makes sense. The plot can be light; it is how people end up in each other's way.";
+var GOON_PEOPLE = `This story is erotic first: in each person's "wants" and "doing", keep who they want, what they want from them, and how they go after it.`;
 function creationMessages(material, preferences, ideas = "", keep = false) {
   const shape = preferences.shape === "auto" ? "" : ` Shape: the player chose "${preferences.shape}" for this first part of the story; set arc.shape to it${preferences.lockShape ? " (every part of this story will use it)" : ""}.`;
   const twist = preferences.twist ? 'A twist is allowed. If it fits, hide one in "hiddenTruth" and "twist" (or arc.turn for kishotenketsu), and prepare it with seeds. It is optional, not the point.' : 'Do not plan a twist. Leave "twist" empty; a kishotenketsu turn should then be a gentle change of view rather than a reveal.';
@@ -3232,7 +3238,7 @@ function creationMessages(material, preferences, ideas = "", keep = false) {
 You write a private story notebook for an ongoing roleplay chat. It gives the narrator a story of its own: where it is going, why, and how fast. The player must not see it.
 Return {"notebook": ${SHAPE}, "tracker": {"fields": [], "note": ""}${keep ? ', "notes": ["\u2026"]' : ""}${ideas ? ', "playerPeople": []' : ""}}.
 ${CRAFT}
-${preferences.mystery ? MYSTERY_AHEAD : ""}${LORE(material.lore)}${MEMORY(material.memory)}Tone: ${preferences.tone}. ${preferences.likes ? '"preferences.likes" is the player telling you what they enjoy, in their own words: plan by it. ' : ""}${twist}${shape}
+${preferences.mystery ? MYSTERY_AHEAD : ""}${LORE(material.lore)}${MEMORY(material.memory)}Tone: ${preferences.tone}. ${preferences.goon ? `${preferences.planner === "preset" ? GOON_PEOPLE : GOON} ` : ""}${preferences.likes ? '"preferences.likes" is the player telling you what they enjoy, in their own words: plan by it. ' : ""}${twist}${shape}
 ${WORLD(preferences.size)}${ideas ? `
 The player, who co-writes this story, shared ideas for it in "ideas". Build the notebook around them where they fit the card: give them threads, people, beats, or breadcrumbs, paced like everything else, so they arrive in time rather than all at once. They are wishes for where the story can go, not events that already happened. If they describe a person (someone they would like to meet, or someone already in their character's life), make that person, give them a "sheet" that builds on what the player wrote without repeating it, and list them in "playerPeople": [{"person": "their id", "from": "the player's description of them, copied word for word from ideas"}]; their words are kept as they wrote them.${keep ? ` Also return "notes": one to four short standing instructions in plain words that keep these wishes in force, as close to the player's own words as you can, with no spoilers.` : ""}` : ""}
 If the chat already has messages, start from what has happened: record it under events, mark people met, and set the clock to now. A long chat comes with "storySoFar", a record of everything before the messages in "chat"; treat it as part of the chat. Keep events compact: at most about 30 short lines, merging older ones. Threads and people the chat already started come first; plan new ones around them.
@@ -3286,6 +3292,7 @@ ${LORE(input.lore) ? `- ${LORE(input.lore)}` : ""}${MEMORY(input.memory) ? `- ${
 ${input.preferences.size !== "close" ? `- Where the story goes: "places" lists where recent scenes took place. If the story has spent a long stretch in the same place or the same few rooms, let one storyline's next step give the player a reason to go somewhere else. It should grow out of how these people live and what they want: a shift at work, a class, an errand, an appointment or event people have already mentioned, a favor someone asks, trouble that needs them elsewhere. Give it a place and a time, and let the step after it happen there. Set it up ahead where you can (a breadcrumb, a mention a day or two earlier) so it feels like part of their lives rather than something dropped in. Vary the kind of pull, never the same shape twice running and never on a schedule; some stretches stay home, and that is fine. It stays the player's choice: if they don't go, the world goes on without them (ifIgnored).
 ` : ""}- Places: if the story has spent time in a building that has no layout in "buildings" yet, add one (see 3g). Keep every layout, and add rooms the chat has shown; never move rooms the chat has already used.
 ${input.preferences.planner === "preset" ? `- This chat's preset plans the story itself (its own arc, foreshadowing, off-screen events). Grimoire does not plan here; its notes only keep the narrator true to the people and to what has happened. So in this update: keep "people" accurate (who they are, what they want and are doing now, voice, depth, sheet, drift; add people who now matter), record what came out and what the player character told people, and keep "recap" and "summary" current. Do not invent new storylines, steps, beats, or seeds to push the story anywhere; let threads simply record what is going on, and close them when the chat closes them.
+` : ""}${input.preferences.goon ? `- ${input.preferences.planner === "preset" ? GOON_PEOPLE : GOON}
 ` : ""}- What the player enjoys: ${input.preferences.likes ? '"preferences.likes" is the player telling you what they enjoy, in their own words. It comes first: plan by it, and never let "taste" contradict it. Beyond that, keep' : "keep"} "taste" current, from how they actually play. It is shown to the player, so it holds only things they have seen, never plans or secrets. Which storylines and people do they go after, which scenes do they stay in and write the most for, what do they skip past or cut short? Short plain lines ("lingers in quiet scenes with Mira", "skips combat", "keeps poking at the ring mystery"). Judge it against what is normal for this chat: something the card delivers all the time anyway (in an erotic card, sex; in a war story, fighting) is not a taste and needs no planning toward, and a long intimate scene says nothing by its length, since those run long by nature. Look for what stands out instead: which people and dynamics they pick, what kind of tension they enjoy around those scenes (the risk, the slow build, the banter), and what they go for outside them. Plan toward it as one ingredient among others: more of what they lean into, less of what they pass over, never the same thing every time.
 - Openings: every waiting step needs an "opening" (see 5d). Give one to any step that has none, and rewrite one the story has made impossible or unlikely to come (the person left town, the place is gone). A step whose moment keeps coming and passing is fine; leave it.
 - Recap: keep "recap" current (see its description). It is shown to the player, so it holds no secrets and no plans.
@@ -4317,7 +4324,8 @@ Return {"move": "...", "cause": "...", "hands": "..."}.
 How to choose:
 - Grow it from what is already there. ${input.light ? `This chat's preset keeps its own plans in the trackers and notes inside its replies ("raw"): a pressure about to boil over, a loaded detail, someone with an agenda, a branch waiting for its trigger. Prefer cashing in one of those now.` : "Prefer the next step of a storyline (the main storyline first), then someone who wants something, then a detail mentioned earlier coming back."} Nothing from nowhere: no stranger with no tie to anything, no sudden disaster, no coincidence that only exists to make something happen.
 - Make it fit where the player is now and what has just happened. Nobody comes through a locked door or into a private moment by force; someone who isn't here needs a reason of their own to come, or the news reaches the player some other believable way.
-- Make it a real development: it changes something or asks something of ${you}, and is about people they know or will care about. It doesn't have to be loud; it has to matter.
+- Make it a real development: it changes something or asks something of ${you}, and is about people they know or will care about. It doesn't have to be loud; it has to matter.${input.goon ? `
+- This story is erotic first: prefer a move that builds heat or brings people together (an invitation, a dare, a charged moment, someone wanting ${you}), still earned and in character.` : ""}
 - ${input.said ? `The player wrote an action ("said"). It happens first and fully, as they wrote it; build on it, and use what it gives you (where they looked, who they spoke to).` : `The player's message was only the request: ${you} carries on with what they were already doing, and the world moves.`}
 - Never decide what ${you} does, says, thinks, or feels, and never solve their problems for them. Stop at what lands in front of them.
 - Never reveal secrets: what the notes don't tell you stays unknown, and an open mystery's answer is not yours to hint at.`;
@@ -4611,7 +4619,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.39.7";
+var VERSION = "0.40.0";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -4723,6 +4731,7 @@ function validPreferences(value) {
     size: v.size === "close" || v.size === "wide" ? v.size : "auto",
     ...v.mystery === true && v.planner !== "preset" ? { mystery: true } : {},
     ...v.planner === "preset" ? { planner: "preset" } : {},
+    ...v.goon === true ? { goon: true } : {},
     ...typeof v.likes === "string" && v.likes.trim() ? { likes: v.likes.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "").trim().slice(0, 600) } : {}
   };
 }
@@ -5936,6 +5945,17 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
       return state.preferences;
     });
   }
+  async setGoon(chatId, goon) {
+    return this.serial(chatId, async () => {
+      const state = await this.load(chatId);
+      if (!state)
+        throw new Error("Write a notebook for this chat first.");
+      state.preferences = validPreferences({ ...state.preferences, goon });
+      await this.save(state);
+      this.changed();
+      return state.preferences;
+    });
+  }
   async setLikes(chatId, likes) {
     return this.serial(chatId, async () => {
       const state = await this.load(chatId);
@@ -6033,10 +6053,11 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
       const clockMayLag = (live.sources.day !== "tracker" || live.sources.hour !== "tracker") && this.repliesSince(live) > 0;
       const settings = await this.settings();
       const intimate = state.intimateNow && settings.intimate === "protect" && live.turns.at(-1)?.role === "user";
+      const goon = !!state.preferences.goon, scene = goon && state.intimateNow && settings.intimate === "allow";
       const away = awayPeople(live.version.notebook, state.seen, this.presentNow(live), live.moment).map((a) => a.person);
       const at = whereabouts(live.version.notebook.buildings ?? [], live.values.location, state.building);
       const watched = settings.quick.enabled && this.decisionsReady() && state.quick?.ok !== false;
-      return buildNote({ ...push ? { push } : {}, light: state.preferences.planner === "preset", intimate, blocked: state.blocked ?? [], ...watched ? { open: state.open ?? [], missed: state.missed ?? [] } : {}, away, layout: at ? layoutLine(at) : undefined, size: state.preferences.size, sinceNewFace: (live.moment.reply ?? 0) - state.newFaceAt, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, location: live.values.location, narrated: this.narrated(live), trackerPresent: this.listed(live), skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map((n) => n.text) });
+      return buildNote({ ...push ? { push } : {}, light: state.preferences.planner === "preset", intimate, ...goon ? { goon } : {}, ...scene ? { scene } : {}, blocked: state.blocked ?? [], ...watched ? { open: state.open ?? [], missed: state.missed ?? [] } : {}, away, layout: at ? layoutLine(at) : undefined, size: state.preferences.size, sinceNewFace: (live.moment.reply ?? 0) - state.newFaceAt, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, location: live.values.location, narrated: this.narrated(live), trackerPresent: this.listed(live), skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map((n) => n.text) });
     });
   }
   async macro(name, chatId) {
@@ -6170,7 +6191,8 @@ ${character.personality}`, persona?.description ?? "", storySoFar];
         raw: light ? storyReplies(story).slice(-3).map((t) => t.content.slice(0, 6000)) : [],
         place: live.values.location ?? "",
         present: presentPeople(live.version.notebook, this.narrated(live), this.listed(live)).map((p) => p.name),
-        persona: await this.persona()
+        persona: await this.persona(),
+        ...state.preferences.goon ? { goon: true } : {}
       }), checkLook, AbortSignal.timeout(180000), trace.sentBack);
     } catch (error) {
       look = null;
@@ -6356,7 +6378,7 @@ ${live.values.location ?? ""}`, light);
         state.quick = { at: Date.now(), ok: !!result, error };
         const quiet = state.intimateNow && settings.intimate === "protect";
         let extra = "", soft = "", outcome = null;
-        if (!result && state.intimateNow && settings.intimate === "protect") {
+        if (!result && state.intimateNow && settings.intimate === "protect" && !state.preferences.goon) {
           const judged = live.prints.at(-1);
           if (judged && !state.intimate.includes(judged)) {
             state.intimate = [...state.intimate, judged].slice(-300);
@@ -6381,7 +6403,7 @@ ${live.values.location ?? ""}`, light);
             soft = outcome.easyFix ? "A problem was solved too easily" : outcome.problem ? "A new problem came up" : outcome.held.length ? "A plan no longer fits the story" : SOMETHING_NEW;
           const judged = live.prints.at(-1);
           state.intimateNow = outcome.intimate;
-          if (outcome.intimate && settings.intimate === "protect" && judged && !state.intimate.includes(judged)) {
+          if (outcome.intimate && settings.intimate === "protect" && !state.preferences.goon && judged && !state.intimate.includes(judged)) {
             state.intimate = [...state.intimate, judged].slice(-300);
             now = await this.live(state, messages);
           }
@@ -6463,6 +6485,8 @@ async function handle(controller, action, input) {
       return controller.setShape(string(data.chatId, "Chat"), data.shape, data.lockShape);
     case "size":
       return controller.setSize(string(data.chatId, "Chat"), data.size);
+    case "goon":
+      return controller.setGoon(string(data.chatId, "Chat"), data.goon === true);
     case "planner":
       return controller.setPlanner(string(data.chatId, "Chat"), data.planner);
     case "likes":

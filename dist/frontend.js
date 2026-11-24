@@ -227,7 +227,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.39.7";
+var VERSION = "0.40.0";
 var CHAPTER_WORKING = "Starting a new chapter";
 var NO_MYSTERY = "Notebook ready, without the mystery";
 var CHAPTER_DONE = "New chapter ready";
@@ -450,6 +450,7 @@ function setup(ctx) {
     await refresh(true);
     return result;
   }
+  const GOON_HINT = "The intimate scenes are the main story, and the plot is there to lead to the next one. Grimoire plans storylines around who wants whom, builds the heat between scenes, and counts those scenes as the story moving rather than a pause in it.";
   const PLANNER_CHOICES = [["grimoire", "Grimoire"], ["preset", "My preset (Grimoire keeps people and memory)"]];
   const SIZE_CHOICES = [["auto", "Let it grow naturally"], ["wide", "A big world: new places and people often"], ["close", "Keep it close: a few places and people"]];
   const SHAPE_CHOICES = [["auto", "Let Grimoire choose"], ["conflict", "Conflict: a problem that builds to a climax"], ["kishotenketsu", "Kishōtenketsu: people and discovery, with a turn instead of a fight"]];
@@ -501,10 +502,17 @@ function setup(ctx) {
     const mysteryRow = el("label", "gm-row gm-small");
     mysteryRow.append(mystery, document.createTextNode("Make it a mystery I can solve"));
     grid.append(mysteryRow, el("p", "gm-hint", "Grimoire decides the answer now and never changes it. The narrator is not told, so it can’t give it away or agree with a wrong guess. You can also add one later."));
+    const goon = el("input");
+    goon.type = "checkbox";
+    goon.checked = !!view.preferences.goon;
+    goon.style.width = "auto";
+    const goonRow = el("label", "gm-row gm-small");
+    goonRow.append(goon, document.createTextNode("Goon Mode"));
+    grid.append(goonRow, el("p", "gm-hint", GOON_HINT));
     const noConnection = !snapshot?.settings.connectionId;
     const parts = view.earlierParts ?? 0;
     const write = button("Write the notebook", async () => {
-      await act("create", { chatId: view.chatId, preferences: { tone: tone.value, twist: twist.checked, shape: shape.value, lockShape: lock.checked, size: size.value, mystery: mystery.checked && planner.value !== "preset", planner: planner.value }, ideas: ideas.value.trim(), keepIdeas: keepIdeas.checked });
+      await act("create", { chatId: view.chatId, preferences: { tone: tone.value, twist: twist.checked, shape: shape.value, lockShape: lock.checked, size: size.value, mystery: mystery.checked && planner.value !== "preset", planner: planner.value, goon: goon.checked }, ideas: ideas.value.trim(), keepIdeas: keepIdeas.checked });
       notify(parts ? `Reading the chat, then writing the notebook. This uses ${parts + 1} model requests and can take a few minutes.` : "Writing the notebook. This uses one model request and can take several minutes.");
     }, "primary");
     write.classList.add("gm-wide");
@@ -823,7 +831,7 @@ function setup(ctx) {
     return card;
   }
   function renderMore(view) {
-    const d = details("More", "Check-ups, time skips, story shape and size, delete");
+    const d = details("More", "Check-ups, time skips, story shape and size, Goon Mode, delete");
     const kept = select([["off", "No, let Grimoire choose"], ...SHAPE_CHOICES.slice(1)], view.preferences.lockShape ? view.preferences.shape : "off");
     const keep = button("Save", async () => {
       await act("shape", { chatId: view.chatId, shape: kept.value === "off" ? "auto" : kept.value, lockShape: kept.value !== "off" });
@@ -844,6 +852,16 @@ function setup(ctx) {
         notify(error instanceof Error ? error.message : String(error));
       }
     });
+    const goon = el("input");
+    goon.type = "checkbox";
+    goon.checked = !!view.preferences.goon;
+    goon.style.width = "auto";
+    goon.addEventListener("change", async () => {
+      await act("goon", { chatId: view.chatId, goon: goon.checked });
+      notify(goon.checked ? "Goon Mode on. Check-ups plan by it from now on." : "Goon Mode off.");
+    });
+    const goonRow = el("label", "gm-row gm-small");
+    goonRow.append(goon, document.createTextNode("Goon Mode"));
     const amount = el("input");
     amount.type = "number";
     amount.min = "1";
@@ -877,7 +895,7 @@ function setup(ctx) {
       await act("remove", { chatId: view.chatId });
       notify("Notebook deleted for this chat.");
     }, "danger");
-    d.body.append(check, el("p", "gm-hint", "Reads the latest chat and updates the plan. Check-ups also run on their own when a scene changes, time jumps, or enough replies pass."), el("div", "gm-sub"), skipRow, skip, el("div", "gm-sub"), labeled("Keep one story shape for this chat", kept, "If this part of the story already has the other shape, the change starts with the next part."), keep, el("div", "gm-sub"), labeled("Who plans the story", planner, "Grimoire: it plans where the story goes and steers the narrator there. Your preset: for presets that plan the story themselves (their own arc, foreshadowing, off-screen events). Grimoire then leaves the plot alone and keeps the people true and the long memory: voices, who’s here, what came out, what you’ve told people."), labeled("How big the world gets", size, "Grow naturally: new people and places now and then, and people you’ve met come back. A big world: more of both, more often. Keep it close: the story stays with the places and people it has."), el("div", "gm-sub"), remove);
+    d.body.append(check, el("p", "gm-hint", "Reads the latest chat and updates the plan. Check-ups also run on their own when a scene changes, time jumps, or enough replies pass."), el("div", "gm-sub"), skipRow, skip, el("div", "gm-sub"), labeled("Keep one story shape for this chat", kept, "If this part of the story already has the other shape, the change starts with the next part."), keep, el("div", "gm-sub"), labeled("Who plans the story", planner, "Grimoire: it plans where the story goes and steers the narrator there. Your preset: for presets that plan the story themselves (their own arc, foreshadowing, off-screen events). Grimoire then leaves the plot alone and keeps the people true and the long memory: voices, who’s here, what came out, what you’ve told people."), labeled("How big the world gets", size, "Grow naturally: new people and places now and then, and people you’ve met come back. A big world: more of both, more often. Keep it close: the story stays with the places and people it has."), el("div", "gm-sub"), goonRow, el("p", "gm-hint", GOON_HINT), el("div", "gm-sub"), remove);
     return d.root;
   }
   const QUICK_WORDS = [[/^due_/, "Planned development shown"], [/^reach_/, "It could reach you here"], [/^moment_/, "Possible moment happened"], [/^detail_mentioned$/, "Breadcrumb mentioned"], [/^echo_heard$/, "Echo heard"], [/^callback_/, "Breadcrumb paid off"], [/^fits_/, "Storyline still fits"], [/^truth_/, "Secret came out"], [/^clue_/, "Clue found"], [/^theory$/, "You named an answer"], [/^story_shift$/, "Change of direction"], [/^rushing$/, "Rushing"], [/^intimate$/, "Intimate scene"], [/^new_turn$/, "Something new"], [/^new_problem$/, "New problem"], [/^easy_fix$/, "Solved too easily"], [/^voice_/, "Back to themselves"], [/^self_/, "Still themselves"], [/^push_/, "$grimoire move came in"]];

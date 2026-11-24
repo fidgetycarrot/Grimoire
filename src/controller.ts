@@ -94,7 +94,7 @@ export function validPreferences(value: unknown): Preferences {
   const v = record(value);
   const shape = v.shape === 'conflict' || v.shape === 'kishotenketsu' ? v.shape : 'auto';
   return { tone: ['light', 'balanced', 'dark'].includes(v.tone as string) ? v.tone as Preferences['tone'] : 'balanced', twist: v.twist !== false, shape, lockShape: shape !== 'auto' && v.lockShape === true,
-    size: v.size === 'close' || v.size === 'wide' ? v.size : 'auto', ...(v.mystery === true && v.planner !== 'preset' ? { mystery: true } : {}), ...(v.planner === 'preset' ? { planner: 'preset' as const } : {}),
+    size: v.size === 'close' || v.size === 'wide' ? v.size : 'auto', ...(v.mystery === true && v.planner !== 'preset' ? { mystery: true } : {}), ...(v.planner === 'preset' ? { planner: 'preset' as const } : {}), ...(v.goon === true ? { goon: true } : {}),
     ...(typeof v.likes === 'string' && v.likes.trim() ? { likes: v.likes.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim().slice(0, 600) } : {}) };
 }
 /**
@@ -1103,6 +1103,16 @@ export class NotebookController {
       return state.preferences;
     });
   }
+  /** Goon Mode: the intimate scenes are the main story. Check-ups plan by it from now on, and the note uses it at once. */
+  async setGoon(chatId: string, goon: boolean) {
+    return this.serial(chatId, async () => {
+      const state = await this.load(chatId);
+      if (!state) throw new Error('Write a notebook for this chat first.');
+      state.preferences = validPreferences({ ...state.preferences, goon });
+      await this.save(state); this.changed();
+      return state.preferences;
+    });
+  }
   /** What the player says they enjoy. Check-ups plan by it from now on. */
   async setLikes(chatId: string, likes: unknown) {
     return this.serial(chatId, async () => {
@@ -1182,11 +1192,12 @@ export class NotebookController {
       const clockMayLag = (live.sources.day !== 'tracker' || live.sources.hour !== 'tracker') && this.repliesSince(live) > 0;
       const settings = await this.settings();
       const intimate = state.intimateNow && settings.intimate === 'protect' && live.turns.at(-1)?.role === 'user';
+      const goon = !!state.preferences.goon, scene = goon && state.intimateNow && settings.intimate === 'allow';
       const away = awayPeople(live.version.notebook, state.seen, this.presentNow(live), live.moment).map(a => a.person);
       const at = whereabouts(live.version.notebook.buildings ?? [], live.values.location, state.building);
       // Openings are judged by the quick check. Without a working one, steps come in on the clock as before.
       const watched = settings.quick.enabled && this.decisionsReady() && state.quick?.ok !== false;
-      return buildNote({ ...(push ? { push } : {}), light: state.preferences.planner === 'preset', intimate, blocked: state.blocked ?? [], ...(watched ? { open: state.open ?? [], missed: state.missed ?? [] } : {}), away, layout: at ? layoutLine(at) : undefined, size: state.preferences.size, sinceNewFace: (live.moment.reply ?? 0) - state.newFaceAt, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, location: live.values.location, narrated: this.narrated(live), trackerPresent: this.listed(live), skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map(n => n.text) });
+      return buildNote({ ...(push ? { push } : {}), light: state.preferences.planner === 'preset', intimate, ...(goon ? { goon } : {}), ...(scene ? { scene } : {}), blocked: state.blocked ?? [], ...(watched ? { open: state.open ?? [], missed: state.missed ?? [] } : {}), away, layout: at ? layoutLine(at) : undefined, size: state.preferences.size, sinceNewFace: (live.moment.reply ?? 0) - state.newFaceAt, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, location: live.values.location, narrated: this.narrated(live), trackerPresent: this.listed(live), skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map(n => n.text) });
     });
   }
   async macro(name: 'clock' | 'pace', chatId: string | undefined): Promise<string> {
@@ -1296,7 +1307,7 @@ export class NotebookController {
         chat: story.slice(-10).map(t => ({ role: t.role, content: told(t, 2500) })),
         raw: light ? storyReplies(story).slice(-3).map(t => t.content.slice(0, 6000)) : [],
         place: live.values.location ?? '', present: presentPeople(live.version.notebook, this.narrated(live), this.listed(live)).map(p => p.name),
-        persona: await this.persona(),
+        persona: await this.persona(), ...(state.preferences.goon ? { goon: true } : {}),
       }), checkLook, AbortSignal.timeout(180_000), trace.sentBack);
     } catch (error) { look = null; void this.noteCodeword(chatId, `Deep look failed: ${error instanceof ModelError ? `${error.message} (${error.code})` : 'the model’s answer could not be used'}.`); }
     const took = trace.done('').ms;
@@ -1463,7 +1474,7 @@ export class NotebookController {
         const quiet = state.intimateNow && settings.intimate === 'protect';
         let extra = '', soft = '', outcome: ReturnType<typeof applyQuick> | null = null;
         // No answer during an intimate scene: assume it goes on, so the scene stays protected and its replies stay uncounted.
-        if (!result && state.intimateNow && settings.intimate === 'protect') { const judged = live.prints.at(-1); if (judged && !state.intimate.includes(judged)) { state.intimate = [...state.intimate, judged].slice(-300); now = (await this.live(state, messages))!; } }
+        if (!result && state.intimateNow && settings.intimate === 'protect' && !state.preferences.goon) { const judged = live.prints.at(-1); if (judged && !state.intimate.includes(judged)) { state.intimate = [...state.intimate, judged].slice(-300); now = (await this.live(state, messages))!; } }
         // The reply it judged must still be in the chat. A swipe or edit meanwhile means the answers are about a reply that is gone.
         const pushAnswer = result?.answers.push_1;
         if (state.pushed && pushAnswer?.type === 'noul') state.pushed = { ...state.pushed, landed: pushAnswer.noul >= 0.7 };
@@ -1482,7 +1493,8 @@ export class NotebookController {
           // When the player lets the story carry on through these scenes, they count like any other reply.
           const judged = live.prints.at(-1);
           state.intimateNow = outcome.intimate;
-          if (outcome.intimate && settings.intimate === 'protect' && judged && !state.intimate.includes(judged)) { state.intimate = [...state.intimate, judged].slice(-300); now = (await this.live(state, messages))!; }
+          // In Goon Mode the scenes are the story: they always count.
+          if (outcome.intimate && settings.intimate === 'protect' && !state.preferences.goon && judged && !state.intimate.includes(judged)) { state.intimate = [...state.intimate, judged].slice(-300); now = (await this.live(state, messages))!; }
           if (outcome.rushing && !outcome.intimate) this.paceSignal(state, now.moment, 1);
           if (outcome.held.length) state.held = [...new Set([...state.held, ...outcome.held])];
           // Judged afresh each reply: a step that can't reach the player in this scene waits, and is offered again once the scene opens up.

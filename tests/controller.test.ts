@@ -1149,6 +1149,23 @@ describe('intimate scenes', () => {
     const view = (await c.view('chat-1'))!;
     expect(view.quickLog.slice(-3).map((q: any) => q.reply)).toEqual([2, 3, 4]);
   });
+  test('in Goon Mode the scenes are the story: kept whole, but their replies count', async () => {
+    const { h, c } = await setup(() => 0.9);
+    await c.setGoon('chat-1', true);
+    for (let i = 0; i < 3; i++) await reply(h, c, i);
+    h.add('user', 'Still going.');
+    const note = await c.noteFor('chat-1');
+    expect(note).toContain('in this story it is the main event');
+    expect(note).not.toContain('Developments I can bring in');
+    expect((await c.view('chat-1'))!.quickLog.slice(-3).map((q: any) => q.reply)).toEqual([2, 3, 4]);
+  });
+  test('in Goon Mode, letting the story carry on lets in only what belongs in the scene', async () => {
+    const { h, c } = await setup(() => 0.9, { intimate: 'allow' });
+    await c.setGoon('chat-1', true);
+    await reply(h, c, 1);
+    h.add('user', 'Still going.');
+    expect(await c.noteFor('chat-1')).toContain('only if it belongs inside the scene');
+  });
 });
 
 describe('talk speed and stopping', () => {

@@ -24,6 +24,8 @@ export interface LookInput {
   /** Where the scene is and who is in it, from the tracker. */
   place: string; present: string[];
   persona: { name: string; description: string } | null;
+  /** Goon Mode: the intimate scenes are the main story. */
+  goon?: boolean;
 }
 /** Small: a plan of a few sentences. The connection's thinking setting still applies. */
 export const LOOK_TOKENS = 4000;
@@ -53,7 +55,7 @@ Return {"move": "...", "cause": "...", "hands": "..."}.
 How to choose:
 - Grow it from what is already there. ${input.light ? 'This chat\'s preset keeps its own plans in the trackers and notes inside its replies ("raw"): a pressure about to boil over, a loaded detail, someone with an agenda, a branch waiting for its trigger. Prefer cashing in one of those now.' : 'Prefer the next step of a storyline (the main storyline first), then someone who wants something, then a detail mentioned earlier coming back.'} Nothing from nowhere: no stranger with no tie to anything, no sudden disaster, no coincidence that only exists to make something happen.
 - Make it fit where the player is now and what has just happened. Nobody comes through a locked door or into a private moment by force; someone who isn't here needs a reason of their own to come, or the news reaches the player some other believable way.
-- Make it a real development: it changes something or asks something of ${you}, and is about people they know or will care about. It doesn't have to be loud; it has to matter.
+- Make it a real development: it changes something or asks something of ${you}, and is about people they know or will care about. It doesn't have to be loud; it has to matter.${input.goon ? `\n- This story is erotic first: prefer a move that builds heat or brings people together (an invitation, a dare, a charged moment, someone wanting ${you}), still earned and in character.` : ''}
 - ${input.said ? `The player wrote an action ("said"). It happens first and fully, as they wrote it; build on it, and use what it gives you (where they looked, who they spoke to).` : `The player's message was only the request: ${you} carries on with what they were already doing, and the world moves.`}
 - Never decide what ${you} does, says, thinks, or feels, and never solve their problems for them. Stop at what lands in front of them.
 - Never reveal secrets: what the notes don't tell you stays unknown, and an open mystery's answer is not yours to hint at.`;
