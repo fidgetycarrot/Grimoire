@@ -10,7 +10,6 @@ import { cluesToCheck, settleMystery } from './mystery';
  *
  * - Did the reply show a development that was due? Then it is marked shown,
  *   and the note stops offering it.
- * - Did a possible moment happen? Then it is marked happened.
  * - What is the scene's rhythm now? Auto pace follows it.
  * - Did something happen that the notebook does not cover? Then a full
  *   check-up runs now instead of waiting.
@@ -58,12 +57,7 @@ export function quickQuestions(notebook: Notebook, now: number | Moment, /** The
         criteria: { true: 'Yes, it could believably reach them now, in some form.', false: 'No, not in the scene as it stands; it would have to wait for the scene to change.' } };
     marks[`reach_${i + 1}`] = { kind: 'reach', thread: thread.id, step: step.id };
   });
-  notebook.beats.filter(b => b.status === 'possible').slice(0, QUICK.maxBeats).forEach((beat, i) => {
-    const key = `moment_${i + 1}`;
-    questions[key] = { type: 'noul', instructions: `Does this moment happen in the latest reply? Moment: ${beat.text}`,
-      criteria: { true: 'It happens in the latest reply.', false: 'It does not happen in the latest reply.' } };
-    marks[key] = { kind: 'beat', beat: beat.id };
-  });
+  // Optional moments are no longer offered (the narrator took 3 of about 300), so they are no longer asked about.
   // Breadcrumbs: was the offered detail mentioned, and were ready ones brought back?
   const seeds = seedPlan(notebook, now);
   if (seeds.plant) {

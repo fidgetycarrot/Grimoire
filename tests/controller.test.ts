@@ -42,14 +42,14 @@ function host(options: { group?: boolean; granted?: string[]; decide?: (input: a
   return { api, storage, messages, add, decisionCalls };
 }
 /** A scripted model: creation and check-up answers come from the given functions. */
-function model(answers: { create?: (input: any) => unknown; checkup?: (input: any) => unknown; digest?: (input: any) => unknown; talk?: (input: any) => unknown; mystery?: (input: any) => unknown; look?: (input: any) => unknown }) {
+function model(answers: { create?: (input: any) => unknown; checkup?: (input: any) => unknown; digest?: (input: any) => unknown; talk?: (input: any) => unknown; mystery?: (input: any) => unknown; look?: (input: any) => unknown; stage?: (input: any) => unknown }) {
   const calls: Array<{ task: string; input: any; messages: Message[] }> = [];
   let hold: Promise<void> | null = null;
   const ask = async (messages: Message[]) => {
     const input = JSON.parse(messages[1].content);
     calls.push({ task: input.task, input, messages });
     if (hold) await hold;
-    const answer = input.task === 'grimoire-create-v1' ? answers.create?.(input) : input.task === 'grimoire-digest-v1' ? answers.digest?.(input) : input.task === 'grimoire-talk-v1' ? answers.talk?.(input) : input.task === 'grimoire-mystery-first-v1' ? answers.mystery?.(input) : input.task === 'grimoire-look-v1' ? await answers.look?.(input) : answers.checkup?.(input);
+    const answer = input.task === 'grimoire-create-v1' ? answers.create?.(input) : input.task === 'grimoire-digest-v1' ? answers.digest?.(input) : input.task === 'grimoire-talk-v1' ? answers.talk?.(input) : input.task === 'grimoire-mystery-first-v1' ? answers.mystery?.(input) : input.task === 'grimoire-look-v1' ? await answers.look?.(input) : input.task === 'grimoire-stage-v1' ? answers.stage?.(input) : answers.checkup?.(input);
     return typeof answer === 'string' ? answer : JSON.stringify(answer);
   };
   return { ask, calls, pause() { let release!: () => void; hold = new Promise(r => { release = () => { hold = null; r(); }; }); return release; } };
@@ -415,7 +415,7 @@ describe('the quick check', () => {
     h.add('user', 'I look at the sky.'); h.add('assistant', `<div style="color:red">Shutters bang all along the street.</div>${tracker('Day 1, 18:10', 'The ferry')}`);
     await c.afterReply('chat-1', 'normal'); await c.waitForJobs();
     const sent = h.decisionCalls[0];
-    expect(Object.keys(sent.questions)).toEqual(['due_1', 'reach_1', 'moment_1', 'moment_2', 'detail_mentioned', 'fits_1', 'truth_1', 'story_shift', 'rushing', 'intimate', 'new_problem', 'easy_fix', 'rhythm', 'new_turn']);
+    expect(Object.keys(sent.questions)).toEqual(['due_1', 'reach_1', 'detail_mentioned', 'fits_1', 'truth_1', 'story_shift', 'rushing', 'intimate', 'new_problem', 'easy_fix', 'rhythm', 'new_turn']);
     expect(sent.questions.due_1.instructions).toContain('Shutters bang');
     expect(sent.state.latestReply).toContain('Shutters bang all along the street.');
     expect(sent.state.latestReply).not.toContain('style');
@@ -1446,6 +1446,47 @@ describe('when the story runs out', () => {
   });
 });
 
+describe('the next move, made ahead', () => {
+  const plan = { move: 'I have Mira grab the player\'s sleeve as the first gust slams the shutters.', cause: 'The storm has been building all evening.', hands: 'She asks whether they cross now or stay the night' };
+  async function setup(shown: () => number, settings: Record<string, unknown> = {}, prefs: Record<string, unknown> = {}) {
+    const h = host({ decide: (input: any) => ({ answers: Object.fromEntries(Object.keys(input.questions).map(k => [k, k === 'rhythm' ? { type: 'choice', choice: 'calm', confidence: 0.9 } : { type: 'noul', noul: k.startsWith('due_') ? shown() : k.startsWith('reach_') || k.startsWith('fits_') || k.startsWith('self_') ? 0.9 : 0.1 }])) }) });
+    const m = model({ create: created, checkup: (input: any) => ({ notebook: input.notebook, tracker: null }), stage: () => plan });
+    h.add('assistant', `The ferry bell rings.${tracker('Day 1, 18:00', 'The ferry')}`);
+    await h.api.userStorage.setJson('settings.json', { connectionId: 'model', every: 50, quick: { enabled: true, connectionId: '', model: '' }, ...settings }, {});
+    const c = new NotebookController(h.api, undefined, () => {}, m.ask);
+    await c.create('chat-1', prefs); await c.waitForJobs();
+    return { h, m, c };
+  }
+  const reply = async (h: any, c: any, n: number) => { h.add('user', `Move ${n}.`); h.add('assistant', `Mira watches the sky.${tracker(`Day 1, 18:${10 + n}`, 'The ferry')}`); await c.afterReply('chat-1', 'normal'); await c.waitForJobs(); };
+  test('the main storyline coming in gets one concrete plan, written in the background, and the next note leads with it', async () => {
+    let shown = 0.1;
+    const { h, m, c } = await setup(() => shown);
+    await reply(h, c, 1);
+    const staged = m.calls.filter(x => x.task === 'grimoire-stage-v1');
+    expect(staged).toHaveLength(1);
+    // Only narrator-safe words about the storyline: its hint, never its hidden why.
+    expect(JSON.stringify(staged[0].input)).not.toContain('A storm will close the river crossing');
+    h.add('user', 'I wait by the rail.');
+    const note = await c.noteFor('chat-1');
+    expect(note).toContain('My plan for this reply: I have Mira grab the player\'s sleeve');
+    expect(note).toContain('It ends with this in front of the player: She asks whether they cross now or stay the night');
+    // It is written once for its step, not again on every reply while it waits.
+    h.messages.pop();
+    await reply(h, c, 2);
+    expect(m.calls.filter(x => x.task === 'grimoire-stage-v1')).toHaveLength(1);
+    const asked = h.decisionCalls.at(-1).questions;
+    expect(Object.values(asked).some((q: any) => String(q.instructions).includes('It was planned for this reply as: I have Mira grab'))).toBe(true);
+    shown = 0.9;
+    await reply(h, c, 3);
+    expect((await c.view('chat-1'))!.staged).toEqual({ offered: 2, used: 1 });
+  });
+  test('not when the preset plans the story', async () => {
+    const { h, m, c } = await setup(() => 0.1, {}, { planner: 'preset' });
+    await reply(h, c, 1);
+    expect(m.calls.filter(x => x.task === 'grimoire-stage-v1')).toHaveLength(0);
+  });
+});
+
 describe('someone slipping', () => {
   test('the same person less than themselves two replies running calls a check-up now, once per stretch', async () => {
     const lows: number[] = [];
@@ -1496,8 +1537,8 @@ describe('richer people', () => {
     const { m } = await ready();
     const prompt = m.calls[0].messages[0].content;
     expect(prompt).toContain('a dominant trait and a counter-trait');
-    expect(prompt).toContain('three hobbies');
-    expect(prompt).toContain('one small, real thing they never tell anyone');
+    expect(prompt).toContain('a hobby they do alone');
+    expect(prompt).toContain('one small real thing they never tell anyone');
     expect(prompt).toContain('Never use the names AI stories lean on (Elara');
     expect(prompt).toContain('People hold their ground');
   });

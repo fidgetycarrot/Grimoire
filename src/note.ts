@@ -1,7 +1,7 @@
 import { describeClock, describeDuration, readDay, readTime, type StoryClock } from './clock';
 import { mysteryNote } from './mystery';
 import { spaces } from './history';
-import { dueThreads, inOpening, overdue, type Moment, type Notebook, type Pace, type Person, type Seed, type StorySize } from './notebook';
+import { dueThreads, inOpening, overdue, type Moment, type Notebook, type Pace, type Person, type Seed, type Step, type StorySize, type Thread } from './notebook';
 import type { FieldType } from './tracker';
 import type { Look } from './look';
 
@@ -112,7 +112,7 @@ export function seedPlan(notebook: Notebook, now: number | Moment): { plant: See
   return { plant, ready, echo };
 }
 
-export interface NoteInput { /** Goon Mode: the intimate scenes are the main story. */ goon?: boolean; /** In Goon Mode, an intimate scene is under way and the player lets the story carry on through it. */ scene?: boolean; notebook: Notebook; pace: Pace; clock: StoryClock; now: number | Moment; /** Threads that no longer fit for now. */ held?: string[]; /** Due steps that cannot believably reach the player in the scene as it stands. */ blocked?: string[]; /** Due steps whose moment the quick check saw in the latest reply. Present only while the quick check works; then a step comes in at its moment, not on the clock. */ open?: string[]; /** Steps whose moment was there and passed two replies running. */ missed?: string[]; /** The player typed the codeword: move the story in this reply. `only` when the message held nothing else. `look` is the deep look's plan, when it came back in time. */ push?: { only: boolean; look?: Look }; /** The story just changed direction; old plans are being reworked. */ reworking?: boolean; recent: string; /** Where the scene is, from the preset's tracker. */ location?: string; /** The narrator's part of the recent messages, when the caller can tell it apart from the player's. */ narrated?: string; trackerPresent?: string; skipHours?: number; /** True when the time comes from the last check-up, not from a tracker reading of the latest reply. */ clockMayLag?: boolean; /** The player swiped with guidance: the note steps back so it never argues with them. */ guided?: boolean; /** Standing wishes the player pinned. */ notes?: string[]; /** An intimate scene is under way: the story stays out until it ends. */ intimate?: boolean; /** People the player has met who haven't been around for a while, longest away first. */ away?: Person[];
+export interface NoteInput { /** A ready-made plan for the main storyline's next step, written for the scene as it stood after the last reply. */ staged?: { step: string; look: Look }; /** Goon Mode: the intimate scenes are the main story. */ goon?: boolean; /** In Goon Mode, an intimate scene is under way and the player lets the story carry on through it. */ scene?: boolean; notebook: Notebook; pace: Pace; clock: StoryClock; now: number | Moment; /** Threads that no longer fit for now. */ held?: string[]; /** Due steps that cannot believably reach the player in the scene as it stands. */ blocked?: string[]; /** Due steps whose moment the quick check saw in the latest reply. Present only while the quick check works; then a step comes in at its moment, not on the clock. */ open?: string[]; /** Steps whose moment was there and passed two replies running. */ missed?: string[]; /** The player typed the codeword: move the story in this reply. `only` when the message held nothing else. `look` is the deep look's plan, when it came back in time. */ push?: { only: boolean; look?: Look }; /** The story just changed direction; old plans are being reworked. */ reworking?: boolean; recent: string; /** Where the scene is, from the preset's tracker. */ location?: string; /** The narrator's part of the recent messages, when the caller can tell it apart from the player's. */ narrated?: string; trackerPresent?: string; skipHours?: number; /** True when the time comes from the last check-up, not from a tracker reading of the latest reply. */ clockMayLag?: boolean; /** The player swiped with guidance: the note steps back so it never argues with them. */ guided?: boolean; /** Standing wishes the player pinned. */ notes?: string[]; /** An intimate scene is under way: the story stays out until it ends. */ intimate?: boolean; /** People the player has met who haven't been around for a while, longest away first. */ away?: Person[];
   /** Replies since someone new last turned up in a scene. */ sinceNewFace?: number; /** Where things are in the building the player is in. */ layout?: string; /** How big the world gets; a close story doesn't send the player anywhere. */ size?: StorySize; /** The chat's preset plans the story: the note keeps to people and memory. */ light?: boolean }
 /**
  * The short private note added before a reply. Built by code from the
@@ -192,6 +192,42 @@ function lightNote(input: NoteInput): string {
   const cast = sheets.length ? `\nWho they are, in full (play them true to this, and let it show in what they do, not in explanations):\n${sheets.join('\n')}` : '';
   return `${parts.flat().join('\n')}${cast}\nThe latest messages decide what actually happened. Keep secrets hidden and let them show only through small details.`;
 }
+/** What the main storyline does next, and how ready it is to come in. Shared by the note and the staged plan. */
+export interface LeadState { pace: Pace; held?: string[]; blocked?: string[]; /** Steps whose moment the quick check saw; undefined without a working quick check. */ open?: string[]; /** Ids of the people in the scene. */ present?: string[]; /** Nothing is offered (an intimate scene kept clear, plans being reworked, a guided swipe). */ quiet?: boolean }
+export interface Lead { thread: Thread; step: Step; waited: number; shut: boolean; holding: boolean; late: boolean; waiting: boolean; urgent: boolean; open: boolean; watching: boolean }
+export function leadOf(notebook: Notebook, now: number | Moment, state: LeadState): Lead | null {
+  if (state.quiet) return null;
+  const held = new Set(state.held ?? []), m: Moment = typeof now === 'number' ? { hours: now } : now, pace = state.pace;
+  const main = notebook.threads.find(t => t.id === notebook.arc.main && t.status === 'open' && !held.has(t.id));
+  // Quiet pace still holds it back unless it is urgent.
+  const found = main && dueThreads(notebook, now).find(d => d.thread.id === main.id && (pace !== 'quiet' || d.thread.speed === 'urgent'));
+  if (!found) return null;
+  const { thread, step } = found;
+  const quietTime = pace === 'quiet' || (pace === 'auto' && (notebook.rhythm === 'aftermath' || notebook.rhythm === 'peak'));
+  // With a working quick check, a step comes in at its moment (its opening), not on the clock. It is offered once the
+  // quick check saw its moment in the latest reply and everyone it needs is here. While it waits, pressure builds: after
+  // a while it makes its own believable way in. Without a quick check, steps come in on the clock as before.
+  const watching = state.open !== undefined;
+  const here = !step.with?.length || !state.present || step.with.every(id => state.present!.includes(id));
+  const open = (state.open ?? []).includes(step.id) && here;
+  // A big moment holds the main storyline back, but not forever: in a story that is one big moment after another
+  // (a romance, an action run, a raunchy card), the plot would never move. Once the step has waited a while past its
+  // turn, it comes in anyway. A quiet pace the player chose still holds it.
+  const waited = overdue(notebook, thread, now);
+  // Planned before the scene moved, and with no believable way in now: it waits for the scene to open up.
+  const shut = (state.blocked ?? []).includes(step.id);
+  const urgent = thread.speed === 'urgent';
+  const holding = shut || quietTime && !urgent && !(pace === 'auto' && waited >= HOLD_LIMIT);
+  // Waiting for its opening, the pressure builds; at the threshold it makes its own way in.
+  const threshold = Math.max(3, Math.round((m.waits?.[thread.speed] ?? 15) / 2));
+  // A step meant to come at once (the story's opening moment, a push) doesn't wait for anything.
+  const moment = !watching || urgent || !!step.now || open;
+  const late = watching && !holding && !moment && waited >= threshold;
+  const waiting = watching && !holding && !moment && !late;
+  return { thread, step, waited, shut, holding, late, waiting, urgent, open, watching };
+}
+/** The lead is coming in with the next reply: the moment a ready-made plan is worth writing. */
+export const leadComing = (lead: Lead | null): lead is Lead => !!lead && !lead.holding && !lead.waiting;
 export function buildNote(input: NoteInput): string {
   if (input.light) return lightNote(input);
   const { notebook, pace, now } = input, lines: string[] = [], vital = new Set<string>();
@@ -260,29 +296,14 @@ export function buildNote(input: NoteInput): string {
   }
   // The main storyline's next step is what the story does now. Quiet pace still holds it back unless it is urgent;
   // right after a big moment it waits for the moment to settle.
-  const lead = due.find(d => d.thread.id === main?.id && (pace !== 'quiet' || d.thread.speed === 'urgent'));
-  // With a working quick check, a step comes in at its moment (its opening), not on the clock. It is offered once the
-  // quick check saw its moment in the latest reply and everyone it needs is here. While it waits, pressure builds: after
-  // a while it makes its own believable way in. Without a quick check, steps come in on the clock as before.
+  const leadInfo = asked ? null : leadOf(notebook, now, { pace, held: input.held, blocked: input.blocked, open: input.open, present: present.map(p => p.id), quiet });
+  const lead = leadInfo ? { thread: leadInfo.thread, step: leadInfo.step } : undefined;
   const watching = input.open !== undefined;
   const here = (step: { with?: string[] }) => !step.with?.length || step.with.every(id => present.some(p => p.id === id));
   const isOpen = (step: { id: string; with?: string[] }) => (input.open ?? []).includes(step.id) && here(step);
   const passed = (step: { id: string }) => (input.missed ?? []).includes(step.id);
-  if (lead) {
-    // A big moment holds the main storyline back, but not forever: in a story that is one big moment after another
-    // (a romance, an action run, a raunchy card), the plot would never move. Once the step has waited a while past its
-    // turn, it comes in anyway. A quiet pace the player chose still holds it.
-    const waited = overdue(notebook, lead.thread, now);
-    // Planned before the scene moved, and with no believable way in now: it waits for the scene to open up.
-    const shut = (input.blocked ?? []).includes(lead.step.id);
-    const holding = shut || quietTime && lead.thread.speed !== 'urgent' && !(pace === 'auto' && waited >= HOLD_LIMIT);
-    // Waiting for its opening, the pressure builds; at the threshold it makes its own way in.
-    const threshold = Math.max(3, Math.round((m.waits?.[lead.thread.speed] ?? 15) / 2));
-    const urgent = lead.thread.speed === 'urgent';
-    // A step meant to come at once (the story's opening moment, a push) doesn't wait for anything.
-    const moment = !watching || urgent || !!lead.step.now || isOpen(lead.step);
-    const late = watching && !holding && !moment && waited >= threshold;
-    const waiting = watching && !holding && !moment && !late;
+  if (lead && leadInfo) {
+    const { waited, shut, holding, late, waiting, urgent } = leadInfo;
     const when = shut ? 'once it can believably reach the player: not in this scene as it stands. I do not force it in; it waits, or word of it reaches them afterward' : holding ? 'as soon as this moment has settled' : watching && isOpen(lead.step) ? 'now, in this reply or the next: its moment is here' : quietTime && !urgent ? 'now, in this reply or the next, as the scene allows: it has waited long enough' : 'now, in this reply or the next';
     const tie = seeds.ready.find(s => s.pays === lead.thread.id && !used.has(s.id));
     const tied = notebook.people.filter(p => p.status === 'active' && lead.thread.people.includes(p.id)).map(p => p.name).slice(0, 3);
@@ -292,14 +313,17 @@ export function buildNote(input: NoteInput): string {
       must(`- ${lead.thread.title}: ${fit(lead.step.sign || lead.step.text, 320)} I hold this until ${lead.step.opening ? end(fit(lead.step.opening, 240)).replace(/[.!?]$/, '') : 'the scene gives it a natural way in'}. I do not force it in before then; when the scene gives that moment, I take it. Why it matters: ${fit(about(lead.thread), 200)}`);
     } else {
       must('What I bring in now:');
-      must(late
-        ? `- ${lead.thread.title}: ${fit(lead.step.sign || lead.step.text, 320)} It has waited long enough, so it makes its own way in: someone tied to it${tied.length ? ` (${tied.join(', ')})` : ''} comes looking for the player with a reason of their own, or word reaches them${where}. Never through a locked door or into a private moment by force. Why it matters: ${fit(about(lead.thread), 200)}${tie ? ` ${callback(tie)}` : ''}`
-        : `- ${lead.thread.title}: ${fit(lead.step.sign || lead.step.text, 320)} (I bring it in ${when}). If the scene has moved since I planned this, I bring it in the way that fits where the player is now, never through a locked door or into a private moment by force. Why it matters: ${fit(about(lead.thread), 200)}${tie ? ` ${callback(tie)}` : ''}`);
+      const catchLine = lead.step.cost ? ` It comes with a catch: ${end(fit(lead.step.cost, 240))}` : '';
+      const staged = input.staged?.step === lead.step.id ? input.staged.look : undefined;
+      if (staged) must(`- ${lead.thread.title}. My plan for this reply: ${end(staged.move)}${staged.cause ? ` It grows out of this: ${end(staged.cause)}` : ''}${catchLine} It ends with this in front of the player: ${end(staged.hands).replace(/[.!?]$/, '')}, and I stop there: what they do with it is theirs. Whatever the player just did happens first; if it makes this impossible where they are, it reaches them another believable way. Why it matters: ${fit(about(lead.thread), 200)}`);
+      else must(late
+        ? `- ${lead.thread.title}: ${fit(lead.step.sign || lead.step.text, 320)} It has waited long enough, so it makes its own way in: someone tied to it${tied.length ? ` (${tied.join(', ')})` : ''} comes looking for the player with a reason of their own, or word reaches them${where}. Never through a locked door or into a private moment by force.${catchLine} Why it matters: ${fit(about(lead.thread), 200)}${tie ? ` ${callback(tie)}` : ''}`
+        : `- ${lead.thread.title}: ${fit(lead.step.sign || lead.step.text, 320)} (I bring it in ${when}). If the scene has moved since I planned this, I bring it in the way that fits where the player is now, never through a locked door or into a private moment by force.${catchLine} Why it matters: ${fit(about(lead.thread), 200)}${tie ? ` ${callback(tie)}` : ''}`);
       if (watching && passed(lead.step)) must('- Its moment came in the last reply and passed. I take it this time.');
       // Bringing everything to where the player already is keeps a story in one room. Unless it is urgent or the story is
       // kept close, the player is given a reason to go where it is happening instead.
       // The player acts; they don't invent. A development ends with something in front of them, and their move.
-      must('- It lands as something the player can act on (a thing in their hands, an offer, a question put to them, someone waiting on their answer), and I stop there: what they do with it is theirs.');
+      if (!staged) must('- It lands as something the player can act on (a thing in their hands, an offer, a question put to them, someone waiting on their answer), and I stop there: what they do with it is theirs.');
       if (!watching && waited >= BRING_AFTER && !holding) must(`- If it has not reached the player yet, I bring it to them: someone tied to it seeks them out${tied.length ? ` (${tied.join(', ')})` : ''} or word reaches them${where}. They still choose what to do.`);
     }
   }
@@ -315,7 +339,7 @@ export function buildNote(input: NoteInput): string {
     for (const { thread, step } of [...urgentSide, ...slower]) {
       const when = thread.speed === 'urgent' ? 'this can interrupt' : watching && isOpen(step) ? 'its moment is here' : pace === 'fast' || step.afterHours === 0 ? 'I bring this in soon' : 'at a natural break, such as the end of this scene';
       const tie = seeds.ready.find(s => s.pays === thread.id && !used.has(s.id));
-      must(`- ${thread.title}: ${fit(step.sign || step.text, 320)} (${when}). Why it matters: ${fit(about(thread), 200)}${tie ? ` ${callback(tie)}` : ''}`);
+      must(`- ${thread.title}: ${fit(step.sign || step.text, 320)} (${when}).${step.cost ? ` It comes with a catch: ${end(fit(step.cost, 200))}` : ''} Why it matters: ${fit(about(thread), 200)}${tie ? ` ${callback(tie)}` : ''}`);
     }
   }
   // Other open threads involving people in the scene, so they act with purpose.
@@ -330,12 +354,6 @@ export function buildNote(input: NoteInput): string {
     // A crowded scene: people have their own lives and leave, rather than everyone standing around for the whole scene.
     if (!guided && present.length > 4) lines.push('A lot of people are here. They have their own schedules and reasons: when it fits, let one or two drift off, get called away, or leave on business of their own, rather than everyone staying for the whole scene.');
     for (const person of present.slice(0, 4)) lines.push(`- ${person.name}${person.role ? ` (${person.role})` : ''}: wants ${end(person.wants || 'nothing stated yet')}${person.doing ? ` Currently: ${end(person.doing)}` : ''}${person.hint ? ` Play them as: ${end(person.hint)}` : ''}${person.voice ? ` Voice: ${end(person.voice)}` : ''}${person.depth ? ` More than their role: ${end(person.depth)}` : ''}`);
-  }
-  // A possible beat, matched to the pace. Quiet keeps only gentle ones.
-  const beat = quiet ? undefined : notebook.beats.find(b => b.status === 'possible' && !held.has(b.thread) && (!quietTime || b.intensity === 'low') && (!b.thread || notebook.threads.find(t => t.id === b.thread)?.status === 'open'));
-  if (beat && (pace === 'fast' || !developments.length || notebook.rhythm === 'stalled')) {
-    const tie = seeds.ready.find(s => s.pays === beat.id && !used.has(s.id));
-    lines.push(`A moment I could let happen, only if it follows naturally: ${beat.text}${beat.conditions ? ` (only if ${beat.conditions})` : ''}. Purpose: ${beat.purpose}${tie ? ` ${callback(tie)}` : ''}`);
   }
   // Storylines that went against the player leave marks that keep showing.
   const scars = quiet ? [] : notebook.threads.filter(t => t.status === 'closed' && t.outcome === 'lost' && t.scar).slice(-2);

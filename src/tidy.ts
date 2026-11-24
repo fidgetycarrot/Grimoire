@@ -105,8 +105,12 @@ export function tidyNotebook(value: unknown, previous?: Notebook): unknown {
     const steps = ids(array(t.steps).map(rawStep => {
       const s = record(rawStep), hours = typeof s.afterHours === 'number' ? s.afterHours : parseFloat(String(s.afterHours ?? ''));
       const text = plain(s.text) || plain(s.sign);
+      // The moment it waits for, who it needs, and its catch: these were once dropped here, so no step ever had an opening.
+      const opening = plain(s.opening, 240), cost = plain(s.cost, 300);
+      const needs = [...new Set(array(s.with).map(x => who.get(slug(x))).filter((x): x is string => !!x))].slice(0, 4);
       return { id: slug(s.id) || slug(text).slice(0, 30), text, sign: plain(s.sign), afterHours: waitHours(hours, speed),
-        status: pick(s.status, ['waiting', 'shown', 'offscreen', 'skipped'] as const, STEP, 'waiting') };
+        status: pick(s.status, ['waiting', 'shown', 'offscreen', 'skipped'] as const, STEP, 'waiting'),
+        ...(opening ? { opening } : {}), ...(needs.length ? { with: needs } : {}), ...(cost ? { cost } : {}) };
     }).filter(s => s.text), 'step');
     return { id, title: plain(t.title, LIMITS.short) || human(id), speed, why: plain(t.why), hint: plain(t.hint),
       people: [...new Set(array(t.people).map(x => who.get(slug(x))).filter((x): x is string => !!x))].slice(0, 8),

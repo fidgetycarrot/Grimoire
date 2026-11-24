@@ -86,7 +86,7 @@ describe('a model cannot steer the roll', () => {
 
 test('the planner is told about stakes questions and left-alone endings', () => {
   const sent = creationMessages({ character: { name: 'Mira', description: '', personality: '', scenario: '', firstMessage: '' }, persona: null, lore: { rules: [], entries: [], index: [], more: 0 } as never, storySoFar: '', chat: [], replies: [], variables: {} }, { tone: 'balanced', twist: true, shape: 'auto', lockShape: false, size: 'auto' })[0].content;
-  expect(sent).toContain('no step, beat, or sign may answer it in advance');
-  expect(sent).toContain('You never choose which ending happens');
+  expect(sent).toContain('never answer them in advance');
+  expect(sent).toContain('you never choose it');
   expect(sent).toContain('"alone": {"lean": "threat|ordinary"');
 });

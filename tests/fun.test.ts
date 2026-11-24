@@ -12,7 +12,7 @@ import { sampleNotebook } from './fixtures';
 const prefs = (p: Partial<Preferences> = {}): Preferences => ({ tone: 'balanced', twist: true, shape: 'auto', lockShape: false, size: 'auto', ...p });
 
 describe('a plan that runs dry', () => {
-  test('no possible moments, no secrets, or lies nobody doubts are sent back', () => {
+  test('no secrets, or lies nobody doubts, are sent back; optional moments are no longer kept in stock', () => {
     const before = validateNotebook(sampleNotebook());
     expect(stockProblems(before, before, prefs())).toEqual([]);
     const dry = structuredClone(before);
@@ -20,7 +20,7 @@ describe('a plan that runs dry', () => {
     dry.story.hiddenTruth = [];
     dry.covers = ['a', 'b', 'c', 'd', 'e'].map(id => ({ id, by: 'player', told: ['mira'], said: `lie ${id}`, hides: 'x', status: 'holding' as const }));
     const text = stockProblems(before, dry, prefs()).join(' ');
-    expect(text).toContain('no possible moments left');
+    expect(text).not.toContain('possible moment');
     expect(text).toContain('Every secret has come out');
     expect(text).toContain('Let one start to strain');
     dry.covers[0].status = 'strained';

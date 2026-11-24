@@ -227,7 +227,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.40.0";
+var VERSION = "0.41.0";
 var CHAPTER_WORKING = "Starting a new chapter";
 var NO_MYSTERY = "Notebook ready, without the mystery";
 var CHAPTER_DONE = "New chapter ready";
@@ -917,7 +917,6 @@ function setup(ctx) {
       ["Story threads", `${plural(g.threads.open, "open thread")}${speeds ? ` (${speeds})` : ""}${g.threads.closed ? `, ${g.threads.closed} finished` : ""}`],
       ["Next development", g.dueNow ? `${plural(g.dueNow, "development")} ready now` : g.nextInReplies === null ? "Nothing planned yet" : `within about ${plural(g.nextInReplies, "reply", "replies")}, sooner if story time moves`],
       ["Breadcrumbs", `${g.seeds.planted} planted, ${g.seeds.waiting} waiting, ${g.seeds.paid} paid off${g.seeds.echo ? `, ${g.seeds.echo} still out in the world` : ""}`],
-      ["Planned moments", `${g.moments.possible} possible (${g.moments.big} big)${g.moments.happened ? `, ${g.moments.happened} happened` : ""}`],
       ["People", `${g.people.total}, ${g.people.met} met so far`],
       ...g.part ? [["This part of the story", `about ${g.part.elapsed} of roughly ${g.part.length} replies in`]] : []
     ];
@@ -930,8 +929,21 @@ function setup(ctx) {
     s.append(list);
     return s;
   }
+  function landPart(view) {
+    const s = part("Did the plan land?", "How often the narrator actually brought in what Grimoire planned, counted by the quick check after each reply. This is the number that matters: a good plan the narrator ignores does nothing. If it stays low, your preset is probably running its own plot; try turning its plot or arc options off.");
+    const rows = [];
+    if (view.staged)
+      rows.push(`Ready-made moves: ${view.staged.used} of ${view.staged.offered} came in as planned.`);
+    if (view.follow)
+      rows.push(`Planned steps whose moment had come: ${view.follow.used} of the last ${view.follow.offered} happened.${view.follow.used * 4 < view.follow.offered ? " That is low." : ""}`);
+    if (!rows.length)
+      rows.push(snapshot?.settings.quick.enabled ? "Not enough replies yet. This fills in as you play." : "Turn on the reply checker to count this.");
+    for (const row of rows)
+      s.append(el("p", "gm-small", row));
+    return s;
+  }
   function quickPart(view) {
-    const s = part("Quick check answers", "After each reply, the reply checker answers a few yes-or-no questions. These are its answers, as how sure it was (70% or more counts as yes). “Is the narrator listening” counts how often a planned step whose moment had come actually happened. If it’s low, your preset may be following its own plans instead.");
+    const s = part("Quick check answers", "After each reply, the reply checker answers a few yes-or-no questions. These are its answers, as how sure it was (70% or more counts as yes).");
     const records = [...view.quickLog ?? []].reverse().slice(0, 12);
     if (!records.length) {
       s.append(el("p", "gm-small", "No quick checks yet."));
@@ -939,8 +951,6 @@ function setup(ctx) {
     }
     if (view.voices)
       s.append(el("p", "gm-small", `Voice fixes: in ${view.voices.landed} of the last ${view.voices.asked} replies with someone who had been slipping, they sounded like themselves again.`));
-    if (view.follow)
-      s.append(el("p", "gm-small", `Is the narrator listening? In ${view.follow.used} of the last ${view.follow.offered} replies where Grimoire asked for something to happen now, it happened.${view.follow.used * 4 < view.follow.offered ? " That is low: this preset or writer may be ignoring Grimoire’s note." : ""}`));
     const pct = (n) => `${Math.round(n * 100)}%`;
     for (const r of records) {
       const item = el("div", "gm-entry");
@@ -1040,6 +1050,8 @@ function setup(ctx) {
   }
   function renderBehind(view) {
     const d = details("Behind the scenes", "How Grimoire is doing · no spoilers");
+    if (view.preferences.planner !== "preset")
+      d.body.append(landPart(view));
     d.body.append(glancePart(view));
     if (snapshot?.settings.quick.enabled || view.quickLog?.length)
       d.body.append(quickPart(view));
@@ -1206,7 +1218,7 @@ function setup(ctx) {
     }
     if (notebook.summary)
       section("Latest note from the model").append(el("p", "gm-small", notebook.summary));
-    const beats = section("Possible moments"), ul = el("ul");
+    const beats = notebook.beats.length ? section("Possible moments") : el("div"), ul = el("ul");
     for (const b of notebook.beats) {
       const li = el("li", "gm-small", b.text);
       if (b.status !== "possible") {
@@ -1397,7 +1409,7 @@ function setup(ctx) {
     const checkupConnection = select(connectionChoices("Same as the story planner"), settings.checkupConnectionId ?? "");
     const checkupModel = text(settings.checkupModel ?? "", MODEL_HINT);
     const keeperUses = el("p", "gm-uses");
-    role("✎", "Record keeper", "Every few replies", "Routine check-ups: writes down what happened so the notebook stays true to the chat. It only runs once something has happened.", "Most check-ups are this one, so it’s where most of Grimoire’s cost goes. It mostly keeps records, so a cheaper model does fine. You can pick another connection, or keep the same connection and type a cheaper model below. Big moments and the review every 5 check-ups still go to the story planner.", labeled("Connection", checkupConnection), labeled("Model (optional)", checkupModel, undefined, MODEL_MORE), keeperUses);
+    role("✎", "Record keeper", "Every few replies", "Routine check-ups: writes down what happened so the notebook stays true to the chat. It only runs once something has happened. It also gets the next planned move ready for the scene you’re in, just before it’s due.", "Most check-ups are this one, so it’s where most of Grimoire’s cost goes. It mostly keeps records, so a cheaper model does fine. You can pick another connection, or keep the same connection and type a cheaper model below. Big moments and the review every 5 check-ups still go to the story planner.", labeled("Connection", checkupConnection), labeled("Model (optional)", checkupModel, undefined, MODEL_MORE), keeperUses);
     const decisions = snapshot?.decisions ?? { available: false, reason: "", connections: [] };
     const quickRow = el("label", "gm-switch"), quickOn = el("input");
     quickOn.type = "checkbox";

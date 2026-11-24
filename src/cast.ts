@@ -50,20 +50,19 @@ export function awayPeople(notebook: Notebook, seen: Record<string, number>, pre
 }
 
 /**
- * A plan runs dry: every possible moment has happened, every secret is out, every lie has held without a wobble.
+ * A plan runs dry: every secret is out, every lie has held without a wobble.
  * Nothing else notices, and the story coasts on one plot. A check-up that leaves the plan without fuel is sent
  * back once, like the other story rules.
  */
 export function stockProblems(previous: Notebook, revised: Notebook, prefs: Preferences): string[] {
   const problems: string[] = [];
-  const open = new Set(revised.threads.filter(t => t.status === 'open').map(t => t.id));
-  const possible = revised.beats.filter(b => b.status === 'possible' && (!b.thread || open.has(b.thread))).length;
-  if (possible < 2) problems.push(`The plan has ${possible ? 'only one possible moment' : 'no possible moments'} left. Add two or three new ones in "beats" that grow from what has happened and from what people want now, each with its conditions and purpose.`);
+  // Optional "possible moments" are gone: across real chats the narrator took 3 of about 300. The story moves by steps.
+  // A step without a cost is asked for in the rules, not sent back: a retry is a whole second check-up, paid for.
   if (!revised.story.hiddenTruth.length && prefs.size !== 'close') problems.push('Every secret has come out. Give the story one or two new hidden truths in story.hiddenTruth: things people here are keeping back that grow from what has happened, each with a breadcrumb in "seeds" pointing toward it.');
   if (prefs.twist && isNewArc(previous, revised) && !revised.story.twist && !revised.arc.turn) problems.push('This new part of the story has no twist planned, and the player allows one. Plan one in story.twist.');
   const live = revised.covers.filter(c => c.status !== 'exposed');
   if (live.length >= 5 && !revised.covers.some(c => c.status === 'strained') && !revised.covers.some(c => c.status === 'exposed' && !previous.covers.some(o => o.id === c.id && o.status === 'exposed')))
-    problems.push('Several lies have held for a long time and nobody doubts any of them. Let one start to strain: mark it "strained", and plan the step or possible moment where someone notices something that doesn\'t add up.');
+    problems.push('Several lies have held for a long time and nobody doubts any of them. Let one start to strain: mark it "strained", and plan the step where someone notices something that doesn\'t add up.');
   return problems;
 }
 
@@ -81,6 +80,14 @@ export function stockProblems(previous: Notebook, revised: Notebook, prefs: Pref
 export function voiceRate(log: Array<{ ok: boolean; answers: Record<string, unknown> }>): { asked: number; landed: number } | null {
   const asked = log.filter(r => r.ok && typeof r.answers.voice_1 === 'number').slice(-12);
   return asked.length >= 3 ? { asked: asked.length, landed: asked.filter(r => (r.answers.voice_1 as number) >= 0.7).length } : null;
+}
+/** Of recent replies whose note led with a ready-made plan, how many carried it out. Shown from the first one. */
+export function stagedRate(log: Array<{ reply: number; ok: boolean; answers: Record<string, unknown>; steps?: string[]; staged?: string }>): { offered: number; used: number } | null {
+  const byReply = new Map<number, (typeof log)[number]>();
+  for (const r of log) if (r.ok && r.staged && r.steps?.includes(r.staged)) byReply.set(r.reply, r);
+  const kept = [...byReply.values()].slice(-12);
+  if (!kept.length) return null;
+  return { offered: kept.length, used: kept.filter(r => { const v = r.answers[`due_${r.steps!.indexOf(r.staged!) + 1}`]; return typeof v === 'number' && v >= 0.7; }).length };
 }
 export function followRate(log: Array<{ reply: number; ok: boolean; answers: Record<string, unknown>; marked: number; quiet?: boolean; steps?: string[]; open?: string[] }>): { offered: number; used: number } | null {
   const happened = (v: unknown) => typeof v === 'number' && v >= 0.7;

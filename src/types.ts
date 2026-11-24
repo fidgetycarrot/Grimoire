@@ -10,7 +10,7 @@ import type { Glance, SkipOffer } from './skip';
 import type { TomeView } from './tome';
 
 export const EXTENSION_ID = 'lumiverse_grimoire';
-export const VERSION = '0.40.0';
+export const VERSION = '0.41.0';
 export const MAX_VERSIONS = 16;
 
 /** One saved state of the notebook and the chat history it describes. */
@@ -45,6 +45,8 @@ export interface ChatState {
   blocked?: string[];
   /** The codeword's last deep look: the player message it answers (id and fingerprint) and its plan, so a swipe reuses it. */
   look?: { key: string; look: Look; at: number };
+  /** A ready-made plan for the main storyline's next step, written in the background after a reply: the next note leads with it. */
+  staged?: { step: string; look: Look; reply: number; at: number };
   /** The player's last codeword: their message, whether a deep look shaped the reply, its plan (to grade), and whether the reply took it. */
   pushed?: { player: string; look: boolean; at: number; move?: string; landed?: boolean; /** The reply went ahead without it, and it has finished since: a swipe uses it. */ ready?: boolean; /** It went ahead without it, and it never finished. */ failed?: boolean };
   /** What happened the last few times the player typed $grimoire, in plain words, newest last: to see why one didn't work. */
@@ -107,7 +109,7 @@ export interface QuickRecord {
   /** The note for this reply offered nothing (an intimate scene it was protecting), so it says nothing about whether the narrator listens. */ quiet?: true;
   /** The due steps asked about, in question order (due_1 is the first). */ steps?: string[];
   /** Steps whose moment the reply left open: the next note offers them. */ open?: string[];
-  /** People asked about as their whole self, in question order (self_1 is the first). */ selves?: string[];
+  /** People asked about as their whole self, in question order (self_1 is the first). */ selves?: string[]; /** The step a ready-made plan was written for, when the reply's note led with it. */ staged?: string;
 }
 export const QUICK_LOG = 40;
 export interface PlayerNote { id: string; text: string; at: number }
@@ -141,7 +143,7 @@ export interface ChatView {
   canUndo: boolean;
   /** This part of the story has nothing left to happen: a new chapter is offered. */
   spent: boolean;
-  /** Of recent replies where the note asked for a due step now, how many showed it. */ follow: { offered: number; used: number } | null; /** Of recent replies with someone who had been slipping, how many had them sound like themselves again. */ voices?: { asked: number; landed: number } | null; /** What came of the last few $grimoire tries. */ codewords?: Array<{ at: number; what: string }>;
+  /** Of recent replies whose note led with a ready-made plan, how many carried it out. */ staged?: { offered: number; used: number } | null; /** Of recent replies where the note asked for a due step now, how many showed it. */ follow: { offered: number; used: number } | null; /** Of recent replies with someone who had been slipping, how many had them sound like themselves again. */ voices?: { asked: number; landed: number } | null; /** What came of the last few $grimoire tries. */ codewords?: Array<{ at: number; what: string }>;
   /** How long recent notebook jobs' requests took. */ traces?: JobTrace[];
   /** Where the story stands, for the player. */ recap: string;
   /** The mystery as the player may see it: the question and the clues they have found. Never the answer. */ mystery?: MysteryView | null;

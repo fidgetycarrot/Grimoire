@@ -12,7 +12,7 @@ export type Speed = 'urgent' | 'steady' | 'slow';
 export type StepStatus = 'waiting' | 'shown' | 'offscreen' | 'skipped';
 export type Rhythm = 'calm' | 'rising' | 'peak' | 'aftermath' | 'stalled';
 export type Pace = 'auto' | 'quiet' | 'fast';
-export interface Step { id: string; text: string; sign: string; afterHours: number; status: StepStatus; at?: number; /** Code-owned: how many replies the chat had when it happened. */ atReply?: number; /** Marked by a quick check; the next check-up confirms or corrects it. */ quick?: true; /** Code-owned: meant to arrive at once (an opening moment, a push), so no minimum gap. */ now?: true; /** The moment it needs, in concrete words (who is there, where, what came first, what kind of moment): it is offered once this is true, not on a clock. */ opening?: string; /** People who must be in the scene for it, by id. Checked in code, for free. */ with?: string[] }
+export interface Step { id: string; text: string; sign: string; afterHours: number; status: StepStatus; at?: number; /** Code-owned: how many replies the chat had when it happened. */ atReply?: number; /** Marked by a quick check; the next check-up confirms or corrects it. */ quick?: true; /** Code-owned: meant to arrive at once (an opening moment, a push), so no minimum gap. */ now?: true; /** The moment it needs, in concrete words (who is there, where, what came first, what kind of moment): it is offered once this is true, not on a clock. */ opening?: string; /** People who must be in the scene for it, by id. Checked in code, for free. */ with?: string[]; /** What it costs or complicates: the catch that comes with it. Shown to the narrator, so no secrets. */ cost?: string }
 export interface Thread {
   id: string; title: string; speed: Speed; why: string; hint: string; people: string[];
   status: 'open' | 'paused' | 'closed'; closedReason: string; ifFollowed: string; ifIgnored: string;
@@ -195,6 +195,7 @@ export function validateNotebook(value: unknown): Notebook {
       return { id: id(s.id, `${p}.id`), text: text(s.text, `${p}.text`, LIMITS.text, false), sign: text(s.sign, `${p}.sign`), afterHours: after as number,
         status: choice(s.status, ['waiting', 'shown', 'offscreen', 'skipped'] as const, `${p}.status`, 'waiting'), ...(typeof at === 'number' && Number.isFinite(at) ? { at } : {}), ...(count(s.atReply) !== undefined ? { atReply: count(s.atReply) } : {}), ...(s.quick === true ? { quick: true as const } : {}), ...(s.now === true ? { now: true as const } : {}),
         ...(typeof s.opening === 'string' && s.opening.trim() ? { opening: s.opening.replace(/\s+/g, ' ').trim().slice(0, 240) } : {}),
+        ...(typeof s.cost === 'string' && s.cost.trim() ? { cost: s.cost.replace(/\s+/g, ' ').trim().slice(0, 300) } : {}),
         ...(Array.isArray(s.with) && s.with.some(x => typeof x === 'string' && personIds.has(x)) ? { with: s.with.filter((x): x is string => typeof x === 'string' && personIds.has(x)).slice(0, 4) } : {}) };
     }), `${path}.steps`);
     const peopleIds = list(t.people, `${path}.people`, 8).map((x, j) => id(x, `${path}.people[${j}]`)).filter(x => personIds.has(x));

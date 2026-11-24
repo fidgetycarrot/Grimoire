@@ -167,6 +167,23 @@ describe('the note before each reply', () => {
     expect(text).toContain('Never write the player character');
     expect(text.length).toBeLessThanOrEqual(2800);
   });
+  test('a step\'s catch comes with it, and a ready-made plan replaces the generic line', () => {
+    const nb = stamp(validateNotebook(sampleNotebook()), absoluteHours({ day: 1, hour: 18 }));
+    const storm = nb.threads.find(t => t.id === nb.arc.main)!, step = storm.steps.find(s => s.status === 'waiting')!;
+    step.cost = 'the last ferry costs double tonight';
+    const plain = note('auto', 13, {}, nb);
+    expect(plain).toContain('It comes with a catch: the last ferry costs double tonight.');
+    const staged = note('auto', 13, { staged: { step: step.id, look: { move: 'I have Mira slam the shutters and call the player over.', cause: 'The wind has been rising.', hands: 'She asks if they are crossing tonight' } } }, nb);
+    expect(staged).toContain('My plan for this reply: I have Mira slam the shutters');
+    expect(staged).toContain('It comes with a catch: the last ferry costs double tonight.');
+    expect(staged).not.toContain('It lands as something the player can act on');
+    // A plan written for another step is not used.
+    expect(note('auto', 13, { staged: { step: 'other', look: { move: 'I have nothing happen at all here.', cause: '', hands: 'x' } } }, nb)).not.toContain('My plan for this reply');
+  });
+  test('openings, who a step needs, and its catch survive the tidy pass', () => {
+    const out: any = tidyTruths({ story: { question: 'q?' }, people: [{ id: 'cole', name: 'Cole' }], threads: [{ id: 'a', title: 'A', speed: 'steady', steps: [{ id: 's', text: 'x', sign: 'y', afterHours: 2, opening: 'Cole and the player alone', with: ['Cole', 'nobody'], cost: 'Cole wants a favor back' }] }] });
+    expect(out.threads[0].steps[0]).toMatchObject({ opening: 'Cole and the player alone', with: ['cole'], cost: 'Cole wants a favor back' });
+  });
   test('quiet holds slower developments but lets urgent ones play out', () => {
     const quiet = note('quiet', 13);
     expect(quiet).toContain('Do not start new trouble');
@@ -178,11 +195,11 @@ describe('the note before each reply', () => {
     expect(auto).toContain('A shout from the manor');
     expect(auto).toContain('at a natural break');
   });
-  test('fast brings things in sooner and offers the next moment', () => {
+  test('fast brings things in sooner, and optional moments are no longer offered', () => {
     const fast = note('fast', 13);
     expect(fast).toContain('Keep scenes tight');
     expect(fast).toContain('bring this in soon');
-    expect(fast).toContain('Someone recognizes the ring');
+    expect(fast).not.toContain('Someone recognizes the ring');
   });
   test('auto follows the story’s rhythm', () => {
     const after = base(); after.rhythm = 'aftermath';
@@ -316,7 +333,7 @@ describe('quick check answers', () => {
     nb.threads[1].steps[0].afterHours = 0;
     nb.beats[1].status = 'dropped';
     const plan = quickQuestions(nb, absoluteHours({ day: 1, hour: 18 }));
-    expect(Object.keys(plan.questions)).toEqual(['due_1', 'reach_1', 'moment_1', 'detail_mentioned', 'fits_1', 'truth_1', 'story_shift', 'rushing', 'intimate', 'new_problem', 'easy_fix', 'rhythm', 'new_turn']);
+    expect(Object.keys(plan.questions)).toEqual(['due_1', 'reach_1', 'detail_mentioned', 'fits_1', 'truth_1', 'story_shift', 'rushing', 'intimate', 'new_problem', 'easy_fix', 'rhythm', 'new_turn']);
     const out = applyQuick(nb, plan, { model: 'm', answers: { due_1: { type: 'noul', noul: 0.9 }, moment_1: { type: 'noul', noul: 0.69 }, rhythm: { type: 'choice', choice: 'nonsense', probabilities: {}, confidence: 1 }, new_turn: { type: 'noul', noul: 0.2 } } }, 99);
     expect(out.notebook.threads[1].steps[0]).toMatchObject({ status: 'shown', at: 99 });
     expect(out.notebook.beats[0].status).toBe('possible');

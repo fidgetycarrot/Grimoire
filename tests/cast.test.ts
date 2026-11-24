@@ -98,7 +98,7 @@ describe('getting out of the house', () => {
     const { checkupMessages } = require('../src/prompts');
     const input: any = { notebook: validateNotebook(sampleNotebook()), pace: 'auto', chat: [], trackerText: '', trackerValues: {}, trackerChecks: [], recipe: { fields: [], note: '' }, clockOwner: { day: 'notebook', hour: 'notebook' }, due: [], skipHours: 0, reason: 'test', preferences: prefs(), resync: false, held: [], notes: [], part: { elapsed: 0, length: 60 }, replan: false, replies: [], lore: { rules: [], entries: [], index: [], more: 0 }, away: [], places: ['Kitchen'] };
     const text = checkupMessages(input).map((m: any) => m.content).join('\n');
-    expect(text).toContain('never the same shape twice running and never on a schedule');
+    expect(text).toContain('Vary it, never on a schedule');
     expect(checkupMessages({ ...input, preferences: prefs({ size: 'close' }) }).map((m: any) => m.content).join('\n')).not.toContain('Where the story goes');
   });
 });
@@ -132,7 +132,7 @@ describe('a name is not an entrance', () => {
 describe('something to act on', () => {
   test('the planner is told to write each step as something that lands in front of the player', () => {
     const sent = creationMessages({ character: { name: 'Mira', description: '', personality: '', scenario: '', firstMessage: '' }, persona: null, lore: { rules: [], entries: [], index: [], more: 0 } as never, storySoFar: '', chat: [], replies: [], variables: {} }, prefs())[0].content;
-    expect(sent).toContain('every step hands them something to do something about');
+    expect(sent).toContain('Every step hands them something to act on');
     expect(sent).toContain('"sign": "how it reaches the player, as something they can act on');
   });
 });

@@ -3,8 +3,8 @@ import { absoluteHours, advanceClock, describeClock, describeDuration, durationH
 import { conversation, fingerprints, newestMatching, covers, planHistory, readable, spaces, storyReplies, told, failedReply, type Piece, type Turn } from './history';
 import { splitOoc } from './ooc';
 import { askJson, askModel, ModelError, withBackup, type Ask } from './model';
-import { buildNote, liveClock, paceLine, presentPeople, type ClockSources } from './note';
-import { awayPeople, castProblems, followRate, noteSeen, stockProblems, voiceRate } from './cast';
+import { buildNote, leadComing, leadOf, liveClock, paceLine, presentPeople, type ClockSources } from './note';
+import { awayPeople, castProblems, followRate, noteSeen, stagedRate, stockProblems, voiceRate } from './cast';
 import { layoutLine, whereabouts } from './layout';
 import { dueThreads, fillReplies, isNewArc, keepTimes, mergeRevision, NotebookError, partProgress, stamp, validateNotebook, waitsFor, withoutTimes, type Moment, type Notebook, type Pace, type Preferences } from './notebook';
 import { checkupMessages, creationMessages, digestMessages, firstMysteryMessages, talkMessages, type Material } from './prompts';
@@ -24,7 +24,7 @@ import { buildTome } from './tome';
 import { settleAlone } from './alone';
 import { Trace, TRACES_KEPT, type JobTrace } from './trace';
 import { checkRoom, ROOM_TOKENS, roomMessages, type RoomReading } from './room';
-import { checkLook, LOOK_TOKENS, lookMessages, type Look } from './look';
+import { checkLook, LOOK_TOKENS, lookMessages, stageMessages, type Look } from './look';
 import { CARRY_ON, hasCodeword, stripCodeword } from './codeword';
 import type { DecisionResult } from 'lumiverse-spindle-types';
 import { checkRecipe, guessRecipe, readField, readTracker, trackerText, validateRecipe, type FieldType, type Recipe } from './tracker';
@@ -66,7 +66,7 @@ function quickLog(value: unknown): QuickRecord[] {
       if (typeof a === 'number' && Number.isFinite(a)) answers[key] = a;
       else { const c = record(a); if (typeof c.choice === 'string' && Number.isFinite(Number(c.confidence))) answers[key] = { choice: c.choice.slice(0, 20), confidence: Number(c.confidence) }; }
     }
-    return Number.isInteger(x.reply) ? [{ reply: Number(x.reply), at: Number(x.at) || 0, ok: x.ok === true, ...(typeof x.error === 'string' && x.error ? { error: x.error.slice(0, 200) } : {}), answers, marked: Number(x.marked) || 0, checkup: x.checkup === true, shifted: x.shifted === true, held: Number(x.held) || 0, ...(x.quiet === true ? { quiet: true as const } : {}), ...ids(x, 'steps'), ...ids(x, 'open'), ...ids(x, 'selves') }] : [];
+    return Number.isInteger(x.reply) ? [{ reply: Number(x.reply), at: Number(x.at) || 0, ok: x.ok === true, ...(typeof x.error === 'string' && x.error ? { error: x.error.slice(0, 200) } : {}), answers, marked: Number(x.marked) || 0, checkup: x.checkup === true, shifted: x.shifted === true, held: Number(x.held) || 0, ...(x.quiet === true ? { quiet: true as const } : {}), ...ids(x, 'steps'), ...ids(x, 'open'), ...ids(x, 'selves'), ...(typeof x.staged === 'string' ? { staged: x.staged.slice(0, 80) } : {}) }] : [];
   });
 }
 /** Numbers only: what the decision model answered, never the questions' story text. */
@@ -139,6 +139,8 @@ export function recentPlaces(versions: Array<{ location?: string; covered: unkno
   return out.slice(-10);
 }
 
+/** A ready-made plan stays good for this many replies after the one it was written after; then the scene has moved on. */
+const STAGE_FRESH = 2;
 /** Check-ups the quick check asks for, other than urgent ones, wait until this many replies have passed since the last. */
 const CALM = 3;
 /** With a cheaper check-up connection, every this many check-ups is a full review on the main connection. */
@@ -259,7 +261,7 @@ export class NotebookController {
         version: 1, chatId, enabled: saved.enabled === true, pace: PACES.includes(saved.pace as Pace) ? saved.pace as Pace : 'auto', preferences: validPreferences(saved.preferences),
         versions, recipe: validateRecipe(saved.recipe).recipe, checks: Array.isArray(saved.checks) ? saved.checks as ChatState['checks'] : [],
         skipHours: Number(saved.skipHours) > 0 ? Number(saved.skipHours) : 0, skipTurn: Number(saved.skipTurn) > 0 ? Number(saved.skipTurn) : 0, needsCheck: typeof saved.needsCheck === 'string' ? saved.needsCheck : '', queued: typeof saved.queued === 'string' ? saved.queued.slice(0, 200) : '', newFaceAt: Number.isInteger(saved.newFaceAt) ? saved.newFaceAt as number : 0, building: typeof saved.building === 'string' ? saved.building.slice(0, 80) : '', seen: Object.fromEntries(Object.entries(record(saved.seen)).filter(([k, v]) => typeof k === 'string' && Number.isInteger(v)).slice(0, 200)) as Record<string, number>, trackerTried: saved.trackerTried === true, skipDismissedAt: Number(saved.skipDismissedAt) > 0 ? Number(saved.skipDismissedAt) : 0,
-        held: Array.isArray(saved.held) ? saved.held.filter((x): x is string => typeof x === 'string').slice(0, 12) : [], blocked: Array.isArray(saved.blocked) ? saved.blocked.filter((x): x is string => typeof x === 'string').slice(0, 6) : [], checkups: Number.isInteger(saved.checkups) ? saved.checkups as number : 0, slipChecked: Object.fromEntries(Object.entries(record(saved.slipChecked)).filter(([, v]) => Number.isInteger(v)).slice(0, 100)) as Record<string, number>, codewords: Array.isArray(saved.codewords) ? (saved.codewords as Array<{ at: number; what: string }>).filter(x => x && typeof x.what === 'string').slice(-8) : [], ...(saved.pushed && typeof saved.pushed === 'object' && typeof (saved.pushed as { player?: unknown }).player === 'string' ? { pushed: saved.pushed as ChatState['pushed'] } : {}), ...(saved.look && typeof saved.look === 'object' && typeof (saved.look as { key?: unknown }).key === 'string' ? { look: saved.look as ChatState['look'] } : {}), open: Array.isArray(saved.open) ? saved.open.filter((x): x is string => typeof x === 'string').slice(0, 6) : [], missed: Array.isArray(saved.missed) ? saved.missed.filter((x): x is string => typeof x === 'string').slice(0, 6) : [], traces: Array.isArray(saved.traces) ? (saved.traces as JobTrace[]).filter(t => t && typeof t === 'object' && Array.isArray(t.requests)).slice(-TRACES_KEPT) : [], resync: Number.isInteger(saved.resync) ? Number(saved.resync) : null,
+        held: Array.isArray(saved.held) ? saved.held.filter((x): x is string => typeof x === 'string').slice(0, 12) : [], blocked: Array.isArray(saved.blocked) ? saved.blocked.filter((x): x is string => typeof x === 'string').slice(0, 6) : [], checkups: Number.isInteger(saved.checkups) ? saved.checkups as number : 0, slipChecked: Object.fromEntries(Object.entries(record(saved.slipChecked)).filter(([, v]) => Number.isInteger(v)).slice(0, 100)) as Record<string, number>, codewords: Array.isArray(saved.codewords) ? (saved.codewords as Array<{ at: number; what: string }>).filter(x => x && typeof x.what === 'string').slice(-8) : [], ...(saved.pushed && typeof saved.pushed === 'object' && typeof (saved.pushed as { player?: unknown }).player === 'string' ? { pushed: saved.pushed as ChatState['pushed'] } : {}), ...(saved.staged && typeof saved.staged === 'object' && typeof (saved.staged as { step?: unknown }).step === 'string' && record((saved.staged as { look?: unknown }).look).move ? { staged: saved.staged as ChatState['staged'] } : {}), ...(saved.look && typeof saved.look === 'object' && typeof (saved.look as { key?: unknown }).key === 'string' ? { look: saved.look as ChatState['look'] } : {}), open: Array.isArray(saved.open) ? saved.open.filter((x): x is string => typeof x === 'string').slice(0, 6) : [], missed: Array.isArray(saved.missed) ? saved.missed.filter((x): x is string => typeof x === 'string').slice(0, 6) : [], traces: Array.isArray(saved.traces) ? (saved.traces as JobTrace[]).filter(t => t && typeof t === 'object' && Array.isArray(t.requests)).slice(-TRACES_KEPT) : [], resync: Number.isInteger(saved.resync) ? Number(saved.resync) : null,
         talk: talkLines(saved.talk), notes: playerNotes(saved.notes), quickLog: quickLog(saved.quickLog),
         intimate: Array.isArray(saved.intimate) ? saved.intimate.filter((x): x is string => typeof x === 'string').slice(-300) : [], intimateNow: saved.intimateNow === true,
         paceSignals: Array.isArray(saved.paceSignals) ? saved.paceSignals.filter((x): x is number => Number.isInteger(x)).slice(-12) : [], replan: saved.replan === true, replannedAt: Number(saved.replannedAt) || 0,
@@ -413,7 +415,7 @@ export class NotebookController {
         checks: live ? state.checks : [], needsCheck: state.needsCheck || (live && !live.matched ? 'The chat changed before the notebook was written.' : ''),
         job: state.job, updatedAt: state.updatedAt, repliesSinceCheck: live ? this.repliesSince(live) : 0, skipHours: state.skipHours, notebook, behind: !!live && live.index !== state.versions.length - 1, earlierParts, quick: state.quick, dueIds: live ? dueThreads(live.version.notebook, live.moment).map(d => d.thread.id) : [],
         glance: live ? glance(live.version.notebook, live.moment) : null, reworking: !!live && this.reworking(state, live),
-        talk: state.talk, notes: state.notes, quickLog: state.quickLog, traces: this.tracesOf(state), follow: followRate(state.quickLog), voices: voiceRate(state.quickLog), codewords: state.codewords ?? [], recap: notebook?.recap ?? '', mystery: mysteryView(notebook?.mystery), canUndo: this.undoable(state) !== null, spent: !!notebook && !storyLeft(notebook), memory: mem,
+        talk: state.talk, notes: state.notes, quickLog: state.quickLog, traces: this.tracesOf(state), follow: followRate(state.quickLog), staged: stagedRate(state.quickLog), voices: voiceRate(state.quickLog), codewords: state.codewords ?? [], recap: notebook?.recap ?? '', mystery: mysteryView(notebook?.mystery), canUndo: this.undoable(state) !== null, spent: !!notebook && !storyLeft(notebook), memory: mem,
         skipOffer: offer, tome: tome && state.pushed && live && state.pushed.player === [...live.turns].reverse().find(t => t.role === 'user')?.id ? { ...tome, push: { look: state.pushed.look, ...(state.pushed.landed !== undefined ? { landed: state.pushed.landed } : {}), ...(state.pushed.ready ? { ready: true } : {}), ...(state.pushed.failed ? { failed: true } : {}) } } : tome,
       };
     });
@@ -1193,11 +1195,13 @@ export class NotebookController {
       const settings = await this.settings();
       const intimate = state.intimateNow && settings.intimate === 'protect' && live.turns.at(-1)?.role === 'user';
       const goon = !!state.preferences.goon, scene = goon && state.intimateNow && settings.intimate === 'allow';
+      const reply = live.moment.reply ?? 0, ready = state.staged;
+      const staged = ready && reply - ready.reply <= STAGE_FRESH && live.version.notebook.threads.some(t => t.status === 'open' && t.steps.some(s => s.id === ready.step && s.status === 'waiting')) ? { step: ready.step, look: ready.look } : undefined;
       const away = awayPeople(live.version.notebook, state.seen, this.presentNow(live), live.moment).map(a => a.person);
       const at = whereabouts(live.version.notebook.buildings ?? [], live.values.location, state.building);
       // Openings are judged by the quick check. Without a working one, steps come in on the clock as before.
       const watched = settings.quick.enabled && this.decisionsReady() && state.quick?.ok !== false;
-      return buildNote({ ...(push ? { push } : {}), light: state.preferences.planner === 'preset', intimate, ...(goon ? { goon } : {}), ...(scene ? { scene } : {}), blocked: state.blocked ?? [], ...(watched ? { open: state.open ?? [], missed: state.missed ?? [] } : {}), away, layout: at ? layoutLine(at) : undefined, size: state.preferences.size, sinceNewFace: (live.moment.reply ?? 0) - state.newFaceAt, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, location: live.values.location, narrated: this.narrated(live), trackerPresent: this.listed(live), skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map(n => n.text) });
+      return buildNote({ ...(push ? { push } : {}), light: state.preferences.planner === 'preset', intimate, ...(goon ? { goon } : {}), ...(scene ? { scene } : {}), ...(staged ? { staged } : {}), blocked: state.blocked ?? [], ...(watched ? { open: state.open ?? [], missed: state.missed ?? [] } : {}), away, layout: at ? layoutLine(at) : undefined, size: state.preferences.size, sinceNewFace: (live.moment.reply ?? 0) - state.newFaceAt, notebook: live.version.notebook, pace: state.pace, clock: live.clock, now: live.moment, held: state.held, reworking: this.reworking(state, live), recent, location: live.values.location, narrated: this.narrated(live), trackerPresent: this.listed(live), skipHours: state.skipHours, clockMayLag, guided, notes: state.notes.map(n => n.text) });
     });
   }
   async macro(name: 'clock' | 'pace', chatId: string | undefined): Promise<string> {
@@ -1323,6 +1327,47 @@ export class NotebookController {
     }).catch(() => {});
     this.changed();
     return look;
+  }
+  private staging = new Set<string>();
+  /**
+   * The ready-made plan for a step coming in with the next reply: the director's call, made ahead. A small job, so it
+   * runs on the check-up model. It never sees hidden causes: only the storyline's narrator-safe hint and the step.
+   */
+  private async runStage(chatId: string, stepId: string): Promise<void> {
+    if (this.staging.has(chatId)) return;
+    this.staging.add(chatId);
+    const trace = new Trace('stage', 'Getting the next move ready');
+    const keep = (status: 'complete' | 'failed', staged?: ChatState['staged']) => this.serial(chatId, async () => {
+      const current = await this.load(chatId);
+      if (!current) return;
+      if (staged) current.staged = staged;
+      if (trace.requests.length) current.traces = [...(current.traces ?? []), trace.done(status)].slice(-TRACES_KEPT);
+      await this.save(current);
+    });
+    try {
+      const settings = await this.settings();
+      const state = await this.serial(chatId, () => this.load(chatId));
+      if (!state?.enabled || !settings.connectionId) return;
+      const live = await this.live(state, await this.api.chat.getMessages(chatId));
+      if (!live) return;
+      const notebook = live.version.notebook;
+      const thread = notebook.threads.find(t => t.status === 'open' && t.steps.some(st => st.id === stepId && st.status === 'waiting'));
+      const step = thread?.steps.find(st => st.id === stepId);
+      if (!thread || !step) return;
+      const cheapModel = settings.checkupModel?.trim() ?? '';
+      const cheap = (settings.checkupConnectionId && settings.checkupConnectionId !== settings.connectionId) || cheapModel ? settings.checkupConnectionId || settings.connectionId : settings.connectionId;
+      const ask = this.asker({ ...settings, connectionId: cheap, maxOutputTokens: LOOK_TOKENS, reasoningMode: settings.checkupReasoning ?? settings.reasoningMode }, trace, cheapModel);
+      const story = live.turns.filter(t => !t.ooc);
+      const look = await askJson(ask, stageMessages({
+        notebook,
+        step: { storyline: thread.title, matters: thread.hint || thread.title, happens: step.text, reaches: step.sign, cost: step.cost ?? '', bestMoment: step.opening ?? '', people: notebook.people.filter(p => thread.people.includes(p.id)).map(p => p.name) },
+        chat: story.slice(-8).map(t => ({ role: t.role, content: told(t, 2500) })),
+        place: live.values.location ?? '', present: presentPeople(notebook, this.narrated(live), this.listed(live)).map(p => p.name),
+        persona: await this.persona(), ...(state.preferences.goon ? { goon: true } : {}),
+      }), checkLook, AbortSignal.timeout(120_000), trace.sentBack);
+      await keep('complete', { step: stepId, look, reply: live.moment.reply ?? 0, at: Date.now() });
+    } catch { await keep('failed').catch(() => {}); }
+    finally { this.staging.delete(chatId); this.changed(); }
   }
   /**
    * Lumiverse's memories for the narrator, so any preset has them. Searched with the newest exchange;
@@ -1455,6 +1500,11 @@ export class NotebookController {
       const pushed = live.state.pushed?.player === playerTurn?.id ? live.state.pushed : undefined;
       if (pushed?.move) plan.questions.push_1 = { type: 'noul', instructions: `Does the latest reply bring in this development, or something very close to it? Development: ${pushed.move}`,
         criteria: { true: 'Yes, it happens in the reply, in this form or close to it.', false: 'No, the reply goes another way.' } };
+      // The note led with a ready-made plan for a due step: judge the step by the plan the narrator was given.
+      const replyNow = live.moment.reply ?? 0, ready = live.state.staged;
+      const stagedNow = ready && ready.reply < replyNow && replyNow - ready.reply <= STAGE_FRESH ? ready : undefined;
+      const stagedKey = stagedNow ? Object.entries(plan.marks).find(([k, m]) => k.startsWith('due_') && m.kind === 'step' && m.step === stagedNow.step)?.[0] : undefined;
+      if (stagedKey) plan.questions[stagedKey] = { ...plan.questions[stagedKey], instructions: `${plan.questions[stagedKey].instructions} It was planned for this reply as: ${stagedNow!.look.move}` };
       let result: DecisionResult | null = null, error = '';
       try {
         result = await this.api.decisions.evaluate({
@@ -1463,6 +1513,7 @@ export class NotebookController {
           ...(this.userId ? { userId: this.userId } : {}),
         }, { signal: AbortSignal.timeout(35_000) });
       } catch (e) { error = quickError(e); }
+      let stageStep = '';
       await this.serial(chatId, async () => {
         const state = await this.load(chatId);
         if (!state?.enabled || !state.versions.length) return;
@@ -1519,11 +1570,20 @@ export class NotebookController {
             }
           }
         }
-        state.quickLog = [...state.quickLog, { ...quickRecord(live.moment.reply ?? 0, result, outcome, plan), ...(error ? { error } : {}), ...(quiet ? { quiet: true as const } : {}) }].slice(-QUICK_LOG);
+        state.quickLog = [...state.quickLog, { ...quickRecord(live.moment.reply ?? 0, result, outcome, plan), ...(error ? { error } : {}), ...(quiet ? { quiet: true as const } : {}), ...(stagedKey ? { staged: stagedNow!.step } : {}) }].slice(-QUICK_LOG);
+        // The main storyline's next step comes in with the next reply: write it up for the scene as it stands, in the
+        // background, so the next note can lead with one concrete plan instead of "bring this in if it fits".
+        if (outcome && !extra && state.preferences.planner !== 'preset' && !this.reworking(state, now)) {
+          const shut = state.intimateNow && settings.intimate === 'protect';
+          const lead = leadOf(now.version.notebook, now.moment, { pace: state.pace, held: state.held, blocked: state.blocked, open: state.open ?? [], present: presentPeople(now.version.notebook, this.narrated(now), this.listed(now)).map(p => p.id), quiet: shut });
+          const at = now.moment.reply ?? 0, done = state.staged;
+          if (leadComing(lead) && !(done?.step === lead.step.id && at - done.reply <= STAGE_FRESH)) stageStep = lead.step.id;
+        }
         // A check-up can't start while one runs; the next reply looks again.
         if (this.running.has(chatId)) { await this.save(state); return; }
         await this.decide(state, now, settings, extra, soft);
       });
+      if (stageStep) this.track(this.runStage(chatId, stageStep).catch(() => {}));
     })();
     this.track(task.catch(() => {}).finally(() => { this.quickRunning.delete(chatId); this.changed(); }));
   }
