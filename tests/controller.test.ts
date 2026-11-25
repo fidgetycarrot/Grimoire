@@ -1446,6 +1446,18 @@ describe('when the story runs out', () => {
   });
 });
 
+describe('timing the panel', () => {
+  test('a slow snapshot says where its time went, and the log keeps it', async () => {
+    const { h, c } = await ready();
+    const phases: Record<string, number> = {};
+    await c.snapshot('chat-1', phases);
+    expect(Object.keys(phases)).toEqual(expect.arrayContaining(['permissions', 'waiting for the chat', 'reading messages', 'reading the story', 'building the view', 'settings']));
+    await c.noteTiming({ kind: 'slow answer', action: 'snapshot', ms: 5000 });
+    await c.noteTiming({ kind: 'panel gave up', action: 'snapshot', working: ['snapshot 46s'] });
+    expect(await h.api.userStorage.getJson('timing.json', { fallback: [] as unknown[] }) as unknown).toEqual([expect.objectContaining({ action: 'snapshot', ms: 5000 }), expect.objectContaining({ kind: 'panel gave up' })]);
+  });
+});
+
 describe('the next move, made ahead', () => {
   const plan = { move: 'I have Mira grab the player\'s sleeve as the first gust slams the shutters.', cause: 'The storm has been building all evening.', hands: 'She asks whether they cross now or stay the night' };
   async function setup(shown: () => number, settings: Record<string, unknown> = {}, prefs: Record<string, unknown> = {}) {

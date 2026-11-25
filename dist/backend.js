@@ -4659,7 +4659,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.41.0";
+var VERSION = "0.41.1";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -5081,15 +5081,26 @@ class NotebookController {
     const from = this.fullVersion(live).covered.length, skipped = new Set(live.state.intimate);
     return live.turns.filter((t, i) => i >= from && t.role === "assistant" && !t.ooc && !skipped.has(live.prints[i])).length;
   }
-  async view(chatId) {
+  async view(chatId, phases = {}) {
     if (!chatId)
       return null;
+    let mark = Date.now();
+    const lap = (name) => {
+      const now = Date.now();
+      phases[name] = (phases[name] ?? 0) + now - mark;
+      mark = now;
+    };
     return this.serial(chatId, async () => {
+      lap("waiting for the chat");
       const info = await this.chatInfo(chatId);
+      lap("chat info");
       const state = await this.load(chatId) ?? this.blank(chatId);
+      lap("loading the notebook");
       const readable = info.supported && this.api.permissions.has("chats") && this.api.permissions.has("chat_mutation");
       const messages = readable ? await this.api.chat.getMessages(chatId) : null;
+      lap("reading messages");
       const live = messages && state.versions.length ? await this.live(state, messages) : null;
+      lap("reading the story");
       const earlierParts = messages && !live ? planHistory(conversation(messages)).earlier.length : 0;
       const notebook = live?.version.notebook ?? null;
       const settings = await this.settings();
@@ -5117,6 +5128,7 @@ class NotebookController {
         memory: mem,
         skipOffer: offer
       }) : null;
+      lap("building the view");
       return {
         chatId,
         name: info.name,
@@ -5186,30 +5198,53 @@ class NotebookController {
     }));
     return found.filter((x) => !!x).sort((a, b) => b.playedAt - a.playedAt).slice(0, limit);
   }
-  async snapshot(chatId) {
+  async snapshot(chatId, phases = {}) {
+    let mark = Date.now();
+    const lap = (name) => {
+      const now = Date.now();
+      phases[name] = (phases[name] ?? 0) + now - mark;
+      mark = now;
+    };
     const permissions = await this.api.permissions.getGranted();
+    lap("permissions");
     let connections = [];
     if (permissions.includes("generation")) {
       try {
         connections = (await this.api.connections.list(this.userId)).map((c) => ({ id: c.id, name: c.name, model: c.model }));
       } catch {}
     }
+    lap("connections");
     let chat = null, notice = "";
     for (const need of ["chats", "chat_mutation", "characters", "interceptor", "generation"])
       if (!permissions.includes(need))
         notice = `Grant ${need} in Lumiverse\u2019s Extensions panel so Grimoire can work.`;
     try {
-      chat = permissions.includes("chats") ? await this.view(chatId) : null;
+      chat = permissions.includes("chats") ? await this.view(chatId, phases) : null;
     } catch (error) {
       notice = error instanceof Error ? error.message : "This chat could not be read.";
     }
+    mark = Date.now();
     const decisions = { available: this.decisionsReady(), reason: this.decisionsReason(), connections: [] };
     if (decisions.available) {
       try {
         decisions.connections = (await this.api.decisions.listConnections(this.userId ? { userId: this.userId } : undefined)).map((c) => ({ id: c.id, name: c.name, provider: c.provider, model: c.model, isDefault: c.is_default }));
       } catch {}
     }
-    return { version: VERSION, permissions, connections, settings: await this.settings(), chat, notice, decisions };
+    lap("decision connections");
+    const settings = await this.settings();
+    lap("settings");
+    return { version: VERSION, permissions, connections, settings, chat, notice, decisions };
+  }
+  timingWrites = Promise.resolve();
+  noteTiming(entry) {
+    this.timingWrites = this.timingWrites.then(async () => {
+      try {
+        const saved = await this.api.userStorage.getJson("timing.json", { fallback: [], userId: this.userId });
+        const list = Array.isArray(saved) ? saved : [];
+        await this.api.userStorage.setJson("timing.json", [...list, { ...entry, version: VERSION }].slice(-60), { userId: this.userId });
+      } catch {}
+    });
+    return this.timingWrites;
   }
   asker(settings, trace, model = "") {
     if (this.ask)
@@ -6578,11 +6613,11 @@ var string = (v, name) => {
     throw new Error(`${name} is required.`);
   return v;
 };
-async function handle(controller, action, input) {
+async function handle(controller, action, input, phases) {
   const data = record9(input);
   switch (action) {
     case "snapshot":
-      return controller.snapshot(typeof data.chatId === "string" ? data.chatId : null);
+      return controller.snapshot(typeof data.chatId === "string" ? data.chatId : null, phases);
     case "create":
       return controller.create(string(data.chatId, "Chat"), data.preferences, data.ideas, data.keepIdeas);
     case "checkup": {
@@ -6656,11 +6691,38 @@ function setupBackend(api) {
     return found;
   };
   const stops = [];
+  const inflight = new Map;
   stops.push(api.onFrontendMessage((payload, userId, frontendSessionId) => {
     const request = record9(payload);
     if (request.type !== "grimoire:request" || typeof request.id !== "string" || request.id.length > 100 || typeof request.action !== "string")
       return;
-    handle(instance(userId), request.action, request.input).then((result) => api.sendToFrontend({ type: "grimoire:response", id: request.id, result }, userId, { frontendSessionId })).catch((error) => api.sendToFrontend({ type: "grimoire:response", id: request.id, error: error instanceof Error ? error.message : "Grimoire could not do that." }, userId, { frontendSessionId }));
+    const { id, action } = request, at = Date.now(), session = typeof frontendSessionId === "string" ? frontendSessionId.slice(0, 8) : "";
+    if (action === "timing") {
+      const info = record9(request.input);
+      instance(userId).noteTiming({
+        kind: "panel gave up",
+        action: typeof info.action === "string" ? info.action.slice(0, 40) : "",
+        session,
+        at,
+        working: [...inflight.values()].map((r) => `${r.action} ${Math.round((at - r.at) / 1000)}s`).slice(0, 12)
+      });
+      return;
+    }
+    inflight.set(id, { action, at });
+    const phases = {};
+    const done = (ok) => {
+      inflight.delete(id);
+      const ms = Date.now() - at;
+      if (ms >= 3000 || !ok)
+        instance(userId).noteTiming({ kind: ok ? "slow answer" : "failed", action, ms, session, at, ...Object.keys(phases).length ? { phases } : {} });
+    };
+    handle(instance(userId), action, request.input, phases).then((result) => {
+      done(true);
+      api.sendToFrontend({ type: "grimoire:response", id, result }, userId, { frontendSessionId });
+    }).catch((error) => {
+      done(false);
+      api.sendToFrontend({ type: "grimoire:response", id, error: error instanceof Error ? error.message : "Grimoire could not do that." }, userId, { frontendSessionId });
+    });
   }));
   const macros = [
     ["grimoire_clock", "clock", "The current story time from Grimoire."],

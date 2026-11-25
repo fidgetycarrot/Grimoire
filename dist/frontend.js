@@ -227,7 +227,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.41.0";
+var VERSION = "0.41.1";
 var CHAPTER_WORKING = "Starting a new chapter";
 var NO_MYSTERY = "Notebook ready, without the mystery";
 var CHAPTER_DONE = "New chapter ready";
@@ -273,6 +273,9 @@ function createRpc(ctx, onChanged, defaultTimeoutMs = 45000) {
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
           pending.delete(id);
+          try {
+            ctx.sendToBackend({ type: "grimoire:request", id: `${id}-t`, action: "timing", input: { action } });
+          } catch {}
           reject(new Error("Grimoire is busy and hasn’t answered yet. If the notebook is updating, give it a few minutes; what you asked for may already be under way."));
         }, timeoutMs);
         pending.set(id, { resolve: (v) => resolve(v), reject, timer });

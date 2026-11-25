@@ -38,7 +38,12 @@ export function createRpc(ctx: Rpc, onChanged: () => void, defaultTimeoutMs = 45
       if (closed) return Promise.reject(new Error('Grimoire has closed. Reopen it and try again.'));
       const id = `gm-${prefix}-${++sequence}`;
       return new Promise<T>((resolve, reject) => {
-        const timer = setTimeout(() => { pending.delete(id); reject(new Error('Grimoire is busy and hasn’t answered yet. If the notebook is updating, give it a few minutes; what you asked for may already be under way.')); }, timeoutMs);
+        const timer = setTimeout(() => {
+          pending.delete(id);
+          // Tell the backend, so its timing log shows what it was doing when the panel gave up.
+          try { ctx.sendToBackend({ type: 'grimoire:request', id: `${id}-t`, action: 'timing', input: { action } }); } catch { /* closed */ }
+          reject(new Error('Grimoire is busy and hasn’t answered yet. If the notebook is updating, give it a few minutes; what you asked for may already be under way.'));
+        }, timeoutMs);
         pending.set(id, { resolve: v => resolve(v as T), reject, timer });
         try { ctx.sendToBackend({ type: 'grimoire:request', id, action, input }); } catch (error) { clearTimeout(timer); pending.delete(id); reject(error instanceof Error ? error : new Error(String(error))); }
       });

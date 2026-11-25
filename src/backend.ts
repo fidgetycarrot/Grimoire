@@ -6,10 +6,10 @@ const record = (v: unknown): Record<string, unknown> => v && typeof v === 'objec
 const string = (v: unknown, name: string) => { if (typeof v !== 'string' || !v) throw new Error(`${name} is required.`); return v; };
 
 /** Route one panel request. Every action names the chat it acts on. */
-export async function handle(controller: NotebookController, action: string, input: unknown): Promise<unknown> {
+export async function handle(controller: NotebookController, action: string, input: unknown, phases?: Record<string, number>): Promise<unknown> {
   const data = record(input);
   switch (action) {
-    case 'snapshot': return controller.snapshot(typeof data.chatId === 'string' ? data.chatId : null);
+    case 'snapshot': return controller.snapshot(typeof data.chatId === 'string' ? data.chatId : null, phases);
     case 'create': return controller.create(string(data.chatId, 'Chat'), data.preferences, data.ideas, data.keepIdeas);
     case 'checkup': { const job = await controller.checkup(string(data.chatId, 'Chat'), 'You asked for a check-up'); if (!job) throw new Error('The notebook is already being updated.'); return job; }
     case 'shape': return controller.setShape(string(data.chatId, 'Chat'), data.shape, data.lockShape);
@@ -54,12 +54,29 @@ export function setupBackend(api: SpindleAPI): () => void {
     return found;
   };
   const stops: Array<() => void> = [];
+  // Timing, to find out why the panel sometimes hears nothing back: a slow answer, or an answer that never arrives.
+  const inflight = new Map<string, { action: string; at: number }>();
   stops.push(api.onFrontendMessage((payload, userId, frontendSessionId) => {
     const request = record(payload);
     if (request.type !== 'grimoire:request' || typeof request.id !== 'string' || request.id.length > 100 || typeof request.action !== 'string') return;
-    void handle(instance(userId), request.action, request.input)
-      .then(result => api.sendToFrontend({ type: 'grimoire:response', id: request.id, result }, userId, { frontendSessionId }))
-      .catch(error => api.sendToFrontend({ type: 'grimoire:response', id: request.id, error: error instanceof Error ? error.message : 'Grimoire could not do that.' }, userId, { frontendSessionId }));
+    const id = request.id, action = request.action, at = Date.now(), session = typeof frontendSessionId === 'string' ? frontendSessionId.slice(0, 8) : '';
+    // The panel gave up waiting: note what was still being worked on here at that moment.
+    if (action === 'timing') {
+      const info = record(request.input);
+      void instance(userId).noteTiming({ kind: 'panel gave up', action: typeof info.action === 'string' ? info.action.slice(0, 40) : '', session, at,
+        working: [...inflight.values()].map(r => `${r.action} ${Math.round((at - r.at) / 1000)}s`).slice(0, 12) });
+      return;
+    }
+    inflight.set(id, { action, at });
+    const phases: Record<string, number> = {};
+    const done = (ok: boolean) => {
+      inflight.delete(id);
+      const ms = Date.now() - at;
+      if (ms >= 3000 || !ok) void instance(userId).noteTiming({ kind: ok ? 'slow answer' : 'failed', action, ms, session, at, ...(Object.keys(phases).length ? { phases } : {}) });
+    };
+    void handle(instance(userId), action, request.input, phases)
+      .then(result => { done(true); api.sendToFrontend({ type: 'grimoire:response', id, result }, userId, { frontendSessionId }); })
+      .catch(error => { done(false); api.sendToFrontend({ type: 'grimoire:response', id, error: error instanceof Error ? error.message : 'Grimoire could not do that.' }, userId, { frontendSessionId }); });
   }));
 
   const macros: Array<[string, 'clock' | 'pace', string]> = [

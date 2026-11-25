@@ -372,14 +372,21 @@ export class NotebookController {
   private presentNow(live: Live) { return presentPeople(live.version.notebook, this.narrated(live), this.listed(live)); }
   private repliesSince(live: Live) { const from = this.fullVersion(live).covered.length, skipped = new Set(live.state.intimate); return live.turns.filter((t, i) => i >= from && t.role === 'assistant' && !t.ooc && !skipped.has(live.prints[i])).length; }
 
-  async view(chatId: string | null): Promise<ChatView | null> {
+  async view(chatId: string | null, phases: Record<string, number> = {}): Promise<ChatView | null> {
     if (!chatId) return null;
+    let mark = Date.now();
+    const lap = (name: string) => { const now = Date.now(); phases[name] = (phases[name] ?? 0) + now - mark; mark = now; };
     return this.serial(chatId, async () => {
+      lap('waiting for the chat');
       const info = await this.chatInfo(chatId);
+      lap('chat info');
       const state = await this.load(chatId) ?? this.blank(chatId);
+      lap('loading the notebook');
       const readable = info.supported && this.api.permissions.has('chats') && this.api.permissions.has('chat_mutation');
       const messages = readable ? await this.api.chat.getMessages(chatId) : null;
+      lap('reading messages');
       const live = messages && state.versions.length ? await this.live(state, messages) : null;
+      lap('reading the story');
       // Before a notebook exists, say how much of a long chat has to be read first (one request per part).
       const earlierParts = messages && !live ? planHistory(conversation(messages)).earlier.length : 0;
       const notebook = live?.version.notebook ?? null;
@@ -408,6 +415,7 @@ export class NotebookController {
         memory: mem,
         skipOffer: offer,
       }) : null;
+      lap('building the view');
       return {
         chatId, name: info.name, supported: info.supported, reason: info.reason, enabled: state.enabled, pace: state.pace, preferences: state.preferences,
         // Only code-made words reach the panel outside the spoiler fold; a model-written line could give something away.
@@ -438,16 +446,36 @@ export class NotebookController {
     }));
     return found.filter((x): x is StoryListing => !!x).sort((a, b) => b.playedAt - a.playedAt).slice(0, limit);
   }
-  async snapshot(chatId: string | null): Promise<Snapshot> {
+  async snapshot(chatId: string | null, phases: Record<string, number> = {}): Promise<Snapshot> {
+    let mark = Date.now();
+    const lap = (name: string) => { const now = Date.now(); phases[name] = (phases[name] ?? 0) + now - mark; mark = now; };
     const permissions = await this.api.permissions.getGranted();
+    lap('permissions');
     let connections: Snapshot['connections'] = [];
     if (permissions.includes('generation')) { try { connections = (await this.api.connections.list(this.userId)).map(c => ({ id: c.id, name: c.name, model: c.model })); } catch { /* unavailable */ } }
+    lap('connections');
     let chat: ChatView | null = null, notice = '';
     for (const need of ['chats', 'chat_mutation', 'characters', 'interceptor', 'generation']) if (!permissions.includes(need)) notice = `Grant ${need} in Lumiverse’s Extensions panel so Grimoire can work.`;
-    try { chat = permissions.includes('chats') ? await this.view(chatId) : null; } catch (error) { notice = error instanceof Error ? error.message : 'This chat could not be read.'; }
+    try { chat = permissions.includes('chats') ? await this.view(chatId, phases) : null; } catch (error) { notice = error instanceof Error ? error.message : 'This chat could not be read.'; }
+    mark = Date.now();
     const decisions: Snapshot['decisions'] = { available: this.decisionsReady(), reason: this.decisionsReason(), connections: [] };
     if (decisions.available) { try { decisions.connections = (await this.api.decisions.listConnections(this.userId ? { userId: this.userId } : undefined)).map(c => ({ id: c.id, name: c.name, provider: c.provider, model: c.model, isDefault: c.is_default })); } catch { /* unavailable */ } }
-    return { version: VERSION, permissions, connections, settings: await this.settings(), chat, notice, decisions };
+    lap('decision connections');
+    const settings = await this.settings();
+    lap('settings');
+    return { version: VERSION, permissions, connections, settings, chat, notice, decisions };
+  }
+  /** A small timing log of slow panel requests, kept so a "Grimoire is busy" can be traced to its cause. */
+  private timingWrites: Promise<void> = Promise.resolve();
+  noteTiming(entry: Record<string, unknown>): Promise<void> {
+    this.timingWrites = this.timingWrites.then(async () => {
+      try {
+        const saved = await this.api.userStorage.getJson('timing.json', { fallback: [], userId: this.userId });
+        const list = Array.isArray(saved) ? saved : [];
+        await this.api.userStorage.setJson('timing.json', [...list, { ...entry, version: VERSION }].slice(-60), { userId: this.userId });
+      } catch { /* timing is best effort */ }
+    });
+    return this.timingWrites;
   }
 
   // ----- Writing the notebook -------------------------------------------------
