@@ -177,6 +177,10 @@ describe('the note before each reply', () => {
     expect(staged).toContain('My plan for this reply: I have Mira slam the shutters');
     expect(staged).toContain('It comes with a catch: the last ferry costs double tonight.');
     expect(staged).not.toContain('It lands as something the player can act on');
+    // Never during a Goon scene: the main storyline waits for it to end, and says so.
+    const scene = note('auto', 13, { goon: true, scene: true, staged: { step: step.id, look: { move: 'I have Mira slam the shutters and call the player over.', cause: '', hands: 'x' } } }, nb);
+    expect(scene).not.toContain('My plan for this reply');
+    expect(scene).toContain('I hold this until the intimate scene is over');
     // A plan written for another step is not used.
     expect(note('auto', 13, { staged: { step: 'other', look: { move: 'I have nothing happen at all here.', cause: '', hands: 'x' } } }, nb)).not.toContain('My plan for this reply');
   });

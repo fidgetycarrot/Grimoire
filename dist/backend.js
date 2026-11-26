@@ -1855,7 +1855,7 @@ function leadOf(notebook, now, state) {
   const waited = overdue(notebook, thread, now);
   const shut = (state.blocked ?? []).includes(step.id);
   const urgent = thread.speed === "urgent";
-  const holding = shut || quietTime && !urgent && !(pace === "auto" && waited >= HOLD_LIMIT);
+  const holding = shut || !!state.scene || quietTime && !urgent && !(pace === "auto" && waited >= HOLD_LIMIT);
   const threshold = Math.max(3, Math.round((m.waits?.[thread.speed] ?? 15) / 2));
   const moment = !watching || urgent || !!step.now || open;
   const late = watching && !holding && !moment && waited >= threshold;
@@ -1935,7 +1935,7 @@ function buildNote(input) {
         must("- Someone with a reason of their own brings them something to act on, grown from what has already happened: a person who wants something, or a detail mentioned earlier coming back. Nothing from nowhere.");
     }
   }
-  const leadInfo = asked ? null : leadOf(notebook, now, { pace, held: input.held, blocked: input.blocked, open: input.open, present: present.map((p) => p.id), quiet });
+  const leadInfo = asked ? null : leadOf(notebook, now, { pace, held: input.held, blocked: input.blocked, open: input.open, present: present.map((p) => p.id), quiet, scene: !!(input.goon && input.scene) });
   const lead = leadInfo ? { thread: leadInfo.thread, step: leadInfo.step } : undefined;
   const watching = input.open !== undefined;
   const here = (step) => !step.with?.length || step.with.every((id) => present.some((p) => p.id === id));
@@ -1947,13 +1947,14 @@ function buildNote(input) {
     const tie = seeds.ready.find((s) => s.pays === lead.thread.id && !used.has(s.id));
     const tied = notebook.people.filter((p) => p.status === "active" && lead.thread.people.includes(p.id)).map((p) => p.name).slice(0, 3);
     const where = urgent || input.size === "close" ? ", or it happens where they are" : ", with a reason to go where it is happening; it only comes to where they are if there is no other way";
-    if (waiting) {
+    const sceneHold = holding && !!(input.goon && input.scene);
+    if (waiting || sceneHold) {
       must("What I am holding for its moment:");
-      must(`- ${lead.thread.title}: ${fit(lead.step.sign || lead.step.text, 320)} I hold this until ${lead.step.opening ? end2(fit(lead.step.opening, 240)).replace(/[.!?]$/, "") : "the scene gives it a natural way in"}. I do not force it in before then; when the scene gives that moment, I take it. Why it matters: ${fit(about(lead.thread), 200)}`);
+      must(`- ${lead.thread.title}: ${fit(lead.step.sign || lead.step.text, 320)} I hold this until ${sceneHold ? "the intimate scene is over" : lead.step.opening ? end2(fit(lead.step.opening, 240)).replace(/[.!?]$/, "") : "the scene gives it a natural way in"}. I do not force it in before then; when the scene gives that moment, I take it. Why it matters: ${fit(about(lead.thread), 200)}`);
     } else {
       must("What I bring in now:");
       const catchLine = lead.step.cost ? ` It comes with a catch: ${end2(fit(lead.step.cost, 240))}` : "";
-      const staged = input.staged?.step === lead.step.id ? input.staged.look : undefined;
+      const staged = !holding && input.staged?.step === lead.step.id ? input.staged.look : undefined;
       if (staged)
         must(`- ${lead.thread.title}. My plan for this reply: ${end2(staged.move)}${staged.cause ? ` It grows out of this: ${end2(staged.cause)}` : ""}${catchLine} It ends with this in front of the player: ${end2(staged.hands).replace(/[.!?]$/, "")}, and I stop there: what they do with it is theirs. Whatever the player just did happens first; if it makes this impossible where they are, it reaches them another believable way. Why it matters: ${fit(about(lead.thread), 200)}`);
       else
@@ -4659,7 +4660,7 @@ function guessRecipe(replies) {
 }
 
 // src/types.ts
-var VERSION = "0.41.1";
+var VERSION = "0.41.2";
 var MAX_VERSIONS = 16;
 var QUICK_LOG = 40;
 var TALK_LIMITS = { message: 1000, ideas: 3000, lines: 40, notes: 8, note: 200 };
@@ -6486,7 +6487,7 @@ ${live.values.location ?? ""}`, light);
           criteria: { true: "Yes, it happens in the reply, in this form or close to it.", false: "No, the reply goes another way." }
         };
       const replyNow = live.moment.reply ?? 0, ready = live.state.staged;
-      const stagedNow = ready && ready.reply < replyNow && replyNow - ready.reply <= STAGE_FRESH ? ready : undefined;
+      const stagedNow = ready && ready.reply <= replyNow && replyNow - ready.reply <= STAGE_FRESH ? ready : undefined;
       const stagedKey = stagedNow ? Object.entries(plan.marks).find(([k, m]) => k.startsWith("due_") && m.kind === "step" && m.step === stagedNow.step)?.[0] : undefined;
       if (stagedKey)
         plan.questions[stagedKey] = { ...plan.questions[stagedKey], instructions: `${plan.questions[stagedKey].instructions} It was planned for this reply as: ${stagedNow.look.move}` };
@@ -6572,8 +6573,8 @@ ${live.values.location ?? ""}`, light);
         }
         state.quickLog = [...state.quickLog, { ...quickRecord(live.moment.reply ?? 0, result, outcome, plan), ...error ? { error } : {}, ...quiet ? { quiet: true } : {}, ...stagedKey ? { staged: stagedNow.step } : {} }].slice(-QUICK_LOG);
         if (outcome && !extra && state.preferences.planner !== "preset" && !this.reworking(state, now)) {
-          const shut = state.intimateNow && settings.intimate === "protect";
-          const lead = leadOf(now.version.notebook, now.moment, { pace: state.pace, held: state.held, blocked: state.blocked, open: state.open ?? [], present: presentPeople(now.version.notebook, this.narrated(now), this.listed(now)).map((p) => p.id), quiet: shut });
+          const shut = state.intimateNow && settings.intimate === "protect", scene = !!state.preferences.goon && state.intimateNow && settings.intimate === "allow";
+          const lead = leadOf(now.version.notebook, now.moment, { pace: state.pace, held: state.held, blocked: state.blocked, open: state.open ?? [], present: presentPeople(now.version.notebook, this.narrated(now), this.listed(now)).map((p) => p.id), quiet: shut, scene });
           const at = now.moment.reply ?? 0, done = state.staged;
           if (leadComing(lead) && !(done?.step === lead.step.id && at - done.reply <= STAGE_FRESH))
             stageStep = lead.step.id;

@@ -1530,7 +1530,8 @@ export class NotebookController {
         criteria: { true: 'Yes, it happens in the reply, in this form or close to it.', false: 'No, the reply goes another way.' } };
       // The note led with a ready-made plan for a due step: judge the step by the plan the narrator was given.
       const replyNow = live.moment.reply ?? 0, ready = live.state.staged;
-      const stagedNow = ready && ready.reply < replyNow && replyNow - ready.reply <= STAGE_FRESH ? ready : undefined;
+      // The note used it for any reply up to STAGE_FRESH later, including a swipe of the reply it was written after.
+      const stagedNow = ready && ready.reply <= replyNow && replyNow - ready.reply <= STAGE_FRESH ? ready : undefined;
       const stagedKey = stagedNow ? Object.entries(plan.marks).find(([k, m]) => k.startsWith('due_') && m.kind === 'step' && m.step === stagedNow.step)?.[0] : undefined;
       if (stagedKey) plan.questions[stagedKey] = { ...plan.questions[stagedKey], instructions: `${plan.questions[stagedKey].instructions} It was planned for this reply as: ${stagedNow!.look.move}` };
       let result: DecisionResult | null = null, error = '';
@@ -1602,8 +1603,8 @@ export class NotebookController {
         // The main storyline's next step comes in with the next reply: write it up for the scene as it stands, in the
         // background, so the next note can lead with one concrete plan instead of "bring this in if it fits".
         if (outcome && !extra && state.preferences.planner !== 'preset' && !this.reworking(state, now)) {
-          const shut = state.intimateNow && settings.intimate === 'protect';
-          const lead = leadOf(now.version.notebook, now.moment, { pace: state.pace, held: state.held, blocked: state.blocked, open: state.open ?? [], present: presentPeople(now.version.notebook, this.narrated(now), this.listed(now)).map(p => p.id), quiet: shut });
+          const shut = state.intimateNow && settings.intimate === 'protect', scene = !!state.preferences.goon && state.intimateNow && settings.intimate === 'allow';
+          const lead = leadOf(now.version.notebook, now.moment, { pace: state.pace, held: state.held, blocked: state.blocked, open: state.open ?? [], present: presentPeople(now.version.notebook, this.narrated(now), this.listed(now)).map(p => p.id), quiet: shut, scene });
           const at = now.moment.reply ?? 0, done = state.staged;
           if (leadComing(lead) && !(done?.step === lead.step.id && at - done.reply <= STAGE_FRESH)) stageStep = lead.step.id;
         }

@@ -193,7 +193,7 @@ function lightNote(input: NoteInput): string {
   return `${parts.flat().join('\n')}${cast}\nThe latest messages decide what actually happened. Keep secrets hidden and let them show only through small details.`;
 }
 /** What the main storyline does next, and how ready it is to come in. Shared by the note and the staged plan. */
-export interface LeadState { pace: Pace; held?: string[]; blocked?: string[]; /** Steps whose moment the quick check saw; undefined without a working quick check. */ open?: string[]; /** Ids of the people in the scene. */ present?: string[]; /** Nothing is offered (an intimate scene kept clear, plans being reworked, a guided swipe). */ quiet?: boolean }
+export interface LeadState { pace: Pace; held?: string[]; blocked?: string[]; /** Steps whose moment the quick check saw; undefined without a working quick check. */ open?: string[]; /** Ids of the people in the scene. */ present?: string[]; /** Nothing is offered (an intimate scene kept clear, plans being reworked, a guided swipe). */ quiet?: boolean; /** Goon Mode, mid-scene: the scene is the main event, so the main storyline waits until it is over. */ scene?: boolean }
 export interface Lead { thread: Thread; step: Step; waited: number; shut: boolean; holding: boolean; late: boolean; waiting: boolean; urgent: boolean; open: boolean; watching: boolean }
 export function leadOf(notebook: Notebook, now: number | Moment, state: LeadState): Lead | null {
   if (state.quiet) return null;
@@ -217,7 +217,9 @@ export function leadOf(notebook: Notebook, now: number | Moment, state: LeadStat
   // Planned before the scene moved, and with no believable way in now: it waits for the scene to open up.
   const shut = (state.blocked ?? []).includes(step.id);
   const urgent = thread.speed === 'urgent';
-  const holding = shut || quietTime && !urgent && !(pace === 'auto' && waited >= HOLD_LIMIT);
+  // In Goon Mode a scene under way holds it outright: the note says only what belongs inside the scene comes in, and a
+  // ready-made plan for an arrival from outside would contradict that (it did, in a real chat).
+  const holding = shut || !!state.scene || quietTime && !urgent && !(pace === 'auto' && waited >= HOLD_LIMIT);
   // Waiting for its opening, the pressure builds; at the threshold it makes its own way in.
   const threshold = Math.max(3, Math.round((m.waits?.[thread.speed] ?? 15) / 2));
   // A step meant to come at once (the story's opening moment, a push) doesn't wait for anything.
@@ -296,7 +298,7 @@ export function buildNote(input: NoteInput): string {
   }
   // The main storyline's next step is what the story does now. Quiet pace still holds it back unless it is urgent;
   // right after a big moment it waits for the moment to settle.
-  const leadInfo = asked ? null : leadOf(notebook, now, { pace, held: input.held, blocked: input.blocked, open: input.open, present: present.map(p => p.id), quiet });
+  const leadInfo = asked ? null : leadOf(notebook, now, { pace, held: input.held, blocked: input.blocked, open: input.open, present: present.map(p => p.id), quiet, scene: !!(input.goon && input.scene) });
   const lead = leadInfo ? { thread: leadInfo.thread, step: leadInfo.step } : undefined;
   const watching = input.open !== undefined;
   const here = (step: { with?: string[] }) => !step.with?.length || step.with.every(id => present.some(p => p.id === id));
@@ -308,13 +310,16 @@ export function buildNote(input: NoteInput): string {
     const tie = seeds.ready.find(s => s.pays === lead.thread.id && !used.has(s.id));
     const tied = notebook.people.filter(p => p.status === 'active' && lead.thread.people.includes(p.id)).map(p => p.name).slice(0, 3);
     const where = urgent || input.size === 'close' ? ', or it happens where they are' : ', with a reason to go where it is happening; it only comes to where they are if there is no other way';
-    if (waiting) {
+    // Goon Mode, mid-scene: the main storyline waits for the scene to end, said plainly so nothing contradicts the scene line.
+    const sceneHold = holding && !!(input.goon && input.scene);
+    if (waiting || sceneHold) {
       must('What I am holding for its moment:');
-      must(`- ${lead.thread.title}: ${fit(lead.step.sign || lead.step.text, 320)} I hold this until ${lead.step.opening ? end(fit(lead.step.opening, 240)).replace(/[.!?]$/, '') : 'the scene gives it a natural way in'}. I do not force it in before then; when the scene gives that moment, I take it. Why it matters: ${fit(about(lead.thread), 200)}`);
+      must(`- ${lead.thread.title}: ${fit(lead.step.sign || lead.step.text, 320)} I hold this until ${sceneHold ? 'the intimate scene is over' : lead.step.opening ? end(fit(lead.step.opening, 240)).replace(/[.!?]$/, '') : 'the scene gives it a natural way in'}. I do not force it in before then; when the scene gives that moment, I take it. Why it matters: ${fit(about(lead.thread), 200)}`);
     } else {
       must('What I bring in now:');
       const catchLine = lead.step.cost ? ` It comes with a catch: ${end(fit(lead.step.cost, 240))}` : '';
-      const staged = input.staged?.step === lead.step.id ? input.staged.look : undefined;
+      // Only for a step coming in now: a held step's plan would tell the narrator to do what the note says to wait on.
+      const staged = !holding && input.staged?.step === lead.step.id ? input.staged.look : undefined;
       if (staged) must(`- ${lead.thread.title}. My plan for this reply: ${end(staged.move)}${staged.cause ? ` It grows out of this: ${end(staged.cause)}` : ''}${catchLine} It ends with this in front of the player: ${end(staged.hands).replace(/[.!?]$/, '')}, and I stop there: what they do with it is theirs. Whatever the player just did happens first; if it makes this impossible where they are, it reaches them another believable way. Why it matters: ${fit(about(lead.thread), 200)}`);
       else must(late
         ? `- ${lead.thread.title}: ${fit(lead.step.sign || lead.step.text, 320)} It has waited long enough, so it makes its own way in: someone tied to it${tied.length ? ` (${tied.join(', ')})` : ''} comes looking for the player with a reason of their own, or word reaches them${where}. Never through a locked door or into a private moment by force.${catchLine} Why it matters: ${fit(about(lead.thread), 200)}${tie ? ` ${callback(tie)}` : ''}`

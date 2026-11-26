@@ -1164,7 +1164,11 @@ describe('intimate scenes', () => {
     await c.setGoon('chat-1', true);
     await reply(h, c, 1);
     h.add('user', 'Still going.');
-    expect(await c.noteFor('chat-1')).toContain('only if it belongs inside the scene');
+    const note = await c.noteFor('chat-1');
+    expect(note).toContain('only if it belongs inside the scene');
+    // The main storyline waits for the scene to end: a plan to bring it in now would contradict the line above.
+    expect(note).not.toContain('What I bring in now');
+    expect(note).not.toContain('My plan for this reply');
   });
 });
 
