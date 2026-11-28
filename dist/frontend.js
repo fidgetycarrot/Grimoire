@@ -227,7 +227,7 @@ function describeDuration(hours) {
 }
 
 // src/types.ts
-var VERSION = "0.41.2";
+var VERSION = "0.41.3";
 var CHAPTER_WORKING = "Starting a new chapter";
 var NO_MYSTERY = "Notebook ready, without the mystery";
 var CHAPTER_DONE = "New chapter ready";
@@ -504,7 +504,7 @@ function setup(ctx) {
     mystery.style.width = "auto";
     const mysteryRow = el("label", "gm-row gm-small");
     mysteryRow.append(mystery, document.createTextNode("Make it a mystery I can solve"));
-    grid.append(mysteryRow, el("p", "gm-hint", "Grimoire decides the answer now and never changes it. The narrator is not told, so it can’t give it away or agree with a wrong guess. You can also add one later."));
+    grid.append(mysteryRow, el("p", "gm-hint", "Grimoire decides the answer now and never changes it. The narrator is not told, so it can’t give it away or agree with a wrong guess. You can also add one later. If your card already has its own mystery with an answer, leave this off so the two don’t fight."));
     const goon = el("input");
     goon.type = "checkbox";
     goon.checked = !!view.preferences.goon;
@@ -1024,7 +1024,7 @@ function setup(ctx) {
       add.disabled = !snapshot?.settings.connectionId || view.job?.status === "running";
       if (!m)
         d.body.append(el("p", "gm-small", "Grimoire hides a real puzzle in this story, built from what has already happened. It decides the answer once and keeps it from the narrator, so the answer can’t slip out or bend to a guess."));
-      d.body.append(labeled("What should it be about? (optional)", about, "Leave it empty and Grimoire picks something that fits."), add, el("p", "gm-hint", "Once added, a mystery can’t be turned off. It ends when you solve it, or when the truth comes out on its own."));
+      d.body.append(labeled("What should it be about? (optional)", about, "Leave it empty and Grimoire picks something that fits. If your card already has its own mystery with an answer, don’t add one here: the two would fight."), add, el("p", "gm-hint", "Once added, a mystery can’t be turned off. It ends when you solve it, or when the truth comes out on its own."));
     }
     return d.root;
   }

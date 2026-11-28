@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { clueGap, clueNow, cluesToCheck, leakProblems, lockMystery, mysteryLeaks, mysteryPlayable, mysteryProblems, mysteryView, runsOut, scrubLeaks, type Mystery } from '../src/mystery';
+import { clueGap, clueNow, cluesToCheck, leakProblems, lockMystery, MYSTERY_KEEP, mysteryLeaks, mysteryPlayable, mysteryProblems, mysteryView, runsOut, scrubLeaks, type Mystery } from '../src/mystery';
 import { buildNote } from '../src/note';
 import { mergeRevision, stamp, validateNotebook, waitsFor, type Notebook } from '../src/notebook';
 import { applyQuick, quickQuestions } from '../src/quick';
@@ -110,6 +110,8 @@ describe('what the narrator is told', () => {
     for (const text of [note(nb, 11), note(nb, 14, { recent: 'Brother Hale and Cole and Wren stand with Mira.' }), note(nb, 40), note(nb, 14, { guided: true }), note(nb, 14, { intimate: true })]) {
       expect(text).toContain('A mystery runs through this story: Who took the chapel silver?');
       expect(text).toContain('nobody confirms or denies it');
+      // Scene details have somewhere to go that isn't evidence.
+      expect(text).toContain('Objects and details in a scene are texture');
       for (const secret of SECRETS) expect(text).not.toContain(secret);
     }
   });
@@ -118,6 +120,7 @@ describe('what the narrator is told', () => {
     expect(note(nb, 11, { recent: 'Brother Hale nods.' })).not.toContain('A clue is within reach');
     const text = note(nb, 13, { recent: 'Brother Hale nods.' });
     expect(text).toContain('A clue is within reach in this scene (the chapel porch)');
+    expect(text).toContain('This is the one real clue in this scene, so let it stand out from the scenery.');
     expect(text).toContain('The hem of Brother Hale\'s robe is wet with river mud.');
     expect(text).toContain('do not explain what it means');
     expect(text).toContain('About the mystery, Brother Hale says: He locked up after prayer and saw nothing. When pressed: He straightens things that are already straight.');
@@ -220,6 +223,20 @@ describe('the quick check keeps score', () => {
     const nb = withMystery(), plan = quickQuestions(nb, now);
     const out = applyQuick(nb, plan, result(plan, { mystery_out: noul(0.9) }), now, 'I wait.');
     expect(out.notebook.mystery).toMatchObject({ status: 'revealed', endReply: 15 }); expect(out.mysteryEnded).toBe(true);
+  });
+});
+
+describe('what the player followed', () => {
+  test('a check-up is told that something the player picked up has to lead somewhere', () => {
+    expect(MYSTERY_KEEP).toContain('if the player picked one up');
+    expect(MYSTERY_KEEP).toContain('Never let it simply vanish.');
+  });
+  test('a false trail made of something the player already found is kept, found', () => {
+    const m = withMystery().mystery as Mystery;
+    const key = { id: 'brass-key', text: 'A small brass key was taped under the vestry drawer.', means: 'It opens the poor box; the sexton hid it from the children.', points: 'false' as const, where: 'the vestry', people: [], status: 'found' as const };
+    const kept = lockMystery(m, { ...m, clues: [...m.clues, key] }, false)!;
+    expect(kept.clues.find(c => c.id === 'brass-key')).toMatchObject({ status: 'found', points: 'false' });
+    expect(kept.answer).toBe(m.answer);
   });
 });
 
